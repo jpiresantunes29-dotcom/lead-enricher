@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="LeadEnricher — digite um domínio, conheça a empresa inteira. DNS, e-mail corporativo, decisores e score de prioridade em segundos." />
+  <meta property="og:title" content="LeadEnricher — Digite um domínio. Conheça a empresa inteira." />
+  <meta property="og:description" content="DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos. Sem Lusha. Sem planilha." />
+  <meta property="og:type" content="website" />
+  <title>LeadEnricher — Digite um domínio. Conheça a empresa inteira.</title>
+  <script>
+    // Callbacks de auth do Supabase (magic link/OAuth) podem cair na raiz com o
+    // token no hash — encaminha para o app, que tem o client do Supabase.
+    if (location.hash.includes('access_token') || location.search.includes('code=')) {
+      location.replace('/app' + location.search + location.hash);
+    }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/landing/landing.css?v=2" />
+</head>
+<body>
+
+<div class="grain" aria-hidden="true"></div>
+<div class="vignette" aria-hidden="true"></div>
+
+<!-- ── NAV ── -->
+<header class="nav" id="nav">
+  <a class="nav-brand" href="/">
+    <span class="nav-brand-mark" aria-hidden="true"></span>
+    LeadEnricher
+  </a>
+  <nav class="nav-pill" aria-label="Navegação principal">
+    <a href="#journey">Como funciona</a>
+    <a href="#features">Recursos</a>
+    <a href="#pricing">Preços</a>
+  </nav>
+  <a class="btn btn-gold" data-magnetic href="/app">Entrar</a>
+</header>
+
+<!-- ── ATO I · HERO ── -->
+<section class="hero" id="hero" data-section="hero">
+  <canvas id="fx-network" class="hero-network" aria-hidden="true"></canvas>
+
+  <div class="hero-inner">
+    <div class="hero-copy">
+      <p class="eyebrow" data-reveal>// inteligência de prospecção</p>
+      <h1 class="hero-title" data-reveal>
+        Digite um domínio.<br />
+        Conheça a empresa <em class="shimmer">inteira</em>.
+      </h1>
+      <p class="hero-sub mono" data-reveal>
+        DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos.
+        Sem Lusha. Sem planilha.
+      </p>
+      <div class="hero-actions" data-reveal>
+        <a class="btn btn-gold" data-magnetic href="/app">Começar grátis →</a>
+        <span class="hero-note mono">5 buscas grátis · sem cartão</span>
+      </div>
+    </div>
+
+    <!-- Terminal-demo (fx/terminal.js anima; o form é real) -->
+    <div class="terminal" id="fx-terminal" data-reveal>
+      <div class="terminal-chrome" aria-hidden="true">
+        <span></span><span></span><span></span>
+        <span class="terminal-title mono">enrich — live</span>
+      </div>
+      <pre class="terminal-body mono" id="terminal-body" aria-live="polite"></pre>
+      <form class="terminal-input-row" action="/app" method="get">
+        <span class="mono" aria-hidden="true">$</span>
+        <input class="terminal-input mono" name="domain" placeholder="suaempresa.com.br"
+               autocomplete="off" spellcheck="false" aria-label="Domínio para enriquecer" />
+        <button class="btn btn-gold btn-sm" type="submit">enrich</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- A Data Spine (trilho vertical) é injetada por fx/spine.js -->
+</section>
+
+<!-- ── Ticker de sinais ── -->
+<section class="trust" data-section="trust">
+  <p class="trust-label mono" data-reveal>&gt; sinais coletados em cada domínio, sem API paga</p>
+  <div class="marquee" data-reveal aria-hidden="true">
+    <div class="marquee-track mono">
+      <span>MX → Google Workspace</span><span>SPF ✓</span><span>DMARC p=reject</span>
+      <span>ASN 16509 · AWS</span><span>NS · SOA · TXT</span><span>porte 51–200</span>
+      <span>CTO encontrado</span><span>e-mail ✓ SMTP</span><span>score 87 · ALTA</span>
+      <span>MX → Google Workspace</span><span>SPF ✓</span><span>DMARC p=reject</span>
+      <span>ASN 16509 · AWS</span><span>NS · SOA · TXT</span><span>porte 51–200</span>
+      <span>CTO encontrado</span><span>e-mail ✓ SMTP</span><span>score 87 · ALTA</span>
+    </div>
+  </div>
+</section>
+
+<!-- ── ATO II · A JORNADA DE UM DOMÍNIO (pinned no desktop via fx/journey.js) ── -->
+<section class="journey" id="journey" data-section="journey">
+  <div class="journey-stage" data-station="resolve">
+    <div class="journey-copy">
+      <p class="eyebrow mono" data-reveal>01 / RESOLVE</p>
+      <h2 data-reveal>Lemos a infraestrutura.</h2>
+      <p data-reveal>Provedor de e-mail, SPF, DMARC, hosting — direto do DNS, sem API paga.</p>
+    </div>
+    <div class="journey-visual mono" data-reveal aria-hidden="true">
+      <div class="jv-line">MX    10  aspmx.l.google.com</div>
+      <div class="jv-line">SPF   <span class="jv-ok">v=spf1 include:_spf… ✓</span></div>
+      <div class="jv-line">DMARC <span class="jv-ok">p=reject ✓</span></div>
+      <div class="jv-line jv-dim">NS · SOA · TXT · AAAA</div>
+      <div class="jv-line">HOST  <span class="jv-gold">AWS · ASN 16509</span></div>
+    </div>
+  </div>
+  <div class="journey-stage" data-station="profile">
+    <div class="journey-copy">
+      <p class="eyebrow mono" data-reveal>02 / PROFILE</p>
+      <h2 data-reveal>Montamos o perfil.</h2>
+      <p data-reveal>Porte, setor, localização e LinkedIn verificado da empresa.</p>
+    </div>
+    <div class="journey-visual mono" data-reveal aria-hidden="true">
+      <div class="jv-line">PORTE   <span class="jv-gold">51–200 funcionários</span></div>
+      <div class="jv-line">SETOR   Tecnologia / SaaS</div>
+      <div class="jv-line">LOCAL   São Paulo, BR</div>
+      <div class="jv-line">SOCIAL  <span class="jv-ok">LinkedIn verificado ✓</span></div>
+    </div>
+  </div>
+  <div class="journey-stage" data-station="discover">
+    <div class="journey-copy">
+      <p class="eyebrow mono" data-reveal>03 / DISCOVER</p>
+      <h2 data-reveal>Encontramos quem decide.</h2>
+      <p data-reveal>Decisores reais, com e-mails verificados por SMTP.</p>
+    </div>
+    <div class="journey-visual mono" data-reveal aria-hidden="true">
+      <div class="jv-line">◉ CTO                <span class="jv-ok">e-mail ✓ SMTP</span></div>
+      <div class="jv-line">◉ Diretor Comercial  <span class="jv-ok">e-mail ✓ SMTP</span></div>
+      <div class="jv-line">◉ Founder            <span class="jv-gold">telefone direto</span></div>
+    </div>
+  </div>
+  <div class="journey-stage" data-station="score">
+    <div class="journey-copy">
+      <p class="eyebrow mono" data-reveal>04 / SCORE</p>
+      <h2 data-reveal>Dizemos quem vem primeiro.</h2>
+      <p data-reveal>Score explicável, critério por critério. Alta prioridade carimbada.</p>
+    </div>
+    <div class="journey-visual mono journey-visual--score" data-reveal aria-hidden="true">
+      <div class="jv-score"><span data-jcount="87">87</span><small>/100</small></div>
+      <div class="jv-stamp">ALTA PRIORIDADE</div>
+      <div class="jv-line jv-dim">+10 Google Workspace · +15 e-mail válido · +20 telefone</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Bento de features ── -->
+<section class="bento" id="features" data-section="features">
+  <p class="eyebrow mono" data-reveal>// recursos</p>
+  <h2 class="section-title" data-reveal>Cada coluna da sua planilha,<br />preenchida sozinha.</h2>
+  <div class="bento-grid">
+    <article class="card card-lg" data-reveal data-spotlight><h3>Relatório DNS completo</h3><p>MX, SPF, DMARC, hosting e ASN — o raio-X técnico da empresa.</p></article>
+    <article class="card card-lg" data-reveal data-spotlight><h3>Decisores com e-mail verificado</h3><p>Padrões testados por SMTP. Só o que existe e responde.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Score explicável</h3><p>Cada ponto tem evidência. Nada de caixa-preta.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Follow-up automático</h3><p>Não atendeu? Tarefa criada para daqui a 2 dias.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Pipeline kanban</h3><p>Do novo lead à reunião agendada, sem sair da tela.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Export &amp; CRM</h3><p>Excel, CSV, Dynamics, HubSpot, Pipedrive, webhook.</p></article>
+  </div>
+</section>
+
+<!-- ── Pipeline vivo (fase L3) ── -->
+<section class="execution" data-section="execution">
+  <p class="eyebrow mono" data-reveal>// execução</p>
+  <h2 class="section-title" data-reveal>Do dado à reunião.</h2>
+</section>
+
+<!-- ── Números / dashboard ── -->
+<section class="metrics" data-section="metrics">
+  <p class="eyebrow mono" data-reveal>// visão</p>
+  <h2 class="section-title" data-reveal>O que sua operação enxerga.</h2>
+  <div class="metrics-row">
+    <div class="metric" data-reveal><span class="metric-val mono" data-count="142">0</span><span class="metric-lbl">leads pesquisados</span></div>
+    <div class="metric" data-reveal><span class="metric-val mono" data-count="43" data-suffix="%">0</span><span class="metric-lbl">taxa de contato</span></div>
+    <div class="metric" data-reveal><span class="metric-val mono" data-count="12" data-suffix="%">0</span><span class="metric-lbl">taxa de reunião</span></div>
+  </div>
+</section>
+
+<!-- ── ATO III · Pricing ── -->
+<section class="pricing" id="pricing" data-section="pricing">
+  <p class="eyebrow mono" data-reveal>// planos</p>
+  <h2 class="section-title" data-reveal>Comece grátis. Escale quando precisar.</h2>
+  <div class="pricing-grid">
+    <article class="card price" data-reveal>
+      <h3>Free</h3><p class="price-val mono">R$ 0</p>
+      <p>5 buscas/mês · dados completos · 1 cargo por busca</p>
+      <a class="btn btn-ghost" href="/app">Começar agora</a>
+    </article>
+    <article class="card price price-featured" data-reveal>
+      <span class="price-badge mono">mais popular</span>
+      <h3>Pro</h3><p class="price-val mono">R$ 97<span>/mês</span></p>
+      <p>500 buscas · decisores ilimitados · export · verificação premium</p>
+      <a class="btn btn-gold" data-magnetic href="/app">Assinar Pro</a>
+    </article>
+    <article class="card price" data-reveal>
+      <h3>Enterprise</h3><p class="price-val mono">Custom</p>
+      <p>Ilimitado · API com SLA · CRM nativo · SSO</p>
+      <a class="btn btn-ghost" href="/app">Falar com vendas</a>
+    </article>
+  </div>
+</section>
+
+<!-- ── ATO IV · Comparação ── -->
+<section class="comparison" id="comparison" data-section="comparison">
+  <p class="eyebrow mono" data-reveal>// comparação</p>
+  <h2 class="section-title" data-reveal>LeadEnricher vs. Lusha + planilha</h2>
+  <div class="comparison-grid">
+    <div class="comp-col" data-reveal>
+      <h3 style="color:#999">Lusha + Google Sheets</h3>
+      <ul class="comp-list">
+        <li style="opacity:.5"><strong>✗</strong> Lusha custa <strong>$99+</strong>/mês (em dólar)</li>
+        <li style="opacity:.7"><strong>✗</strong> Dados em planilha (versioning caótico)</li>
+        <li><strong>✗</strong> Nenhuma score de prioridade</li>
+        <li style="opacity:.7"><strong>✗</strong> DNS/infraestrutura manual</li>
+        <li style="opacity:.8"><strong>✗</strong> Sem follow-up automático</li>
+        <li><strong>~</strong> Integração nativa com 3 CRMs</li>
+      </ul>
+    </div>
+    <div class="comp-col comp-col--highlight" data-reveal>
+      <h3 style="color:var(--gold)">LeadEnricher</h3>
+      <ul class="comp-list">
+        <li><strong>✓</strong> <strong>Grátis</strong> até 5 buscas · R$ 97/mês Pro</li>
+        <li><strong>✓</strong> Banco de dados estruturado · export XLSX/CSV</li>
+        <li><strong>✓</strong> Score explicável de 14 critérios</li>
+        <li><strong>✓</strong> DNS + SPF/DMARC + hosting automático</li>
+        <li><strong>✓</strong> Follow-ups + .ics + regras automáticas</li>
+        <li><strong>✓</strong> Webhook CRM universal (Zapier/Dynamics/HubSpot)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── ATO V · FAQ ── -->
+<section class="faq" id="faq" data-section="faq">
+  <p class="eyebrow mono" data-reveal>// perguntas</p>
+  <h2 class="section-title" data-reveal>Perguntas frequentes</h2>
+  <div class="faq-grid">
+    <details class="faq-item" data-reveal>
+      <summary>Como funciona a enumeração de decisores?</summary>
+      <p>Buscamos em LinkedIn (perfis públicos), Google, Bing e DuckDuckGo filtrando por cargo na empresa. Depois validamos cada email via SMTP — se não responder, marcamos como "não verificado".</p>
+    </details>
+    <details class="faq-item" data-reveal>
+      <summary>Meus dados estão seguros?</summary>
+      <p>Sim. Autenticação via Supabase (padrão enterprise), dados criptografados em repouso no Postgres. Sem venda para terceiros. Conformidade LGPD: decisores inativos são anonimizados após 90 dias.</p>
+    </details>
+    <details class="faq-item" data-reveal>
+      <summary>Posso integrar com meu CRM?</summary>
+      <p>Sim! Webhook assinado envia leads para Zapier, Make, Power Automate ou qualquer endpoint. Ou configure HubSpot/Pipedrive nativos nos planos Pro+.</p>
+    </details>
+    <details class="faq-item" data-reveal>
+      <summary>E se a empresa não tiver website?</summary>
+      <p>Busca de domínio ainda valida DNS, e-mail corporativo (via DNS) e decisores via LinkedIn/Google. Sempre há alguma trilha.</p>
+    </details>
+  </div>
+</section>
+
+<!-- ── CTA final ── -->
+<section class="cta" data-section="cta">
+  <h2 class="cta-title" data-reveal>Sua próxima reunião<br />começa com um domínio.</h2>
+  <form class="cta-form" action="/app" method="get" data-reveal>
+    <input class="cta-input mono" name="domain" placeholder="suaempresa.com.br"
+           autocomplete="off" spellcheck="false" aria-label="Domínio para enriquecer" />
+    <button class="btn btn-gold" data-magnetic type="submit">Começar grátis →</button>
+  </form>
+  <p class="hero-note mono" data-reveal>5 buscas grátis · sem cartão · sem senha</p>
+</section>
+
+<!-- ── FOOTER ── -->
+<footer class="footer">
+  <div class="footer-inner">
+    <span class="nav-brand">LeadEnricher</span>
+    <nav class="footer-links" aria-label="Rodapé">
+      <a href="#features">Recursos</a>
+      <a href="#pricing">Preços</a>
+      <a href="/app">Entrar</a>
+    </nav>
+    <span class="footer-status mono" id="footer-status">● verificando…</span>
+  </div>
+</footer>
+
+<!-- Vendor (UMD, self-hosted) — GSAP/ScrollTrigger só são usados a partir da fase L2 -->
+<script defer src="/static/landing/vendor/lenis.min.js"></script>
+<script defer src="/static/landing/vendor/gsap.min.js"></script>
+<script defer src="/static/landing/vendor/ScrollTrigger.min.js"></script>
+<script type="module" src="/static/landing/landing.js?v=2"></script>
+</body>
+</html>

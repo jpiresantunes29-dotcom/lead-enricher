@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LeadEnricher — App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=10" />
+</head>
+<body class="app-body">
+
+<canvas id="celebrate-canvas"></canvas>
+
+<!-- ══════════════════════════════════
+     HEADER — sempre visível
+════════════════════════════════════ -->
+<header class="app-header">
+
+  <a href="/" class="app-logo">LeadEnricher</a>
+
+  <!-- Navegação central — sempre visível; pré-auth abre modal -->
+  <nav class="app-nav" id="app-nav">
+    <button class="app-nav-btn" id="nav-btn-dashboard" onclick="requireAuth(openDashboard)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      Dashboard
+    </button>
+    <button class="app-nav-btn" id="nav-btn-pipeline" onclick="requireAuth(openPipeline)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="4" height="18" rx="1"/><rect x="10" y="3" width="4" height="12" rx="1"/><rect x="17" y="3" width="4" height="16" rx="1"/></svg>
+      Pipeline
+    </button>
+    <button class="app-nav-btn" id="nav-btn-followups" onclick="requireAuth(openFollowups)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Follow-ups
+      <span id="nav-today-count" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-weight:800;padding:1px 7px;border-radius:99px;line-height:1.6"></span>
+    </button>
+    <button class="app-nav-btn" id="nav-btn-history" onclick="requireAuth(openHistory)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+      Histórico
+    </button>
+  </nav>
+
+  <div class="app-header-right">
+    <!-- Pré-auth -->
+    <div id="header-preauth" style="display:flex;align-items:center;gap:8px">
+      <span class="app-auth-hint">Faça login para acessar tudo</span>
+      <button class="app-btn-primary" onclick="openAuthModal()">Entrar</button>
+    </div>
+    <!-- Pós-auth -->
+    <div id="header-postauth" style="display:none;align-items:center;gap:10px">
+      <span id="nav-quota" class="app-quota-badge"></span>
+      <button class="app-nav-btn app-nav-btn--ghost" onclick="signOut()">Sair</button>
+    </div>
+  </div>
+</header>
+
+<!-- ══════════════════════════════════
+     MAIN — search + results
+════════════════════════════════════ -->
+<main class="app-main">
+
+  <!-- Search card central -->
+  <div class="app-search-card" id="app-search-card">
+
+    <div class="app-search-title" id="app-search-title">
+      Inteligência comercial <span class="app-accent">em segundos.</span>
+    </div>
+    <p class="app-search-sub" id="app-search-sub">
+      Cole um domínio e receba: empresa, decisores, score de prioridade e contatos.
+    </p>
+
+    <!-- Role pills -->
+    <div class="app-role-row">
+      <button class="role-pill active" data-role="sdr" onclick="selectRole(this)">SDR</button>
+      <button class="role-pill" data-role="manager" onclick="selectRole(this)">Gestor</button>
+      <button class="role-pill" data-role="founder" onclick="selectRole(this)">Founder</button>
+      <button class="role-pill" data-role="mkt" onclick="selectRole(this)">Mkt</button>
+    </div>
+
+    <!-- Input -->
+    <div class="hero-search-box app-search-box-lg">
+      <span class="hero-search-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </span>
+      <input id="domain-input" class="hero-search-input" placeholder="nubank.com.br"
+             autocomplete="off" spellcheck="false"
+             onkeydown="if(event.key==='Enter')enrich()" />
+      <button id="search-btn" class="hero-search-btn" onclick="enrich()">
+        <span id="search-btn-text">Analisar</span>
+        <span id="search-btn-spinner" class="spinner" style="display:none"></span>
+      </button>
+    </div>
+
+    <!-- Loading -->
+    <div class="hero-loading" id="loading-status">
+      <span class="ldot"></span><span class="ldot"></span><span class="ldot"></span>
+      <span id="loading-msg">Consultando...</span>
+    </div>
+
+    <!-- Exemplos -->
+    <div class="app-examples">
+      <span class="app-ex-label">Experimente:</span>
+      <button class="hero-ex-btn" onclick="fillExample('nubank.com.br')">nubank</button>
+      <button class="hero-ex-btn" onclick="fillExample('stripe.com')">stripe</button>
+      <button class="hero-ex-btn" onclick="fillExample('totvs.com.br')">totvs</button>
+      <button class="hero-ex-btn" onclick="fillExample('rdstation.com')">rdstation</button>
+    </div>
+
+    <p class="hero-trial" id="trial-counter" style="display:none;margin-top:6px">
+      Você tem <strong></strong> buscas gratuitas.
+    </p>
+  </div>
+
+  <!-- Resultados aparecem aqui -->
+  <div class="results-wrap">
+    <div id="error-banner" class="error-msg" style="display:none"></div>
+    <div id="results-section"></div>
+  </div>
+
+</main>
+
+<!-- ══════════════════════════════════
+     MODAIS
+════════════════════════════════════ -->
+
+<!-- PAYWALL -->
+<div class="modal-overlay" id="paywall-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closePaywall()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="modal-icon">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+    </div>
+    <h3 class="modal-title">Limite atingido</h3>
+    <p class="modal-text">Continue prospectando sem limites. 500 buscas/mês, decisores ilimitados, CRM e exportação.</p>
+    <button class="modal-cta" onclick="closePaywall();startCheckout('pro')">Assinar Pro — R$ 97/mês →</button>
+    <button onclick="closePaywall()" style="margin-top:8px;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:13px">Não agora</button>
+  </div>
+</div>
+
+<!-- AUTH -->
+<div class="modal-overlay" id="auth-modal">
+  <div class="auth-card">
+    <button class="auth-close" onclick="closeAuthModal()">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="auth-logo">
+      <div class="auth-logo-mark">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="10" cy="4" r="2"/><circle cx="3.5" cy="15.5" r="2"/><circle cx="16.5" cy="15.5" r="2"/>
+          <line x1="10" y1="6" x2="5.2" y2="13.6"/><line x1="10" y1="6" x2="14.8" y2="13.6"/>
+          <line x1="5.4" y1="15.5" x2="14.6" y2="15.5"/>
+        </svg>
+      </div>
+      <span class="auth-logo-name">LeadEnricher</span>
+    </div>
+    <h3 class="auth-heading" id="auth-modal-title">Bem-vindo de <em>volta.</em></h3>
+    <p class="auth-sub" id="auth-modal-sub">5 buscas grátis. Sem cartão. Sem senha.</p>
+    <div class="auth-oauth-grid">
+      <button class="auth-oauth-btn" onclick="signInWithGoogle()">
+        <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Google
+      </button>
+      <button class="auth-oauth-btn" onclick="signInWithGitHub()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg>
+        GitHub
+      </button>
+      <button class="auth-oauth-btn" onclick="signInWithMicrosoft()">
+        <svg viewBox="0 0 23 23" fill="none"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="12" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="12" width="10" height="10" fill="#00A4EF"/><rect x="12" y="12" width="10" height="10" fill="#FFB900"/></svg>
+        Microsoft
+      </button>
+      <button class="auth-oauth-btn" onclick="signInWithApple()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        Apple
+      </button>
+    </div>
+    <div class="auth-divider">
+      <span class="auth-divider-line"></span>
+      <span class="auth-divider-txt">ou com email</span>
+      <span class="auth-divider-line"></span>
+    </div>
+    <div id="auth-magic-view">
+      <div class="auth-email-field">
+        <input id="auth-email" class="auth-email-input" type="email" placeholder="seu@email.com" autocomplete="email"/>
+      </div>
+      <button onclick="sendMagicLink()" class="auth-magic-btn">
+        <span id="magic-btn-text">Entrar com link mágico</span>
+        <span id="magic-btn-spin" class="spinner" style="display:none"></span>
+      </button>
+      <p id="auth-error" style="color:#f87171;font-size:13px;margin-top:8px;display:none"></p>
+      <p id="auth-success" style="color:#4ade80;font-size:13px;margin-top:8px;display:none"></p>
+      <p class="auth-hint">Nenhuma senha — enviamos um link para o seu email.</p>
+    </div>
+    <div class="auth-demo-block">
+      <div class="auth-demo-divider"><span>ou</span></div>
+      <button class="auth-demo-btn" onclick="signInAsDemo()">
+        <span class="auth-demo-icon">⚡</span>
+        Continuar em modo demo
+      </button>
+      <p class="auth-demo-hint">Plano Pro liberado · busca real · sem cartão · sem email</p>
+    </div>
+  </div>
+</div>
+
+<!-- HISTÓRICO -->
+<div class="modal-overlay" id="history-modal" onclick="closeHistoryOutside(event)">
+  <div class="modal" style="max-width:700px;width:95%;padding:0;overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
+      <h3 style="font-size:15px;font-weight:700;margin:0">Histórico de Leads</h3>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button onclick="exportAll('csv')" style="background:none;border:1px solid var(--border);color:var(--text-2);padding:5px 11px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600">CSV</button>
+        <button onclick="exportAll('xlsx')" style="background:none;border:1px solid var(--border);color:var(--text-2);padding:5px 11px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600">Excel</button>
+        <button class="modal-close" onclick="closeHistory()" style="position:static;margin:0">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="history-body" style="max-height:60vh;overflow-y:auto;padding:12px 0">
+      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
+    </div>
+  </div>
+</div>
+
+<!-- DASHBOARD -->
+<div class="modal-overlay" id="dashboard-modal" onclick="closeDashboardOutside(event)">
+  <div class="modal" style="max-width:760px;width:95%;padding:0;overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
+      <h3 style="font-size:15px;font-weight:700;margin:0">Dashboard comercial <span id="dash-period" style="font-weight:400;color:var(--text-3);font-size:12px"></span></h3>
+      <button class="modal-close" onclick="closeDashboard()" style="position:static;margin:0">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="dashboard-body" style="max-height:70vh;overflow-y:auto;padding:20px 22px">
+      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
+    </div>
+  </div>
+</div>
+
+<!-- PIPELINE -->
+<div class="modal-overlay" id="pipeline-modal" onclick="closePipelineOutside(event)">
+  <div class="modal" style="max-width:1080px;width:96%;padding:0;overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
+      <h3 style="font-size:15px;font-weight:700;margin:0">Pipeline de prospecção</h3>
+      <button class="modal-close" onclick="closePipeline()" style="position:static;margin:0">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="pipeline-body" style="max-height:72vh;overflow:auto;padding:16px 18px">
+      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
+    </div>
+  </div>
+</div>
+
+<!-- FOLLOW-UPS -->
+<div class="modal-overlay" id="followups-modal" onclick="closeFollowupsOutside(event)">
+  <div class="modal" style="max-width:640px;width:95%;padding:0;overflow:hidden">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
+      <h3 style="font-size:15px;font-weight:700;margin:0">Follow-ups pendentes</h3>
+      <button class="modal-close" onclick="closeFollowups()" style="position:static;margin:0">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="followups-body" style="max-height:60vh;overflow-y:auto;padding:8px 0">
+      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/static/js/app.js?v=9"></script>
+</body>
+</html>
