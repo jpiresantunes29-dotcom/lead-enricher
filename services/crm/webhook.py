@@ -73,12 +73,21 @@ def _serialize_lead(lead: Any, decision_makers: List[Any], activities: List[Any]
     }
 
 
-def push_lead(lead: Any, decision_makers: List[Any], activities: List[Any]) -> dict:
+def push_lead(
+    lead: Any,
+    decision_makers: List[Any],
+    activities: List[Any],
+    url: Optional[str] = None,
+    secret: Optional[str] = None,
+) -> dict:
     """
     Envia o lead completo ao webhook configurado.
+    url/secret explícitos (conexão por usuário) têm precedência sobre o env.
     Retorna {ok, status_code, error}.
     """
-    url = os.getenv("CRM_WEBHOOK_URL", "")
+    if url is None:
+        url = os.getenv("CRM_WEBHOOK_URL", "")
+        secret = os.getenv("CRM_WEBHOOK_SECRET", "")
     if not url:
         return {"ok": False, "status_code": None, "error": "not_configured"}
 
@@ -86,7 +95,6 @@ def push_lead(lead: Any, decision_makers: List[Any], activities: List[Any]) -> d
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     headers = {"Content-Type": "application/json"}
-    secret = os.getenv("CRM_WEBHOOK_SECRET", "")
     if secret:
         sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         headers["X-LeadEnricher-Signature"] = f"sha256={sig}"

@@ -1,18 +1,8 @@
-/* ══════ ROLE ADAPTIVE ══════ */
-const ROLES={
-  sdr:  'SDR — pare de gastar 20 min por prospect. Ficha completa em segundos.',
-  manager:'Gestor — chegue em cada reunião sabendo tudo sobre quem está do outro lado.',
-  founder:'Founder — ache os decisores certos nas empresas certas. Agora.',
-  mkt:  'Marketing — conheça o stack do prospect antes de criar sua próxima campanha.',
-};
-function selectRole(btn){
-  document.querySelectorAll('.role-pill').forEach(p=>p.classList.remove('active'));
-  btn.classList.add('active');
-  const el=document.getElementById('search-eyebrow-text');
-  if(!el||_profile)return;  // não sobrescreve quando logado (mostra plano)
-  el.style.opacity='0';
-  setTimeout(()=>{el.textContent=ROLES[btn.dataset.role];el.style.opacity='1';},180);
-}
+/* ════════════════════════════════════════════════════════════════
+   LeadEnricher — app (/app)
+   Views roteadas por hash: '' (buscar) · #dashboard · #pipeline ·
+   #followups · #history · #settings · #lead-<id>
+   ════════════════════════════════════════════════════════════════ */
 
 /* ══════ CELEBRATION ══════ */
 function celebrate(){
@@ -20,7 +10,7 @@ function celebrate(){
   canvas.width=window.innerWidth;canvas.height=window.innerHeight;
   const ctx=canvas.getContext('2d');
   canvas.classList.add('active');
-  const colors=['#F04E00','#D94500','#FF8040','#1A7A4A','#0A66C2'];
+  const colors=['#F5B700','#FFD84D','#FFF3C4','#4ade80','#60a5fa'];
   const particles=Array.from({length:55},()=>({
     x:Math.random()*canvas.width,y:-10,
     vx:(Math.random()-.5)*4,vy:Math.random()*4+2,
@@ -59,11 +49,12 @@ const _sb = supabase.createClient(
   'https://unpujwtgnldkrqisoytf.supabase.co',
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVucHVqd3Rnbmxka3JxaXNveXRmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5MTAwNzEsImV4cCI6MjA5MzQ4NjA3MX0.MWn_SZdK619vsAdziVbGAz7_fScmKlDx3I1yZUDLd8Q'
 );
-let _profile = null;
-let currentLeadId = null;
+let _profile=null;
+let currentLeadId=null;
+let _pendingRoute=null;   // rota que o usuário tentou abrir antes de logar
 
 // Rota canônica do produto — precisa estar na allowlist de Redirect URLs do Supabase
-const _AUTH_REDIRECT = window.location.origin + '/app';
+const _AUTH_REDIRECT=window.location.origin+'/app';
 
 // Demo mode: token local que o backend reconhece (DEMO_MODE=1)
 const _DEMO_KEY='le_demo_token';
@@ -87,7 +78,8 @@ async function signInAsDemo(){
   closeAuthModal();
   await loadProfile();
   loadIntegrations();
-  openDashboard();
+  if(_pendingRoute){const r=_pendingRoute;_pendingRoute=null;location.hash=r;}
+  else{applyRoute();focusSearch();}
 }
 
 async function authFetch(url,opts={}){
@@ -123,14 +115,11 @@ function updateQuotaUI(){
   if(plan==='enterprise'){el.style.display='none';return;}
   const rem=searches_limit-searches_used;
   el.style.display='block';
-  if(rem>0){const strong=el.querySelector('strong');if(strong)strong.textContent=rem;}
-  else el.innerHTML=`<strong>Cota esgotada.</strong> <button onclick="startCheckout('pro')" style="background:none;border:none;color:var(--accent);cursor:pointer;font-size:inherit;padding:0;text-decoration:underline">Faça upgrade</button>.`;
-}
-
-// Gate any action behind auth — opens modal if not logged in
-function requireAuth(fn){
-  if(_profile)fn();
-  else openAuthModal();
+  if(rem>0){
+    el.innerHTML='Você tem <strong></strong> buscas neste ciclo.';
+    el.querySelector('strong').textContent=rem;
+  }
+  else el.innerHTML=`<strong>Cota esgotada.</strong> <button onclick="startCheckout('pro')">Faça upgrade</button>`;
 }
 
 function updateNavUser(){
@@ -152,41 +141,39 @@ function updateNavUser(){
 }
 
 function openAuthModal(){document.getElementById('auth-modal').classList.add('open');}
-function closeAuthModal(){document.getElementById('auth-modal').classList.remove('open');document.getElementById('auth-error').style.display='none';document.getElementById('auth-success').style.display='none';}
+function closeAuthModal(){
+  document.getElementById('auth-modal').classList.remove('open');
+  document.getElementById('auth-error').style.display='none';
+  document.getElementById('auth-success').style.display='none';
+}
 
 async function sendMagicLink(){
   const email=document.getElementById('auth-email').value.trim();
-  if(!email){document.getElementById('auth-error').textContent='Informe seu email.';document.getElementById('auth-error').style.display='block';return;}
+  const errEl=document.getElementById('auth-error');
+  if(!email){errEl.textContent='Informe seu email.';errEl.style.display='block';return;}
   const btn=document.getElementById('magic-btn-text');const sp=document.getElementById('magic-btn-spin');
   btn.textContent='Enviando...';sp.style.display='inline-block';
-  document.getElementById('auth-error').style.display='none';
+  errEl.style.display='none';
   const{error}=await _sb.auth.signInWithOtp({email,options:{emailRedirectTo:_AUTH_REDIRECT}});
   btn.textContent='Entrar com link mágico';sp.style.display='none';
-  if(error){document.getElementById('auth-error').textContent=error.message;document.getElementById('auth-error').style.display='block';}
-  else{document.getElementById('auth-success').textContent='Link enviado! Verifique seu email.';document.getElementById('auth-success').style.display='block';}
+  if(error){errEl.textContent=error.message;errEl.style.display='block';}
+  else{const ok=document.getElementById('auth-success');ok.textContent='Link enviado! Verifique seu email.';ok.style.display='block';}
 }
 
-async function signInWithGoogle(){
-  await _sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:_AUTH_REDIRECT}});
-}
-async function signInWithGitHub(){
-  await _sb.auth.signInWithOAuth({provider:'github',options:{redirectTo:_AUTH_REDIRECT}});
-}
-async function signInWithMicrosoft(){
-  await _sb.auth.signInWithOAuth({provider:'azure',options:{redirectTo:_AUTH_REDIRECT}});
-}
-async function signInWithApple(){
-  await _sb.auth.signInWithOAuth({provider:'apple',options:{redirectTo:_AUTH_REDIRECT}});
-}
+async function signInWithGoogle(){await _sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:_AUTH_REDIRECT}});}
+async function signInWithGitHub(){await _sb.auth.signInWithOAuth({provider:'github',options:{redirectTo:_AUTH_REDIRECT}});}
+async function signInWithMicrosoft(){await _sb.auth.signInWithOAuth({provider:'azure',options:{redirectTo:_AUTH_REDIRECT}});}
+async function signInWithApple(){await _sb.auth.signInWithOAuth({provider:'apple',options:{redirectTo:_AUTH_REDIRECT}});}
 
 async function signOut(){
   _clearDemoToken();
-  await _sb.auth.signOut();_profile=null;updateNavUser();
+  await _sb.auth.signOut();
+  _profile=null;_integr=null;currentLeadId=null;
+  hideResults();hideError();
   const tc=document.getElementById('trial-counter');if(tc)tc.style.display='none';
-  // Fecha qualquer modal aberto e volta pro estado limpo
-  ['dashboard-modal','pipeline-modal','followups-modal','history-modal'].forEach(id=>{
-    document.getElementById(id)?.classList.remove('open');
-  });
+  updateNavUser();
+  if(location.hash)history.replaceState(null,'',location.pathname);
+  showView('search');
 }
 
 async function startCheckout(plan){
@@ -201,11 +188,58 @@ async function startCheckout(plan){
 
 function openPaywall(){document.getElementById('paywall-modal').classList.add('open');}
 function closePaywall(){document.getElementById('paywall-modal').classList.remove('open');}
+function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
+
+/* ══════ ROUTER (views por hash) ══════ */
+const ROUTES=['','dashboard','pipeline','followups','history','settings'];
+
+function nav(route){
+  if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
+  if(location.hash.slice(1)===route)applyRoute();   // re-clique recarrega a view
+  else location.hash=route;
+}
+
+function showView(v){
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));
+  const route=v==='search'?'':v;
+  document.querySelectorAll('[data-route]').forEach(b=>b.classList.toggle('active',b.dataset.route===route));
+  window.scrollTo({top:0});
+}
+
+function applyRoute(){
+  let h=location.hash.slice(1);
+  if(h.startsWith('lead-')){
+    const id=parseInt(h.slice(5),10);
+    if(!_profile){_pendingRoute=h;showView('search');openAuthModal();return;}
+    showView('search');
+    if(id)openLead(id);
+    return;
+  }
+  if(!ROUTES.includes(h))h='';
+  if(h&&!_profile){
+    _pendingRoute=h;
+    history.replaceState(null,'',location.pathname);
+    showView('search');openAuthModal();
+    return;
+  }
+  showView(h||'search');
+  if(h==='dashboard')loadDashboard();
+  else if(h==='pipeline')loadPipeline();
+  else if(h==='followups')loadFollowups();
+  else if(h==='history')loadHistory();
+  else if(h==='settings')loadSettings();
+}
+window.addEventListener('hashchange',applyRoute);
+
+function focusSearch(){
+  if(matchMedia('(pointer: coarse)').matches)return; // não abre teclado no mobile
+  document.getElementById('domain-input')?.focus();
+}
 
 /* ══════ ENRICH ══════ */
-async function enrich(domainOverride){
+async function enrich(){
   const input=document.getElementById('domain-input');
-  let domain=(domainOverride||input.value).trim();
+  const domain=input.value.trim();
   if(!domain){showError('Digite o domínio da empresa (ex: nubank.com.br).');return;}
   const token=await getToken();
   if(!token){openAuthModal();return;}
@@ -222,6 +256,7 @@ async function enrich(domainOverride){
     if(_profile)_profile.searches_used++;
     updateQuotaUI();updateNavUser();
     renderResult(json.data);celebrate();
+    if(json.data.id)history.replaceState(null,'','#lead-'+json.data.id);
   }catch(e){
     if(e.message!=='not_authenticated')showError('Erro de conexão com o servidor.');
   }finally{setLoading(false);stopLoad();}
@@ -237,7 +272,7 @@ function renderScorePill(data){
   const rows=(data.score_breakdown||[]).map(it=>
     `<div class="sp-row"><span class="sp-crit">${esc(it.criterion)}</span><span class="sp-evi">${esc(it.evidence||'')}</span><span class="sp-pts">+${it.points}</span></div>`
   ).join('')||'<div class="sp-row"><span class="sp-crit">Nenhum sinal pontuado ainda — busque decisores para subir o score.</span></div>';
-  return `<span class="score-wrap"><button class="score-pill prio-${p}" onclick="toggleScorePop(event)" title="Ver composição do score">⚡ ${data.score} · ${labels[p]||p}</button><div class="score-pop" id="score-pop" onclick="event.stopPropagation()"><div class="sp-title">Por que ${data.score} pontos?</div>${rows}<div class="sp-foot">Modelo ${esc(data.score_version||'v1')} · recalculado ao encontrar decisores</div></div></span>`;
+  return `<span class="score-wrap"><button class="score-pill prio-${p}" onclick="toggleScorePop(event)" title="Ver composição do score">${data.score} · ${labels[p]||p}</button><div class="score-pop" id="score-pop" onclick="event.stopPropagation()"><div class="sp-title">Por que ${data.score} pontos?</div>${rows}<div class="sp-foot">Modelo ${esc(data.score_version||'v1')} · recalculado ao encontrar decisores</div></div></span>`;
 }
 function toggleScorePop(e){e.stopPropagation();const el=document.getElementById('score-pop');if(el)el.classList.toggle('open');}
 document.addEventListener('click',()=>{const el=document.getElementById('score-pop');if(el)el.classList.remove('open');});
@@ -277,6 +312,7 @@ async function logCall(outcome){
     fb.innerHTML=`${esc(json.message)}${ics}`;
     fb.classList.add('show');
     if(outcome==='meeting_scheduled')document.getElementById('meet-row').style.display='none';
+    loadTimeline();loadTodayFollowupsCount();
   }catch(e){if(e.message!=='not_authenticated'){fb.textContent='Erro de conexão.';fb.classList.add('show');}}
 }
 
@@ -292,22 +328,18 @@ async function downloadIcs(activityId){
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
 }
 
-/* ══════ FILA DE FOLLOW-UPS ══════ */
-function openFollowups(){
-  document.getElementById('followups-modal').classList.add('open');
-  loadFollowups();
-}
-function closeFollowups(){document.getElementById('followups-modal').classList.remove('open');}
-function closeFollowupsOutside(e){if(e.target===document.getElementById('followups-modal'))closeFollowups();}
-
+/* ══════ VIEW: FOLLOW-UPS ══════ */
 async function loadFollowups(){
   const body=document.getElementById('followups-body');
-  body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>';
+  body.innerHTML='<div class="muted-box">Carregando…</div>';
   try{
     const resp=await authFetch('/api/activities/pending');
     const list=await resp.json();
-    if(!resp.ok){body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro ao carregar.</div>';return;}
-    if(!list.length){body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Nenhum follow-up pendente. 🎉</div>';return;}
+    if(!resp.ok){body.innerHTML='<div class="muted-box">Erro ao carregar.</div>';return;}
+    if(!list.length){
+      body.innerHTML=`<div class="muted-box">Tudo em dia — nenhum follow-up pendente.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a></div>`;
+      return;
+    }
     const now=Date.now();
     body.innerHTML=list.map(a=>{
       const due=a.due_at?new Date(a.due_at):null;
@@ -319,41 +351,45 @@ async function loadFollowups(){
         <div class="fu-info">
           <span class="fu-kind">${kind}</span>
           <span class="fu-notes">${esc(a.notes||'')}</span>
-          <span class="fu-when${late?' late':''}">${late?'⚠ atrasado · ':''}${when}</span>
+          <span class="fu-when${late?' late':''}">${late?'atrasado · ':''}${when}</span>
         </div>
         <div class="fu-actions">
-          <button class="fu-btn" onclick="loadLeadIntoView(${a.lead_id});closeFollowups()">Abrir lead</button>
+          <button class="fu-btn" onclick="loadLeadIntoView(${a.lead_id})">Abrir lead</button>
           ${ics}
           <button class="fu-btn done" onclick="completeActivity(${a.id})">Concluir</button>
         </div>
       </div>`;
     }).join('');
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro de conexão.</div>';}
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
 }
 
 async function completeActivity(id){
   try{
     await authFetch(`/api/activities/${id}`,{method:'PATCH',body:JSON.stringify({completed:true})});
-    loadFollowups();
+    loadFollowups();loadTodayFollowupsCount();
   }catch(_){}
 }
 
-/* ══════ DASHBOARD ══════ */
-function openDashboard(){document.getElementById('dashboard-modal').classList.add('open');loadDashboard();}
-function closeDashboard(){document.getElementById('dashboard-modal').classList.remove('open');}
-function closeDashboardOutside(e){if(e.target===document.getElementById('dashboard-modal'))closeDashboard();}
-
+/* ══════ VIEW: DASHBOARD ══════ */
 const STAGE_LABELS={novo:'Novo',contatado:'Contatado',reuniao_agendada:'Reunião agendada',oportunidade:'Oportunidade',ganho:'Ganho',perdido:'Perdido'};
 const STAGE_ORDER=['novo','contatado','reuniao_agendada','oportunidade','ganho','perdido'];
+const PRIO_LABELS={alta:'Alta',media:'Média',baixa:'Baixa'};
 
 async function loadDashboard(){
   const body=document.getElementById('dashboard-body');
-  body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>';
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   try{
     const resp=await authFetch('/api/dashboard/metrics?days=30');
     const m=await resp.json();
-    if(!resp.ok){body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro ao carregar.</div>';return;}
-    document.getElementById('dash-period').textContent=`· últimos ${m.period_days} dias`;
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
+    document.getElementById('dash-period').textContent=`Últimos ${m.period_days} dias`;
+    if(!m.leads_pesquisados){
+      body.innerHTML=`<div class="panel"><div class="muted-box">
+        Seu dashboard ganha vida com a primeira busca.<br/>
+        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar meu primeiro domínio</a>
+      </div></div>`;
+      return;
+    }
     const pct=v=>Math.round(v*100)+'%';
     const kpi=(val,lbl,warn)=>`<div class="kpi${warn?' warn':''}"><span class="kpi-val">${val}</span><span class="kpi-lbl">${lbl}</span></div>`;
     const funilMax=Math.max(1,...STAGE_ORDER.map(s=>m.funil_por_estagio[s]||0));
@@ -363,8 +399,8 @@ async function loadDashboard(){
     }).join('');
     const prio=['alta','media','baixa'].map(p=>{
       const v=m.leads_por_prioridade[p]||0;
-      return `<span class="score-pill prio-${p}" style="cursor:default">${p==='alta'?'🔴':p==='media'?'🟡':'🔵'} ${p}: ${v}</span>`;
-    }).join(' ');
+      return `<span class="score-pill static prio-${p}">${PRIO_LABELS[p]}: ${v}</span>`;
+    }).join('');
     body.innerHTML=`
       <div class="kpi-grid">
         ${kpi(m.leads_pesquisados,'leads pesquisados')}
@@ -374,54 +410,61 @@ async function loadDashboard(){
         ${kpi(pct(m.conversao_oportunidade),'conversão p/ oportunidade')}
         ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} atrasados)</small>`:''),'follow-ups pendentes',m.followups_atrasados>0)}
       </div>
-      <div class="dash-sec-title">Funil por estágio</div>
-      <div class="funnel">${funil}</div>
-      <div class="dash-sec-title">Leads por prioridade</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${prio}</div>`;
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro de conexão.</div>';}
+      <div class="panel panel-pad">
+        <div class="dash-sec-title" style="margin-top:0">Funil por estágio</div>
+        <div class="funnel">${funil}</div>
+        <div class="dash-sec-title">Leads por prioridade</div>
+        <div class="prio-row">${prio}</div>
+      </div>`;
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
 }
 
-/* ══════ PIPELINE (KANBAN) ══════ */
-function openPipeline(){document.getElementById('pipeline-modal').classList.add('open');loadPipeline();}
-function closePipeline(){document.getElementById('pipeline-modal').classList.remove('open');}
-function closePipelineOutside(e){if(e.target===document.getElementById('pipeline-modal'))closePipeline();}
-
+/* ══════ VIEW: PIPELINE (KANBAN) ══════ */
 async function loadPipeline(){
   const body=document.getElementById('pipeline-body');
-  body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>';
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   try{
     const resp=await authFetch('/api/leads?per_page=100');
     const leads=await resp.json();
-    if(!resp.ok){body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro ao carregar.</div>';return;}
-    if(!leads.length){body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Nenhum lead ainda — analise um domínio para começar.</div>';return;}
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
+    if(!leads.length){
+      body.innerHTML=`<div class="panel"><div class="muted-box">Nenhum lead ainda.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a></div></div>`;
+      return;
+    }
     const byStage={};STAGE_ORDER.forEach(s=>byStage[s]=[]);
     leads.forEach(l=>{(byStage[l.stage||'novo']||byStage.novo).push(l)});
-    body.innerHTML=`<div class="kanban">${STAGE_ORDER.map(stage=>{
+    body.innerHTML=`<div class="kanban-wrap"><div class="kanban">${STAGE_ORDER.map(stage=>{
       const cards=byStage[stage].map(l=>{
         const i=STAGE_ORDER.indexOf(stage);
         const left=i>0?`<button class="kb-move" title="Voltar" onclick="moveLead(${l.id},'${STAGE_ORDER[i-1]}')">‹</button>`:'<span></span>';
         const right=i<STAGE_ORDER.length-1?`<button class="kb-move" title="Avançar" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">›</button>`:'<span></span>';
         const prio=l.priority?`<span class="kb-prio prio-${l.priority}">${l.score??''}</span>`:'';
-        return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" data-stage="${stage}" ondragstart="dragStart(event)" ondrop="dragDrop(event)" ondragover="dragOver(event)" ondragleave="dragLeave(event)">
-          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id});closePipeline()">${esc(l.company_name||l.domain||'—')}</button>${prio}</div>
+        return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)">
+          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button>${prio}</div>
           <div class="kb-domain">${esc(l.domain||'')}</div>
           <div class="kb-card-actions">${left}${right}</div>
         </div>`;
       }).join('')||'<div class="kb-empty">—</div>';
-      return `<div class="kb-col" data-stage="${stage}" ondrop="dragDropCol(event)" ondragover="dragOverCol(event)"><div class="kb-col-hdr">${STAGE_LABELS[stage]} <span class="kb-count">${byStage[stage].length}</span></div>${cards}</div>`;
-    }).join('')}</div>`;
-    initDragDrop();
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro de conexão.</div>';}
+      return `<div class="kb-col" data-stage="${stage}" ondrop="dragDropCol(event)" ondragover="dragOverCol(event)" ondragleave="dragLeaveCol(event)"><div class="kb-col-hdr">${STAGE_LABELS[stage]} <span class="kb-count">${byStage[stage].length}</span></div>${cards}</div>`;
+    }).join('')}</div></div>`;
+    document.querySelectorAll('.kb-card').forEach(c=>{
+      c.addEventListener('dragend',()=>{c.classList.remove('dragging');document.querySelectorAll('.kb-col.drag-over').forEach(k=>k.classList.remove('drag-over'));});
+    });
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
 }
 
 let draggedCard=null;
 function dragStart(e){draggedCard=e.target.closest('.kb-card');draggedCard?.classList.add('dragging');}
-function dragOver(e){e.preventDefault();e.target.closest('.kb-card')?.classList.add('drag-over');}
-function dragLeave(e){e.target.closest('.kb-card')?.classList.remove('drag-over');}
-function dragOverCol(e){e.preventDefault();}
-function dragDrop(e){e.preventDefault();e.stopPropagation();if(!draggedCard)return;const target=e.target.closest('.kb-card');if(target&&target!==draggedCard){const col=draggedCard.parentElement;const targetCol=target.parentElement;if(col===targetCol){const rect=target.getBoundingClientRect();if(e.clientY<rect.top+rect.height/2)target.parentNode.insertBefore(draggedCard,target);else target.parentNode.insertBefore(draggedCard,target.nextSibling);}}}
-function dragDropCol(e){e.preventDefault();if(!draggedCard)return;const col=e.target.closest('.kb-col');if(col){const stage=col.dataset.stage;const leadId=parseInt(draggedCard.dataset.leadId);moveLead(leadId,stage).then(()=>{draggedCard.classList.remove('dragging');draggedCard=null;loadPipeline();})}}
-function initDragDrop(){document.querySelectorAll('.kb-card').forEach(c=>{c.addEventListener('dragend',()=>{c.classList.remove('dragging','drag-over');})})}
+function dragOverCol(e){e.preventDefault();e.currentTarget.classList.add('drag-over');}
+function dragLeaveCol(e){if(!e.currentTarget.contains(e.relatedTarget))e.currentTarget.classList.remove('drag-over');}
+function dragDropCol(e){
+  e.preventDefault();
+  const col=e.currentTarget;col.classList.remove('drag-over');
+  if(!draggedCard)return;
+  const leadId=parseInt(draggedCard.dataset.leadId,10);
+  draggedCard=null;
+  moveLead(leadId,col.dataset.stage);
+}
 
 async function moveLead(id,stage){
   try{
@@ -439,17 +482,20 @@ async function loadIntegrations(){
   }catch(_){_integr=null;}
 }
 
+const IC_SPARK='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.7L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.3z"/></svg>';
+const IC_PUSH='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+
 async function genAiSummary(force){
   if(!currentLeadId)return;
   const box=document.getElementById('ai-box');
   box.style.display='block';
-  box.innerHTML='<div class="ai-loading">✨ Gerando resumo com IA...</div>';
+  box.innerHTML='<div class="ai-loading">Gerando resumo com IA…</div>';
   try{
     const resp=await authFetch(`/api/leads/${currentLeadId}/ai-summary${force?'?force=true':''}`,{method:'POST'});
     const json=await resp.json();
     if(resp.status===402){box.style.display='none';openPaywall();return;}
     if(!resp.ok){box.innerHTML=`<div class="ai-loading">${esc(json.detail||'Erro ao gerar resumo.')}</div>`;return;}
-    box.innerHTML=`<div class="ai-title">✨ Resumo executivo ${json.cached?'<small>(cacheado)</small>':''} <a href="#" onclick="genAiSummary(true);return false" style="font-size:11px">regenerar</a></div><div class="ai-text">${esc(json.summary).replace(/\n/g,'<br/>')}</div>`;
+    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo ${json.cached?'<small>(cacheado)</small>':''} <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(json.summary).replace(/\n/g,'<br/>')}</div>`;
   }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="ai-loading">Erro de conexão.</div>';}
 }
 
@@ -461,8 +507,13 @@ async function pushToCrm(){
     const resp=await authFetch(`/api/leads/${currentLeadId}/push`,{method:'POST'});
     const json=await resp.json();
     fb.textContent=resp.ok?'✓ Lead enviado ao CRM com sucesso.':(json.detail||'Falha no envio ao CRM.');
+    if(resp.ok)loadTimeline();
   }catch(e){if(e.message!=='not_authenticated')fb.textContent='Erro de conexão.';}
 }
+
+/* ══════ TIMELINE ══════ */
+const ACT_LABELS={call:'Ligação',voicemail:'Caixa postal',no_answer:'Sem resposta',meeting:'Reunião',note:'Nota',followup:'Follow-up'};
+const OUT_LABELS={no_answer:'não atendeu',busy:'ocupado',voicemail:'caixa postal',talked:'conversou',meeting_scheduled:'reunião agendada'};
 
 async function loadTimeline(){
   if(!currentLeadId)return;
@@ -474,19 +525,37 @@ async function loadTimeline(){
     if(!acts.length){box.style.display='none';return;}
     box.style.display='block';
     const tl=acts.map(a=>{
-      const icon={call:'☎',voicemail:'📱',no_answer:'⏱',meeting:'✓',note:'📝'}[a.type]||'●';
+      const cls=a.type==='meeting'?' ok':(a.outcome==='no_answer'||a.outcome==='busy'?' warn':'');
       const when=a.completed_at?new Date(a.completed_at).toLocaleDateString('pt-BR'):(a.due_at?new Date(a.due_at).toLocaleDateString('pt-BR'):'');
-      return `<div class="tl-item"><span class="tl-icon">${icon}</span><span class="tl-content"><strong>${a.type}</strong>${a.outcome?' · '+a.outcome:''}${when?' · '+when:''}<br/><small>${esc(a.notes||'')}</small></span></div>`;
+      const label=ACT_LABELS[a.type]||a.type;
+      const out=a.outcome?(OUT_LABELS[a.outcome]||a.outcome):'';
+      return `<div class="tl-item${cls}"><span class="tl-dot"></span><span class="tl-content"><span><strong>${esc(label)}</strong>${out?' · '+esc(out):''}${when?' · '+when:''}</span>${a.notes?`<small>${esc(a.notes)}</small>`:''}</span></div>`;
     }).join('');
-    box.innerHTML=`<div class="tl-title">⏱ Timeline</div><div class="timeline-rail">${tl}</div>`;
+    box.innerHTML=`<div class="tl-title">Timeline</div><div class="timeline-rail">${tl}</div>`;
   }catch(_){}
 }
 
 /* ══════ RENDER RESULT ══════ */
+async function openLead(leadId){
+  try{
+    const resp=await authFetch(`/api/leads/${leadId}`);
+    if(!resp.ok){showError('Lead não encontrado.');return;}
+    const lead=await resp.json();
+    hideError();
+    renderResult(lead);
+  }catch(_){}
+}
+
+function loadLeadIntoView(leadId){
+  const h='lead-'+leadId;
+  if(location.hash.slice(1)===h){showView('search');openLead(leadId);}
+  else location.hash=h;
+}
+
 function renderResult(data){
   currentLeadId=data.id;
   currentLeadData=data;
-  setTimeout(loadTimeline, 300);
+  setTimeout(loadTimeline,300);
   const root=document.getElementById('results-section');root.innerHTML='';
   const smap={enriched:['Enriquecido','enriched'],partial:['Parcial','partial'],failed:['Falhou','failed']};
   const[sl,sc]=smap[data.status]||['—','partial'];
@@ -503,7 +572,7 @@ function renderResult(data){
   };
   const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:['OK','verified'],probable:['~','probable'],unverified:['?','unverified'],high:['OK','verified'],medium:['~','probable'],low:['?','unverified']};const[l,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${l}</span>`;};
   let emp='';
-  if(data.employee_count){if(typeof data.employee_count==='object'){const e=data.employee_count;if(e.exact)emp=`${e.exact.toLocaleString('pt-BR')} (${e.band})`;else if(e.min&&e.max)emp=`${e.min.toLocaleString('pt-BR')}–${e.max.toLocaleString('pt-BR')}`;else if(e.min)emp=`${e.min.toLocaleString('pt-BR')}+`;else if(e.band)emp=e.band;else emp=e.raw||'';}else emp=data.employee_count;}
+  if(data.employee_count){if(typeof data.employee_count==='object'){const e=data.employee_count;if(e.exact)emp=e.exact.toLocaleString('pt-BR');else if(e.min&&e.max)emp=`${e.min.toLocaleString('pt-BR')}–${e.max.toLocaleString('pt-BR')} (faixa)`;else if(e.min)emp=`${e.min.toLocaleString('pt-BR')}+ (faixa)`;else if(e.band)emp=e.band;else emp=e.raw||'';}else emp=data.employee_count;}
   const cell=(lbl,val,opts={})=>{const d=opts.delay||0;if(!val)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val muted">—</span></div>`;if(opts.isLink)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><a class="data-val link" href="${val}" target="_blank" rel="noopener">${esc(opts.disp||val)}</a></div>`;return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val">${esc(val)}</span></div>`;};
   const ws=data.website?data.website.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
   const li=data.linkedin_url?data.linkedin_url.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
@@ -576,17 +645,17 @@ function renderResult(data){
     <div class="ai-box" id="ai-box" style="display:none"></div>
     <div id="timeline-box" style="display:none"></div>
   </div>`;
-  // Ações de integração (só aparecem se configuradas no servidor)
+  // Ações de integração (só aparecem se configuradas)
   const integ=_integr||{};
   const integBtns=[
-    integ.ai?`<button class="call-btn" onclick="genAiSummary()">✨ Resumo IA</button>`:'',
-    integ.crm_webhook?`<button class="call-btn" onclick="pushToCrm()">⇪ Enviar ao CRM</button>`:'',
+    integ.ai?`<button class="call-btn" onclick="genAiSummary()">${IC_SPARK} Resumo IA</button>`:'',
+    integ.crm_webhook?`<button class="call-btn" onclick="pushToCrm()">${IC_PUSH} Enviar ao CRM</button>`:'',
   ].filter(Boolean).join('');
   if(integBtns)document.getElementById('integr-row').innerHTML=integBtns;
   if(data.ai_summary){
     const box=document.getElementById('ai-box');
     box.style.display='block';
-    box.innerHTML=`<div class="ai-title">✨ Resumo executivo <small>(cacheado)</small> <a href="#" onclick="genAiSummary(true);return false" style="font-size:11px">regenerar</a></div><div class="ai-text">${esc(data.ai_summary).replace(/\n/g,'<br/>')}</div>`;
+    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo <small>(cacheado)</small> <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(data.ai_summary).replace(/\n/g,'<br/>')}</div>`;
   }
   document.getElementById('role-input').addEventListener('keydown',e=>{if(e.key==='Enter')searchDecisores()});
   const top=root.closest('.results-wrap').getBoundingClientRect().top+window.scrollY-100;
@@ -604,14 +673,14 @@ async function searchDecisores(){
   const bText=document.getElementById('role-btn-text');
   const bSpin=document.getElementById('role-btn-spinner');
   btn.disabled=true;bText.textContent='Buscando...';bSpin.style.display='inline-block';
-  list.innerHTML='<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13.5px">Procurando no LinkedIn... (até 15s)</div>';
+  list.innerHTML='<div class="muted-box">Procurando no LinkedIn… (até 15s)</div>';
   try{
     const resp=await authFetch('/api/decisores',{method:'POST',body:JSON.stringify({lead_id:currentLeadId,roles:[role]})});
     const json=await resp.json();
-    if(!resp.ok||!json.success){list.innerHTML=`<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13.5px">${esc(json.detail||json.message||'Erro.')}</div>`;return;}
+    if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">${esc(json.detail||json.message||'Erro.')}</div>`;return;}
     renderDecisores(json.decisores);
     refreshLeadScore(); // sinais de decisor mudam o score
-  }catch(e){list.innerHTML=`<div style="padding:24px;text-align:center;color:var(--text-3);font-size:13.5px">Erro de conexão.</div>`;}
+  }catch(e){list.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
   finally{btn.disabled=false;bText.textContent='Buscar';bSpin.style.display='none';}
 }
 
@@ -632,129 +701,80 @@ function renderDNS(dns){
   if(!dns||(!dns.mx&&!dns.a))return'';
   const e=(s)=>esc(String(s||''));
   const mx=(dns.mx||[]).map(m=>`<tr><td class="dns-prio">${m.priority}</td><td>${e(m.host)}</td><td>${e(m.ip||'—')}</td><td>${e(m.asn_org||'—')}</td><td>${e(m.country||'—')}</td></tr>`).join('');
-  const txt=(dns.txt||[]).slice(0,8).map(t=>`<li>${e(t)}</li>`).join('');
-  return `<details class="dns-report"><summary><span class="dns-tog">⌄</span>Relatório DNS completo</summary><div class="dns-body"><div class="dns-sec"><h4>MX</h4><table class="dns-tbl"><thead><tr><th>Prio</th><th>Host</th><th>IP</th><th>ASN</th><th>País</th></tr></thead><tbody>${mx||'<tr><td colspan="5" style="color:var(--text-3)">sem registros</td></tr>'}</tbody></table></div><div class="dns-grid"><div class="dns-sec"><h4>A</h4><ul class="dns-ul">${(dns.a||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li style="color:var(--text-3)">—</li>'}</ul></div><div class="dns-sec"><h4>NS</h4><ul class="dns-ul">${(dns.ns||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li style="color:var(--text-3)">—</li>'}</ul></div></div>${dns.spf?`<div class="dns-sec"><h4>SPF</h4><div class="dns-rec">${e(dns.spf)}</div></div>`:''}</div></details>`;
+  return `<details class="dns-report"><summary><span class="dns-tog">⌄</span>Relatório DNS completo</summary><div class="dns-body"><div class="dns-sec"><h4>MX</h4><table class="dns-tbl"><thead><tr><th>Prio</th><th>Host</th><th>IP</th><th>ASN</th><th>País</th></tr></thead><tbody>${mx||'<tr><td colspan="5">sem registros</td></tr>'}</tbody></table></div><div class="dns-grid"><div class="dns-sec"><h4>A</h4><ul class="dns-ul">${(dns.a||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div><div class="dns-sec"><h4>NS</h4><ul class="dns-ul">${(dns.ns||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div></div>${dns.spf?`<div class="dns-sec"><h4>SPF</h4><div class="dns-rec">${e(dns.spf)}</div></div>`:''}</div></details>`;
 }
 
-/* ══════ FEATURES PROGRESSIVE ══════ */
-function showAllFeatures(){
-  document.querySelectorAll('.feat-card.hidden').forEach(c=>{c.classList.remove('hidden');setTimeout(()=>c.classList.add('in'),50);});
-  document.getElementById('show-more-btn').style.display='none';
+/* ══════ VIEW: HISTÓRICO ══════ */
+let _histLeads=[];
+
+async function loadHistory(){
+  const body=document.getElementById('history-body');
+  body.innerHTML='<div class="muted-box">Carregando…</div>';
+  document.getElementById('history-filter').value='';
+  try{
+    const resp=await authFetch('/api/leads?per_page=100');
+    if(!resp.ok){body.innerHTML='<div class="muted-box">Erro ao carregar histórico.</div>';return;}
+    _histLeads=await resp.json();
+    renderHistory('');
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
 }
 
-/* ══════ COMMAND PALETTE ══════ */
-function openCmd(){document.getElementById('cmd-overlay').classList.add('open');setTimeout(()=>document.getElementById('cmd-input').focus(),50);}
-function closeCmd(){document.getElementById('cmd-overlay').classList.remove('open');document.getElementById('cmd-input').value='';}
-function closeCmdOutside(e){if(e.target===document.getElementById('cmd-overlay'))closeCmd();}
-function cmdSearch(){const v=document.getElementById('cmd-input').value.trim();closeCmd();if(v){document.getElementById('domain-input').value=v;enrich();}else document.getElementById('domain-input').focus();}
-function cmdGoto(id){closeCmd();const el=document.getElementById(id);if(el)window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-80,behavior:'smooth'});}
-function cmdFill(d){closeCmd();document.getElementById('domain-input').value=d;enrich();}
-function filterCmd(val){
-  document.querySelectorAll('.cmd-row').forEach(r=>{
-    const lbl=r.querySelector('.cmd-row-lbl')?.textContent||'';
-    r.style.display=val&&!lbl.toLowerCase().includes(val.toLowerCase())?'none':'flex';
-  });
-}
-function cmdKeydown(e){
-  if(e.key==='Escape'){closeCmd();return;}
-  if(e.key==='Enter'){const s=document.querySelector('.cmd-row.sel:not([style*="display: none"])');if(s)s.click();else cmdSearch();}
-  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
-    const items=[...document.querySelectorAll('.cmd-row:not([style*="display: none"])')];
-    const idx=items.findIndex(i=>i.classList.contains('sel'));
-    items.forEach(i=>i.classList.remove('sel'));
-    const next=e.key==='ArrowDown'?(idx+1)%items.length:(idx-1+items.length)%items.length;
-    items[next]?.classList.add('sel');e.preventDefault();
+function filterHistory(q){renderHistory(q);}
+
+function renderHistory(q){
+  const body=document.getElementById('history-body');
+  const count=document.getElementById('history-count');
+  const norm=(q||'').trim().toLowerCase();
+  const leads=norm?_histLeads.filter(l=>
+    (l.company_name||'').toLowerCase().includes(norm)||(l.domain||'').toLowerCase().includes(norm)
+  ):_histLeads;
+  count.textContent=_histLeads.length?`${leads.length} de ${_histLeads.length} lead${_histLeads.length!==1?'s':''}`:'';
+  if(!_histLeads.length){
+    body.innerHTML=`<div class="muted-box">Nenhum lead ainda.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Fazer minha primeira busca</a></div>`;
+    return;
   }
+  if(!leads.length){body.innerHTML='<div class="muted-box">Nenhum lead corresponde ao filtro.</div>';return;}
+  body.innerHTML=leads.map(l=>{
+    const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
+    const emp=l.employee_count?(typeof l.employee_count==='object'?(l.employee_count.band||l.employee_count.raw||''):l.employee_count):'';
+    return `<div id="row-${l.id}" class="hist-row">
+      <div class="hist-ava">${esc((l.company_name||l.domain||'?')[0].toUpperCase())}</div>
+      <div class="hist-main">
+        <div class="hist-name">${esc(l.company_name||l.domain)}</div>
+        <div class="hist-meta">${esc(l.domain||'')}${l.mx_provider?` · ${esc(l.mx_provider)}`:''}${emp?` · ${esc(emp)} func.`:''}</div>
+      </div>
+      <div class="hist-date">${date}</div>
+      <div class="hist-actions">
+        <button class="hist-btn primary" onclick="loadLeadIntoView(${l.id})">Ver</button>
+        <button class="hist-btn" onclick="exportLead(${l.id},'csv')" title="Exportar CSV">CSV</button>
+        <button class="hist-btn danger" onclick="deleteLead(${l.id})" title="Remover">✕</button>
+      </div>
+    </div>`;
+  }).join('');
 }
-document.addEventListener('keydown',e=>{
-  if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openCmd();}
-  if(e.key==='Escape')closeCmd();
-});
-
-/* ══════ HELPERS ══════ */
-function setLoading(s){
-  const btn=document.getElementById('search-btn');
-  const txt=document.getElementById('search-btn-text');
-  const sp=document.getElementById('search-btn-spinner');
-  btn.disabled=s;txt.textContent=s?'Analisando...':'Analisar';sp.style.display=s?'inline-block':'none';
-}
-function showError(m){const el=document.getElementById('error-banner');el.textContent=m;el.style.display='block';}
-function hideError(){document.getElementById('error-banner').style.display='none';}
-function hideResults(){document.getElementById('results-section').innerHTML='';}
-function fillExample(v){document.getElementById('domain-input').value=v;document.getElementById('domain-input').focus();}
-function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function toggleFAQ(item){document.querySelectorAll('.faq-item.open').forEach(el=>{if(el!==item)el.classList.remove('open')});item.classList.toggle('open');}
 
 async function deleteLead(leadId){
   if(!confirm('Remover este lead do histórico?'))return;
   try{
     const resp=await authFetch(`/api/leads/${leadId}`,{method:'DELETE'});
     if(resp.ok||resp.status===204){
-      const row=document.getElementById(`row-${leadId}`);
-      if(row){row.style.opacity='0';row.style.transition='opacity .25s';setTimeout(()=>row.remove(),250);}
-    }else{
-      alert('Erro ao remover lead.');
-    }
+      _histLeads=_histLeads.filter(l=>l.id!==leadId);
+      renderHistory(document.getElementById('history-filter').value);
+    }else alert('Erro ao remover lead.');
   }catch(e){
     if(e.message!=='not_authenticated')alert('Erro de conexão.');
   }
 }
 
-/* ══════ HISTÓRICO DE LEADS ══════ */
-function openHistory(){document.getElementById('history-modal').classList.add('open');loadHistory();}
-function closeHistory(){document.getElementById('history-modal').classList.remove('open');}
-function closeHistoryOutside(e){if(e.target===document.getElementById('history-modal'))closeHistory();}
-
-async function loadHistory(){
-  const body=document.getElementById('history-body');
-  body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>';
-  try{
-    const resp=await authFetch('/api/leads?per_page=50');
-    if(!resp.ok){body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro ao carregar histórico.</div>';return;}
-    const leads=await resp.json();
-    if(!leads.length){body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Nenhum lead encontrado. Faça sua primeira busca!</div>';return;}
-    body.innerHTML=leads.map(l=>{
-      const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
-      const emp=l.employee_count?(typeof l.employee_count==='object'?(l.employee_count.band||l.employee_count.raw||''):l.employee_count):'';
-      return `<div id="row-${l.id}" style="display:flex;align-items:center;gap:12px;padding:11px 22px;border-bottom:1px solid var(--border);transition:background .15s" onmouseenter="this.style.background='var(--surface)'" onmouseleave="this.style.background=''">
-        <div style="width:36px;height:36px;border-radius:8px;background:var(--surface);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--accent);flex-shrink:0">${esc((l.company_name||l.domain||'?')[0].toUpperCase())}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(l.company_name||l.domain)}</div>
-          <div style="font-size:11px;color:var(--text-3);margin-top:2px">${esc(l.domain||'')}${l.mx_provider?` · ${esc(l.mx_provider)}`:''}${emp?` · ${esc(emp)} func.`:''}</div>
-        </div>
-        <div style="font-size:11px;color:var(--text-3);white-space:nowrap">${date}</div>
-        <div style="display:flex;gap:6px">
-          <button onclick="loadLeadIntoView(${l.id})" title="Ver resultado" style="background:var(--accent);color:#fff;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600">Ver</button>
-          <button onclick="exportLead(${l.id},'csv')" title="Exportar CSV" style="background:none;border:1px solid var(--border);color:var(--text-3);padding:4px 8px;border-radius:6px;cursor:pointer;font-size:11px">CSV</button>
-          <button onclick="deleteLead(${l.id})" title="Remover" style="background:none;border:1px solid var(--border);color:#f87171;padding:4px 8px;border-radius:6px;cursor:pointer;font-size:11px">✕</button>
-        </div>
-      </div>`;
-    }).join('');
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Erro de conexão.</div>';}
-}
-
-async function loadLeadIntoView(leadId){
-  try{
-    const resp=await authFetch(`/api/leads/${leadId}`);
-    if(!resp.ok)return;
-    const lead=await resp.json();
-    closeHistory();
-    renderResult(lead);
-  }catch(_){}
-}
-
 async function exportLead(leadId,fmt){
   const token=await getToken();if(!token)return;
-  const a=document.createElement('a');
-  a.href=`/api/export/${leadId}?format=${fmt}`;
-  a.setAttribute('download','');
-  // inclui token via fetch pois link simples não tem auth header
-  const resp=await fetch(a.href,{headers:{Authorization:`Bearer ${token}`}});
+  const resp=await fetch(`/api/export/${leadId}?format=${fmt}`,{headers:{Authorization:`Bearer ${token}`}});
   if(!resp.ok){alert('Erro ao exportar.');return;}
   const blob=await resp.blob();
   const url=URL.createObjectURL(blob);
   const cd=resp.headers.get('content-disposition')||'';
   const match=cd.match(/filename="([^"]+)"/);
+  const a=document.createElement('a');
   a.href=url;a.download=match?match[1]:`lead_${leadId}.${fmt}`;
   document.body.appendChild(a);a.click();
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
@@ -772,51 +792,214 @@ async function exportAll(fmt){
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
 }
 
-/* ══════ INTERSECTION OBSERVER (fade-up) ══════ */
-const io=new IntersectionObserver(entries=>{
-  for(const e of entries){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}}
-},{threshold:.1});
-document.querySelectorAll('.fade-up').forEach(el=>io.observe(el));
+/* ══════ VIEW: CONFIGURAÇÕES ══════ */
+async function loadSettings(){
+  const body=document.getElementById('settings-body');
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
+  try{
+    const[meR,connR]=await Promise.all([
+      authFetch('/api/me'),
+      authFetch('/api/crm/connections'),
+    ]);
+    const me=meR.ok?await meR.json():_profile;
+    const conns=connR.ok?await connR.json():[];
+    if(me)_profile=me;
+    updateNavUser();updateQuotaUI();
+    renderSettings(me,conns);
+  }catch(e){
+    if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
+  }
+}
+
+function renderSettings(me,conns){
+  const body=document.getElementById('settings-body');
+  const demo=isDemoSession();
+  const plan=me?.plan||'free';
+  const unlimited=plan==='enterprise'||(me?.searches_limit??0)<0;
+  const used=me?.searches_used??0,limit=me?.searches_limit??0;
+  const pctUsed=unlimited?0:Math.min(100,Math.round((used/Math.max(1,limit))*100));
+  const reset=me?.quota_reset_at?new Date(me.quota_reset_at).toLocaleDateString('pt-BR'):null;
+
+  const planActions=demo
+    ?`<p class="set-desc" style="margin:14px 0 0">Você está em <strong>modo demo</strong> — os dados desta sessão ficam neste navegador. Crie uma conta para manter seus leads.</p>
+      <div class="set-actions"><button class="set-btn primary" onclick="signOut().then(()=>openAuthModal())">Criar conta grátis</button></div>`
+    :plan==='free'
+    ?`<div class="set-actions"><button class="set-btn primary" onclick="startCheckout('pro')">Fazer upgrade — Pro R$ 97/mês</button></div>`
+    :`<div class="set-actions"><button class="set-btn ghost" onclick="openBillingPortal()">Gerenciar assinatura</button></div>`;
+
+  const webhook=(conns||[]).find(c=>c.provider==='webhook');
+  const connCard=webhook
+    ?`<div class="crm-conn">
+        <div class="crm-conn-info">
+          <span class="crm-conn-name">Webhook</span>
+          <span class="crm-conn-meta">${webhook.webhook_configured?'URL configurada':'sem URL'}${webhook.updated_at?' · atualizado em '+new Date(webhook.updated_at).toLocaleDateString('pt-BR'):''}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="crm-conn-state ${webhook.is_active?'on':'off'}">${webhook.is_active?'ativo':'inativo'}</span>
+          <button class="set-btn ghost" onclick="toggleCrmConn('webhook')">${webhook.is_active?'Desativar':'Ativar'}</button>
+          <button class="set-btn danger" onclick="deleteCrmConn('webhook')">Remover</button>
+        </div>
+      </div>`
+    :'';
+
+  body.innerHTML=`
+    <div class="panel panel-pad">
+      <div class="set-title">Conta</div>
+      <div class="set-row"><span class="set-lbl">Email</span><span class="set-val">${esc(me?.email||(demo?'sessão demo':'—'))}</span></div>
+      <div class="set-row"><span class="set-lbl">Plano</span><span class="set-val"><span class="plan-badge">${esc(plan)}</span></span></div>
+      <div class="set-row" style="display:block">
+        <span class="set-lbl">Uso do ciclo</span>
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
+          <span class="set-val" style="text-align:left">${unlimited?'Buscas ilimitadas':`${used} de ${limit} buscas`}</span>
+          ${reset&&!unlimited?`<span class="set-lbl">renova em ${reset}</span>`:''}
+        </div>
+        ${unlimited?'':`<div class="usage-track"><div class="usage-fill${pctUsed>=100?' full':''}" style="width:${pctUsed}%"></div></div>`}
+      </div>
+      ${planActions}
+    </div>
+
+    <div class="panel panel-pad">
+      <div class="set-title">Integração CRM — webhook</div>
+      <p class="set-desc">
+        Enviamos cada lead (com decisores e atividades) via <strong>POST assinado com HMAC-SHA256</strong>
+        para o endpoint que você configurar — funciona com Zapier, Make, Power Automate ou seu próprio sistema.
+        O botão "Enviar ao CRM" aparece no card do lead quando há um webhook ativo.
+      </p>
+      ${connCard}
+      <div class="set-form">
+        <input id="crm-url" class="set-input" placeholder="https://hooks.zapier.com/…" autocomplete="off" spellcheck="false"/>
+        <input id="crm-secret" class="set-input" placeholder="Segredo HMAC (opcional, recomendado)" autocomplete="off" spellcheck="false"/>
+        <div class="set-actions">
+          <button class="set-btn primary" onclick="saveCrmWebhook()">${webhook?'Atualizar webhook':'Salvar webhook'}</button>
+        </div>
+        <p id="crm-feedback" class="set-feedback"></p>
+      </div>
+    </div>
+
+    <div class="panel panel-pad">
+      <div class="set-title">Sessão</div>
+      <p class="set-desc">Encerra sua sessão neste navegador.</p>
+      <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
+    </div>`;
+}
+
+function _crmFeedback(msg,ok){
+  const el=document.getElementById('crm-feedback');
+  if(!el)return;
+  el.textContent=msg;
+  el.className='set-feedback '+(ok?'ok':'err');
+}
+
+async function saveCrmWebhook(){
+  const url=(document.getElementById('crm-url')?.value||'').trim();
+  const secret=(document.getElementById('crm-secret')?.value||'').trim();
+  if(!url||!/^https?:\/\//.test(url)){_crmFeedback('Informe uma URL válida (https://…).',false);return;}
+  try{
+    const resp=await authFetch('/api/crm/connections',{method:'POST',body:JSON.stringify({provider:'webhook',webhook_url:url,webhook_secret:secret||null})});
+    const json=await resp.json();
+    if(!resp.ok){_crmFeedback(json.detail||'Erro ao salvar.',false);return;}
+    _crmFeedback('Webhook salvo e ativado.',true);
+    loadIntegrations();
+    loadSettings();
+  }catch(e){if(e.message!=='not_authenticated')_crmFeedback('Erro de conexão.',false);}
+}
+
+async function toggleCrmConn(provider){
+  try{
+    await authFetch(`/api/crm/connections/${provider}/toggle`,{method:'PATCH'});
+    loadIntegrations();loadSettings();
+  }catch(_){}
+}
+
+async function deleteCrmConn(provider){
+  if(!confirm('Remover esta conexão CRM?'))return;
+  try{
+    await authFetch(`/api/crm/connections/${provider}`,{method:'DELETE'});
+    loadIntegrations();loadSettings();
+  }catch(_){}
+}
+
+async function openBillingPortal(){
+  try{
+    const resp=await authFetch('/api/billing/portal',{method:'POST'});
+    const json=await resp.json();
+    if(resp.ok&&json.url)window.location.href=json.url;
+    else alert(json.detail||'Portal de assinatura indisponível no momento.');
+  }catch(e){if(e.message!=='not_authenticated')alert('Erro de conexão.');}
+}
+
+/* ══════ HELPERS ══════ */
+function setLoading(s){
+  const btn=document.getElementById('search-btn');
+  const txt=document.getElementById('search-btn-text');
+  const sp=document.getElementById('search-btn-spinner');
+  btn.disabled=s;txt.textContent=s?'Analisando...':'Analisar';sp.style.display=s?'inline-block':'none';
+}
+function showError(m){const el=document.getElementById('error-banner');el.textContent=m;el.style.display='block';}
+function hideError(){document.getElementById('error-banner').style.display='none';}
+function hideResults(){document.getElementById('results-section').innerHTML='';}
+function fillExample(v){const el=document.getElementById('domain-input');el.value=v;el.focus();}
+function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+/* ══════ ATALHOS DE TECLADO ══════ */
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='k'){
+    e.preventDefault();
+    // troca a view de forma síncrona para o foco funcionar (hashchange é assíncrono)
+    if(location.hash)history.replaceState(null,'',location.pathname);
+    showView('search');
+    document.getElementById('domain-input')?.focus();
+  }
+  if(e.key==='Escape'){
+    document.querySelectorAll('.modal-overlay.open').forEach(m=>m.classList.remove('open'));
+  }
+});
 
 /* ══════ INIT ══════ */
 document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('domain-input').addEventListener('keydown',e=>{if(e.key==='Enter')enrich();});
+
   // domínio vindo da landing (/app?domain=…) — pré-preenche e foca
   const _qDomain=new URLSearchParams(window.location.search).get('domain');
   if(_qDomain){
     const inp=document.getElementById('domain-input');
     inp.value=_qDomain;inp.focus();
-    window.history.replaceState({},'',window.location.pathname);
+    window.history.replaceState({},'',window.location.pathname+window.location.hash);
   }
 
-  // handle magic link redirect (token in URL hash)
+  // sessão existente (Supabase ou demo)
   const{data:{session}}=await _sb.auth.getSession();
   if(session||isDemoSession()){
     await loadProfile();
     loadIntegrations();
-    openDashboard();
+    applyRoute();
+    if(!location.hash&&!_qDomain)focusSearch();
   }else{
     updateNavUser();
+    applyRoute();   // rota protegida sem sessão → volta pra busca e abre login
+    if(!_qDomain)focusSearch();
   }
 
-  // listen for auth state changes (magic link callback)
+  // mudanças de auth (callback do magic link / OAuth)
   _sb.auth.onAuthStateChange(async(event,session)=>{
     if(session){
       closeAuthModal();
       const wasLoggedIn=!!_profile;
       await loadProfile();
       loadIntegrations();
-      // On first login this session, open Dashboard so the user sees the product
-      if(!wasLoggedIn)openDashboard();
-    }else{
+      if(!wasLoggedIn){
+        if(_pendingRoute){const r=_pendingRoute;_pendingRoute=null;location.hash=r;}
+        else{applyRoute();focusSearch();}
+      }
+    }else if(!isDemoSession()){
       _profile=null;
       updateNavUser();
     }
   });
 
-  // check if returning from Stripe
+  // retorno do Stripe
   if(new URLSearchParams(window.location.search).get('upgraded')==='1'){
     await loadProfile();
-    window.history.replaceState({},'',window.location.pathname);
+    window.history.replaceState({},'',window.location.pathname+window.location.hash);
   }
 });

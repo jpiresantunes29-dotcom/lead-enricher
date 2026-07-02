@@ -1,13 +1,16 @@
 """
 Conta funcionários por cascata multi-fonte:
-  1. LinkedIn aba People (contagem exata "X employees on LinkedIn")
-  2. LinkedIn público direto (página principal)
-  3. Google Cache da página do LinkedIn
-  4. Bing Cache (snapshot via search)
+  1. Página pública da empresa no LinkedIn — contagem EXATA de membros
+     associados ("Visualizar todos os N funcionários", link da aba Pessoas).
+     A aba /people/ em si exige login, mas o número exato aparece na página
+     principal (face-pile) — é essa a fonte canônica.
+  2. LinkedIn aba People direta (raramente acessível sem login)
+  3. Faixa da página principal do LinkedIn ("5.001-10.000 funcionários")
+  4. Google Cache / Bing snapshot
   5. Página /about ou /sobre do site da empresa
 
 Normaliza para {raw, min, max, band, exact, source}.
-O campo employee_count_linkedin armazena o valor exato obtido da aba People.
+source == "linkedin_people" ⇒ contagem exata de membros associados.
 """
 import re
 import requests
@@ -28,6 +31,21 @@ COUNT_PATTERNS = [
     re.compile(r'"employeeCount"\s*:\s*"?([\d]+)"?'),
     re.compile(r'"staffCount"\s*:\s*([\d]+)'),
     re.compile(r'"staffCountRange"\s*:\s*"\(([\d,.]+),([\d,.]+)\)"'),
+]
+
+# Padrões da contagem EXATA de membros associados, como aparece na página
+# pública da empresa (link "Visualizar todos os N funcionários" → aba Pessoas)
+EXACT_MEMBER_PATTERNS = [
+    # pt: "Visualizar todos os 12.701 funcionários" / en: "View all 15,924 employees"
+    re.compile(
+        r"(?:Visualizar|Ver|View|See)\s+(?:todos\s+os|todas\s+as|all)\s+([\d,.]+)\s+"
+        r"(?:funcion[áa]rios?|employees?|empleados?|colaboradores?)",
+        re.IGNORECASE,
+    ),
+    # "12.701 associated members" / "12.701 membros associados"
+    re.compile(r"([\d,.]+)\s+(?:associated\s+members?|membros?\s+associados?)", re.IGNORECASE),
+    # JSON embutido
+    re.compile(r'"staffCount"\s*:\s*(\d+)'),
 ]
 
 # Padrões específicos da aba People — retornam contagem exata
@@ -130,6 +148,50 @@ def _try_url(url: str, timeout: int = 10) -> Optional[str]:
     return None
 
 
+def _exact_from_company_page(html: str) -> Optional[dict]:
+    """
+    Extrai a contagem exata de membros associados do HTML da página pública
+    da empresa (o "Visualizar todos os N funcionários" do face-pile).
+    Retorna {raw, min, max, band, exact, source: 'linkedin_people'} ou None.
+    """
+    if not html:
+        return None
+
+    def _build(n: int, raw: str) -> dict:
+        return {
+            "raw": raw,
+            "min": n,
+            "max": n,
+            "band": _band_for(n),
+            "exact": n,
+            "source": "linkedin_people",
+        }
+
+    # 1) Elemento do face-pile (mais preciso — é o link da aba Pessoas)
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        el = soup.select_one("p.face-pile__text")
+        if el:
+            txt = " ".join(el.get_text(" ", strip=True).split())
+            m = re.search(r"([\d,.]+)", txt)
+            if m:
+                n = _to_int(m.group(1))
+                if n:
+                    return _build(n, txt)
+    except Exception:
+        pass
+
+    # 2) Padrões textuais/JSON no HTML completo
+    for pat in EXACT_MEMBER_PATTERNS:
+        m = pat.search(html)
+        if m:
+            n = _to_int(m.group(1))
+            if n:
+                return _build(n, " ".join(m.group(0).split()))
+
+    return None
+
+
 def _fetch_people_tab_count(linkedin_url: str) -> Optional[dict]:
     """
     Busca contagem exata de funcionários na aba People/Pessoas do LinkedIn.
@@ -193,20 +255,27 @@ def fetch_employee_count(linkedin_url: Optional[str], website_url: Optional[str]
     Cascata de fontes. Devolve {raw, min, max, band, exact, source} ou None.
     """
     if linkedin_url:
-        # Fonte 1: aba People — contagem exata "X employees on LinkedIn"
+        # Fonte 1: página pública da empresa — contagem EXATA de membros
+        # associados (link "Visualizar todos os N funcionários" da aba Pessoas)
+        text = _try_url(linkedin_url)
+        if text:
+            result = _exact_from_company_page(text)
+            if result:
+                return result
+
+        # Fonte 2: aba People direta (raramente acessível sem login)
         result = _fetch_people_tab_count(linkedin_url)
         if result:
             return result
 
-        # Fonte 2: LinkedIn página principal
-        text = _try_url(linkedin_url)
+        # Fonte 3: faixa da página principal ("5.001-10.000 funcionários")
         if text:
             result = _find_in_text(text)
             if result:
                 result["source"] = "linkedin_direct"
                 return result
 
-        # Fonte 3: Google Cache
+        # Fonte 4: Google Cache
         cache_url = f"https://webcache.googleusercontent.com/search?q=cache:{linkedin_url}"
         text = _try_url(cache_url)
         if text:
@@ -215,7 +284,7 @@ def fetch_employee_count(linkedin_url: Optional[str], website_url: Optional[str]
                 result["source"] = "google_cache"
                 return result
 
-        # Fonte 4: Bing snapshot via search
+        # Fonte 5: Bing snapshot via search
         slug_match = re.search(r"linkedin\.com/company/([a-zA-Z0-9\-._%]+)", linkedin_url)
         if slug_match:
             slug = slug_match.group(1)
@@ -227,7 +296,7 @@ def fetch_employee_count(linkedin_url: Optional[str], website_url: Optional[str]
                     result["source"] = "bing_search"
                     return result
 
-    # Fonte 5: /about do site
+    # Fonte 6: /about do site
     if website_url:
         base = website_url.rstrip("/")
         for suffix in ["/about", "/sobre", "/quem-somos", "/about-us", "/empresa"]:

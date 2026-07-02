@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="LeadEnricher — digite um domínio, conheça a empresa inteira. DNS, e-mail corporativo, decisores e score de prioridade em segundos." />
   <meta property="og:title" content="LeadEnricher — Digite um domínio. Conheça a empresa inteira." />
-  <meta property="og:description" content="DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos. Sem Lusha. Sem planilha." />
+  <meta property="og:description" content="DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos — direto do domínio, sem planilha." />
   <meta property="og:type" content="website" />
   <title>LeadEnricher — Digite um domínio. Conheça a empresa inteira.</title>
   <script>
@@ -19,7 +19,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/landing/landing.css?v=2" />
+  <link rel="stylesheet" href="/static/landing/landing.css?v=3" />
 </head>
 <body>
 
@@ -35,7 +35,10 @@
   <nav class="nav-pill" aria-label="Navegação principal">
     <a href="#journey">Como funciona</a>
     <a href="#features">Recursos</a>
+    <a href="#proof">O produto</a>
     <a href="#pricing">Preços</a>
+    <a href="#comparison">Comparação</a>
+    <a href="#faq">Perguntas</a>
   </nav>
   <a class="btn btn-gold" data-magnetic href="/app">Entrar</a>
 </header>
@@ -52,8 +55,8 @@
         Conheça a empresa <em class="shimmer">inteira</em>.
       </h1>
       <p class="hero-sub mono" data-reveal>
-        DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos.
-        Sem Lusha. Sem planilha.
+        DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos —
+        direto do domínio, sem planilha.
       </p>
       <div class="hero-actions" data-reveal>
         <a class="btn btn-gold" data-magnetic href="/app">Começar grátis →</a>
@@ -164,20 +167,24 @@
   </div>
 </section>
 
-<!-- ── Pipeline vivo (fase L3) ── -->
-<section class="execution" data-section="execution">
-  <p class="eyebrow mono" data-reveal>// execução</p>
-  <h2 class="section-title" data-reveal>Do dado à reunião.</h2>
-</section>
-
-<!-- ── Números / dashboard ── -->
-<section class="metrics" data-section="metrics">
-  <p class="eyebrow mono" data-reveal>// visão</p>
-  <h2 class="section-title" data-reveal>O que sua operação enxerga.</h2>
-  <div class="metrics-row">
-    <div class="metric" data-reveal><span class="metric-val mono" data-count="142">0</span><span class="metric-lbl">leads pesquisados</span></div>
-    <div class="metric" data-reveal><span class="metric-val mono" data-count="43" data-suffix="%">0</span><span class="metric-lbl">taxa de contato</span></div>
-    <div class="metric" data-reveal><span class="metric-val mono" data-count="12" data-suffix="%">0</span><span class="metric-lbl">taxa de reunião</span></div>
+<!-- ── O produto, de verdade ── -->
+<section class="proof" id="proof" data-section="proof">
+  <p class="eyebrow mono" data-reveal>// o produto</p>
+  <h2 class="section-title" data-reveal>É isto que você recebe<br />a cada busca.</h2>
+  <div class="proof-card mono" data-reveal aria-hidden="true">
+    <div class="proof-hdr">
+      <span class="proof-co">acme.com.br · Acme Tecnologia</span>
+      <span class="proof-score">87 · ALTA PRIORIDADE</span>
+    </div>
+    <div class="proof-grid">
+      <div class="proof-cell"><span>MX</span>Google Workspace <em class="jv-ok">✓</em></div>
+      <div class="proof-cell"><span>PORTE</span>51–200 funcionários</div>
+      <div class="proof-cell"><span>SETOR</span>Tecnologia / SaaS</div>
+      <div class="proof-cell"><span>DECISOR</span>CTO · e-mail <em class="jv-ok">✓ SMTP</em></div>
+      <div class="proof-cell"><span>LINKEDIN</span>verificado <em class="jv-ok">✓</em></div>
+      <div class="proof-cell"><span>PRÓXIMO PASSO</span>Ligar hoje · follow-up automático</div>
+    </div>
+    <div class="proof-foot">score explicável · exportação XLSX/CSV · envio ao CRM em 1 clique</div>
   </div>
 </section>
 
@@ -200,7 +207,7 @@
     <article class="card price" data-reveal>
       <h3>Enterprise</h3><p class="price-val mono">Custom</p>
       <p>Ilimitado · API com SLA · CRM nativo · SSO</p>
-      <a class="btn btn-ghost" href="/app">Falar com vendas</a>
+      <a class="btn btn-ghost" href="mailto:jpires.antunes29@gmail.com?subject=LeadEnricher%20Enterprise">Falar com vendas</a>
     </article>
   </div>
 </section>
@@ -218,7 +225,7 @@
         <li><strong>✗</strong> Nenhuma score de prioridade</li>
         <li style="opacity:.7"><strong>✗</strong> DNS/infraestrutura manual</li>
         <li style="opacity:.8"><strong>✗</strong> Sem follow-up automático</li>
-        <li><strong>~</strong> Integração nativa com 3 CRMs</li>
+        <li style="opacity:.7"><strong>✗</strong> Exportação e integração manuais</li>
       </ul>
     </div>
     <div class="comp-col comp-col--highlight" data-reveal>

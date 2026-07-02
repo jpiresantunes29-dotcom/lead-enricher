@@ -36,4 +36,5 @@ def get_me(
         "plan": profile.plan,
         "searches_used": profile.searches_used,
         "searches_limit": profile.searches_limit,
+        "quota_reset_at": profile.quota_reset_at.isoformat() if profile.quota_reset_at else None,
     }

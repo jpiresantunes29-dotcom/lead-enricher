@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from models.database import get_db, Lead, Activity, Profile
+from models.database import get_db, Lead, Activity, Profile, CRMConnection
 from middleware.auth import get_current_user
 from routers.auth import get_or_create_profile
 from services import ai_insights
@@ -44,12 +44,30 @@ def _check_ai_plan(profile: Profile):
         )
 
 
+def _user_webhook(db: Session, user_id: str) -> CRMConnection | None:
+    """Conexão webhook ativa configurada pelo próprio usuário (Configurações)."""
+    conn = (
+        db.query(CRMConnection)
+        .filter(
+            CRMConnection.user_id == user_id,
+            CRMConnection.provider == "webhook",
+            CRMConnection.is_active.is_(True),
+        )
+        .first()
+    )
+    return conn if conn and conn.webhook_url else None
+
+
 @router.get("/integrations/status")
-def integrations_status(current_user: dict = Depends(get_current_user)):
+def integrations_status(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """Permite à UI mostrar/ocultar ações conforme o que está configurado."""
+    user_id = current_user.get("sub")
     return {
         "ai": ai_insights.is_configured(),
-        "crm_webhook": crm_webhook.is_configured(),
+        "crm_webhook": crm_webhook.is_configured() or bool(_user_webhook(db, user_id)),
         "hunter": hunter.is_configured(),
     }
 
@@ -110,11 +128,19 @@ def push_to_crm(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Envia o lead completo (decisores + atividades) ao webhook CRM configurado."""
-    if not crm_webhook.is_configured():
-        raise HTTPException(status_code=503, detail="CRM não configurado (CRM_WEBHOOK_URL ausente).")
+    """Envia o lead completo (decisores + atividades) ao webhook CRM configurado.
 
+    A conexão do próprio usuário (Configurações) tem precedência; o webhook
+    global via env segue funcionando como fallback.
+    """
     user_id = current_user.get("sub")
+    conn = _user_webhook(db, user_id)
+    if not conn and not crm_webhook.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="CRM não configurado. Adicione seu webhook em Configurações.",
+        )
+
     lead = _get_user_lead(db, lead_id, user_id)
     activities = (
         db.query(Activity)
@@ -123,7 +149,13 @@ def push_to_crm(
         .all()
     )
 
-    result = crm_webhook.push_lead(lead, list(lead.decision_makers), activities)
+    result = crm_webhook.push_lead(
+        lead,
+        list(lead.decision_makers),
+        activities,
+        url=conn.webhook_url if conn else None,
+        secret=conn.webhook_secret if conn else None,
+    )
     if not result["ok"]:
         raise HTTPException(status_code=502, detail=f"Falha no envio ao CRM ({result['error']}).")
 

@@ -78,6 +78,29 @@ def create_checkout(
     return {"url": session.url}
 
 
+@router.post("/portal")
+def billing_portal(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Portal do cliente Stripe — gerenciar/cancelar assinatura (Configurações)."""
+    user_id = current_user.get("sub")
+    profile = db.query(Profile).filter(Profile.id == user_id).first()
+    if not profile or not profile.stripe_customer_id:
+        raise HTTPException(status_code=400, detail="Nenhuma assinatura ativa para gerenciar.")
+
+    return_url = os.getenv("APP_URL", "http://localhost:8000") + "/app#settings"
+    try:
+        session = stripe.billing_portal.Session.create(
+            customer=profile.stripe_customer_id,
+            return_url=return_url,
+        )
+    except stripe.error.StripeError as e:
+        logger.warning("Stripe portal error for user %s: %s", user_id, e)
+        raise HTTPException(status_code=502, detail="Portal de assinatura indisponível no momento.")
+    return {"url": session.url}
+
+
 @router.post("/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()

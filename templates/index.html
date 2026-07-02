@@ -7,157 +7,204 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=10" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=12" />
 </head>
 <body class="app-body">
 
 <canvas id="celebrate-canvas"></canvas>
 
 <!-- ══════════════════════════════════
-     HEADER — sempre visível
+     HEADER
 ════════════════════════════════════ -->
 <header class="app-header">
 
   <a href="/" class="app-logo">LeadEnricher</a>
 
-  <!-- Navegação central — sempre visível; pré-auth abre modal -->
-  <nav class="app-nav" id="app-nav">
-    <button class="app-nav-btn" id="nav-btn-dashboard" onclick="requireAuth(openDashboard)">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
-      Dashboard
+  <nav class="app-nav" id="app-nav" aria-label="Navegação do app">
+    <button class="app-nav-btn" data-route="" onclick="nav('')" title="Buscar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span class="nav-lbl">Buscar</span>
     </button>
-    <button class="app-nav-btn" id="nav-btn-pipeline" onclick="requireAuth(openPipeline)">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="4" height="18" rx="1"/><rect x="10" y="3" width="4" height="12" rx="1"/><rect x="17" y="3" width="4" height="16" rx="1"/></svg>
-      Pipeline
+    <button class="app-nav-btn" data-route="dashboard" onclick="nav('dashboard')" title="Dashboard">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      <span class="nav-lbl">Dashboard</span>
     </button>
-    <button class="app-nav-btn" id="nav-btn-followups" onclick="requireAuth(openFollowups)">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-      Follow-ups
-      <span id="nav-today-count" style="display:none;background:var(--accent);color:#fff;font-size:10px;font-weight:800;padding:1px 7px;border-radius:99px;line-height:1.6"></span>
+    <button class="app-nav-btn" data-route="pipeline" onclick="nav('pipeline')" title="Pipeline">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="4" height="18" rx="1"/><rect x="10" y="3" width="4" height="12" rx="1"/><rect x="17" y="3" width="4" height="16" rx="1"/></svg>
+      <span class="nav-lbl">Pipeline</span>
     </button>
-    <button class="app-nav-btn" id="nav-btn-history" onclick="requireAuth(openHistory)">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
-      Histórico
+    <button class="app-nav-btn" data-route="followups" onclick="nav('followups')" title="Follow-ups">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span class="nav-lbl">Follow-ups</span>
+      <span id="nav-today-count" class="nav-badge" style="display:none"></span>
+    </button>
+    <button class="app-nav-btn" data-route="history" onclick="nav('history')" title="Histórico">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+      <span class="nav-lbl">Histórico</span>
     </button>
   </nav>
 
   <div class="app-header-right">
     <!-- Pré-auth -->
     <div id="header-preauth" style="display:flex;align-items:center;gap:8px">
-      <span class="app-auth-hint">Faça login para acessar tudo</span>
       <button class="app-btn-primary" onclick="openAuthModal()">Entrar</button>
     </div>
     <!-- Pós-auth -->
-    <div id="header-postauth" style="display:none;align-items:center;gap:10px">
-      <span id="nav-quota" class="app-quota-badge"></span>
+    <div id="header-postauth" style="display:none;align-items:center;gap:8px">
+      <button id="nav-quota" class="app-quota-badge" onclick="nav('settings')" title="Ver plano e uso"></button>
+      <button class="app-icon-btn" id="nav-btn-settings" data-route="settings" onclick="nav('settings')" title="Configurações" aria-label="Configurações">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
       <button class="app-nav-btn app-nav-btn--ghost" onclick="signOut()">Sair</button>
     </div>
   </div>
 </header>
 
 <!-- ══════════════════════════════════
-     MAIN — search + results
+     MAIN — views trocadas por rota (#hash)
 ════════════════════════════════════ -->
 <main class="app-main">
 
-  <!-- Search card central -->
-  <div class="app-search-card" id="app-search-card">
+  <!-- ── VIEW: BUSCAR (padrão) ── -->
+  <section class="view active" id="view-search">
+    <div class="app-search-card">
+      <h1 class="app-search-title">
+        Inteligência comercial <span class="app-accent">em segundos.</span>
+      </h1>
+      <p class="app-search-sub">
+        Cole um domínio e receba: empresa, decisores, score de prioridade e contatos.
+      </p>
 
-    <div class="app-search-title" id="app-search-title">
-      Inteligência comercial <span class="app-accent">em segundos.</span>
-    </div>
-    <p class="app-search-sub" id="app-search-sub">
-      Cole um domínio e receba: empresa, decisores, score de prioridade e contatos.
-    </p>
+      <div class="hero-search-box">
+        <span class="hero-search-icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </span>
+        <input id="domain-input" class="hero-search-input" placeholder="nubank.com.br"
+               autocomplete="off" spellcheck="false" aria-label="Domínio para enriquecer" />
+        <button id="search-btn" class="hero-search-btn" onclick="enrich()">
+          <span id="search-btn-text">Analisar</span>
+          <span id="search-btn-spinner" class="spinner" style="display:none"></span>
+        </button>
+      </div>
 
-    <!-- Role pills -->
-    <div class="app-role-row">
-      <button class="role-pill active" data-role="sdr" onclick="selectRole(this)">SDR</button>
-      <button class="role-pill" data-role="manager" onclick="selectRole(this)">Gestor</button>
-      <button class="role-pill" data-role="founder" onclick="selectRole(this)">Founder</button>
-      <button class="role-pill" data-role="mkt" onclick="selectRole(this)">Mkt</button>
-    </div>
+      <div class="hero-loading" id="loading-status">
+        <span class="ldot"></span><span class="ldot"></span><span class="ldot"></span>
+        <span id="loading-msg">Consultando...</span>
+      </div>
 
-    <!-- Input -->
-    <div class="hero-search-box app-search-box-lg">
-      <span class="hero-search-icon">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-      </span>
-      <input id="domain-input" class="hero-search-input" placeholder="nubank.com.br"
-             autocomplete="off" spellcheck="false"
-             onkeydown="if(event.key==='Enter')enrich()" />
-      <button id="search-btn" class="hero-search-btn" onclick="enrich()">
-        <span id="search-btn-text">Analisar</span>
-        <span id="search-btn-spinner" class="spinner" style="display:none"></span>
-      </button>
-    </div>
+      <div class="app-examples">
+        <span class="app-ex-label">Experimente:</span>
+        <button class="hero-ex-btn" onclick="fillExample('nubank.com.br')">nubank</button>
+        <button class="hero-ex-btn" onclick="fillExample('stripe.com')">stripe</button>
+        <button class="hero-ex-btn" onclick="fillExample('totvs.com.br')">totvs</button>
+        <button class="hero-ex-btn" onclick="fillExample('rdstation.com')">rdstation</button>
+      </div>
 
-    <!-- Loading -->
-    <div class="hero-loading" id="loading-status">
-      <span class="ldot"></span><span class="ldot"></span><span class="ldot"></span>
-      <span id="loading-msg">Consultando...</span>
-    </div>
-
-    <!-- Exemplos -->
-    <div class="app-examples">
-      <span class="app-ex-label">Experimente:</span>
-      <button class="hero-ex-btn" onclick="fillExample('nubank.com.br')">nubank</button>
-      <button class="hero-ex-btn" onclick="fillExample('stripe.com')">stripe</button>
-      <button class="hero-ex-btn" onclick="fillExample('totvs.com.br')">totvs</button>
-      <button class="hero-ex-btn" onclick="fillExample('rdstation.com')">rdstation</button>
+      <p class="hero-trial" id="trial-counter" style="display:none">
+        Você tem <strong></strong> buscas gratuitas.
+      </p>
     </div>
 
-    <p class="hero-trial" id="trial-counter" style="display:none;margin-top:6px">
-      Você tem <strong></strong> buscas gratuitas.
-    </p>
-  </div>
+    <div class="results-wrap">
+      <div id="error-banner" class="error-msg" style="display:none"></div>
+      <div id="results-section"></div>
+    </div>
+  </section>
 
-  <!-- Resultados aparecem aqui -->
-  <div class="results-wrap">
-    <div id="error-banner" class="error-msg" style="display:none"></div>
-    <div id="results-section"></div>
-  </div>
+  <!-- ── VIEW: DASHBOARD ── -->
+  <section class="view" id="view-dashboard">
+    <div class="view-head">
+      <div>
+        <h2>Dashboard comercial</h2>
+        <div class="view-head-sub" id="dash-period"></div>
+      </div>
+    </div>
+    <div id="dashboard-body"></div>
+  </section>
+
+  <!-- ── VIEW: PIPELINE ── -->
+  <section class="view view--wide" id="view-pipeline">
+    <div class="view-head">
+      <div>
+        <h2>Pipeline de prospecção</h2>
+        <div class="view-head-sub">Arraste os cards entre estágios ou use as setas.</div>
+      </div>
+    </div>
+    <div id="pipeline-body"></div>
+  </section>
+
+  <!-- ── VIEW: FOLLOW-UPS ── -->
+  <section class="view" id="view-followups">
+    <div class="view-head">
+      <div>
+        <h2>Follow-ups pendentes</h2>
+        <div class="view-head-sub">Ligações registradas viram tarefas automaticamente.</div>
+      </div>
+    </div>
+    <div class="panel" id="followups-body"></div>
+  </section>
+
+  <!-- ── VIEW: HISTÓRICO ── -->
+  <section class="view" id="view-history">
+    <div class="view-head">
+      <div>
+        <h2>Histórico de leads</h2>
+        <div class="view-head-sub" id="history-count"></div>
+      </div>
+      <div class="view-actions">
+        <input id="history-filter" class="hist-filter" placeholder="Filtrar por empresa ou domínio…"
+               oninput="filterHistory(this.value)" autocomplete="off" />
+        <button class="ghost-btn" onclick="exportAll('csv')">Exportar CSV</button>
+        <button class="ghost-btn" onclick="exportAll('xlsx')">Exportar Excel</button>
+      </div>
+    </div>
+    <div class="panel" id="history-body"></div>
+  </section>
+
+  <!-- ── VIEW: CONFIGURAÇÕES ── -->
+  <section class="view" id="view-settings">
+    <div class="view-head">
+      <div>
+        <h2>Configurações</h2>
+        <div class="view-head-sub">Conta, plano e integrações.</div>
+      </div>
+    </div>
+    <div id="settings-body" class="set-grid"></div>
+  </section>
 
 </main>
 
 <!-- ══════════════════════════════════
-     MODAIS
+     MODAIS (apenas confirmações rápidas)
 ════════════════════════════════════ -->
 
 <!-- PAYWALL -->
-<div class="modal-overlay" id="paywall-modal">
+<div class="modal-overlay" id="paywall-modal" onclick="closeIfBackdrop(event,'paywall-modal')">
   <div class="modal">
-    <button class="modal-close" onclick="closePaywall()">
+    <button class="modal-close" onclick="closePaywall()" aria-label="Fechar">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <div class="modal-icon">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
     </div>
     <h3 class="modal-title">Limite atingido</h3>
     <p class="modal-text">Continue prospectando sem limites. 500 buscas/mês, decisores ilimitados, CRM e exportação.</p>
     <button class="modal-cta" onclick="closePaywall();startCheckout('pro')">Assinar Pro — R$ 97/mês →</button>
-    <button onclick="closePaywall()" style="margin-top:8px;background:none;border:none;color:var(--text-3);cursor:pointer;font-size:13px">Não agora</button>
+    <button class="modal-dismiss" onclick="closePaywall()">Não agora</button>
   </div>
 </div>
 
 <!-- AUTH -->
-<div class="modal-overlay" id="auth-modal">
+<div class="modal-overlay" id="auth-modal" onclick="closeIfBackdrop(event,'auth-modal')">
   <div class="auth-card">
-    <button class="auth-close" onclick="closeAuthModal()">
+    <button class="auth-close" onclick="closeAuthModal()" aria-label="Fechar">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <div class="auth-logo">
-      <div class="auth-logo-mark">
-        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-          <circle cx="10" cy="4" r="2"/><circle cx="3.5" cy="15.5" r="2"/><circle cx="16.5" cy="15.5" r="2"/>
-          <line x1="10" y1="6" x2="5.2" y2="13.6"/><line x1="10" y1="6" x2="14.8" y2="13.6"/>
-          <line x1="5.4" y1="15.5" x2="14.6" y2="15.5"/>
-        </svg>
-      </div>
       <span class="auth-logo-name">LeadEnricher</span>
     </div>
-    <h3 class="auth-heading" id="auth-modal-title">Bem-vindo de <em>volta.</em></h3>
-    <p class="auth-sub" id="auth-modal-sub">5 buscas grátis. Sem cartão. Sem senha.</p>
+    <h3 class="auth-heading">Bem-vindo de <em>volta.</em></h3>
+    <p class="auth-sub">5 buscas grátis. Sem cartão. Sem senha.</p>
     <div class="auth-oauth-grid">
       <button class="auth-oauth-btn" onclick="signInWithGoogle()">
         <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
@@ -189,14 +236,13 @@
         <span id="magic-btn-text">Entrar com link mágico</span>
         <span id="magic-btn-spin" class="spinner" style="display:none"></span>
       </button>
-      <p id="auth-error" style="color:#f87171;font-size:13px;margin-top:8px;display:none"></p>
-      <p id="auth-success" style="color:#4ade80;font-size:13px;margin-top:8px;display:none"></p>
+      <p id="auth-error" class="auth-msg err"></p>
+      <p id="auth-success" class="auth-msg ok"></p>
       <p class="auth-hint">Nenhuma senha — enviamos um link para o seu email.</p>
     </div>
     <div class="auth-demo-block">
       <div class="auth-demo-divider"><span>ou</span></div>
       <button class="auth-demo-btn" onclick="signInAsDemo()">
-        <span class="auth-demo-icon">⚡</span>
         Continuar em modo demo
       </button>
       <p class="auth-demo-hint">Plano Pro liberado · busca real · sem cartão · sem email</p>
@@ -204,71 +250,7 @@
   </div>
 </div>
 
-<!-- HISTÓRICO -->
-<div class="modal-overlay" id="history-modal" onclick="closeHistoryOutside(event)">
-  <div class="modal" style="max-width:700px;width:95%;padding:0;overflow:hidden">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
-      <h3 style="font-size:15px;font-weight:700;margin:0">Histórico de Leads</h3>
-      <div style="display:flex;gap:8px;align-items:center">
-        <button onclick="exportAll('csv')" style="background:none;border:1px solid var(--border);color:var(--text-2);padding:5px 11px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600">CSV</button>
-        <button onclick="exportAll('xlsx')" style="background:none;border:1px solid var(--border);color:var(--text-2);padding:5px 11px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:600">Excel</button>
-        <button class="modal-close" onclick="closeHistory()" style="position:static;margin:0">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-        </button>
-      </div>
-    </div>
-    <div id="history-body" style="max-height:60vh;overflow-y:auto;padding:12px 0">
-      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
-    </div>
-  </div>
-</div>
-
-<!-- DASHBOARD -->
-<div class="modal-overlay" id="dashboard-modal" onclick="closeDashboardOutside(event)">
-  <div class="modal" style="max-width:760px;width:95%;padding:0;overflow:hidden">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
-      <h3 style="font-size:15px;font-weight:700;margin:0">Dashboard comercial <span id="dash-period" style="font-weight:400;color:var(--text-3);font-size:12px"></span></h3>
-      <button class="modal-close" onclick="closeDashboard()" style="position:static;margin:0">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div id="dashboard-body" style="max-height:70vh;overflow-y:auto;padding:20px 22px">
-      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
-    </div>
-  </div>
-</div>
-
-<!-- PIPELINE -->
-<div class="modal-overlay" id="pipeline-modal" onclick="closePipelineOutside(event)">
-  <div class="modal" style="max-width:1080px;width:96%;padding:0;overflow:hidden">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
-      <h3 style="font-size:15px;font-weight:700;margin:0">Pipeline de prospecção</h3>
-      <button class="modal-close" onclick="closePipeline()" style="position:static;margin:0">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div id="pipeline-body" style="max-height:72vh;overflow:auto;padding:16px 18px">
-      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
-    </div>
-  </div>
-</div>
-
-<!-- FOLLOW-UPS -->
-<div class="modal-overlay" id="followups-modal" onclick="closeFollowupsOutside(event)">
-  <div class="modal" style="max-width:640px;width:95%;padding:0;overflow:hidden">
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--border)">
-      <h3 style="font-size:15px;font-weight:700;margin:0">Follow-ups pendentes</h3>
-      <button class="modal-close" onclick="closeFollowups()" style="position:static;margin:0">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div id="followups-body" style="max-height:60vh;overflow-y:auto;padding:8px 0">
-      <div style="padding:40px;text-align:center;color:var(--text-3);font-size:13px">Carregando...</div>
-    </div>
-  </div>
-</div>
-
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="/static/js/app.js?v=9"></script>
+<script src="/static/js/app.js?v=12"></script>
 </body>
 </html>

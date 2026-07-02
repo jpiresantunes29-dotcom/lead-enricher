@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "LeadEnricher API (FastAPI)",
-      "runtimeExecutable": "C:/Users/atana/AppData/Local/Python/pythoncore-3.14-64/python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"],
+      "runtimeExecutable": "C:/Users/User/AppData/Local/Programs/Python/Python314/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--port", "8000"],
       "port": 8000
     }
   ]
