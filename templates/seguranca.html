@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Segurança — LeadEnricher</title>
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>'/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>{% include 'legal_base.css' %}</style>
+</head>
+<body>
+<header class="lg-header">
+  <a class="lg-logo" href="/">LeadEnricher</a>
+  <a class="lg-back" href="/app">Ir para o app →</a>
+</header>
+<main class="lg-wrap">
+  <div class="lg-kicker">Institucional</div>
+  <h1>Segurança</h1>
+  <p class="lg-updated">Como protegemos os dados da sua operação comercial</p>
+
+  <h2>Infraestrutura</h2>
+  <ul>
+    <li>Aplicação hospedada na <strong>Vercel</strong>, com TLS obrigatório em todas as
+    conexões.</li>
+    <li>Banco de dados PostgreSQL gerenciado pelo <strong>Supabase</strong>, com
+    criptografia em repouso e backups automáticos do provedor.</li>
+    <li>Pagamentos processados integralmente pela <strong>Stripe</strong> — dados de
+    cartão nunca transitam pelos nossos servidores.</li>
+  </ul>
+
+  <h2>Autenticação</h2>
+  <ul>
+    <li>Acesso sem senha: link de acesso por e-mail ou OAuth (Google, Microsoft, GitHub,
+    Apple) via Supabase Auth. Não existe senha para vazar.</li>
+    <li>Sessões baseadas em tokens JWT assinados, validados em todas as requisições à API.</li>
+    <li>Isolamento por usuário: cada consulta à API filtra os dados pelo identificador
+    do usuário autenticado.</li>
+  </ul>
+
+  <h2>Integrações</h2>
+  <ul>
+    <li>Webhooks de CRM são assinados com <strong>HMAC-SHA256</strong>
+    (header <code>X-LeadEnricher-Signature</code>), permitindo ao receptor validar a
+    origem e a integridade de cada payload.</li>
+    <li>Coletas automatizadas possuem proteção anti-SSRF: endereços internos e faixas
+    privadas de rede são bloqueados.</li>
+  </ul>
+
+  <h2>Privacidade e LGPD</h2>
+  <ul>
+    <li>Tratamos apenas dados corporativos e profissionais de fontes públicas, com
+    finalidade declarada de prospecção B2B.</li>
+    <li>Exclusão de leads disponível em um clique; anonimização periódica de contatos
+    inativos conforme política de retenção.</li>
+    <li>Detalhes completos na <a href="/privacidade">Política de Privacidade</a>.</li>
+  </ul>
+
+  <h2>Reporte de vulnerabilidades</h2>
+  <p>Encontrou um problema de segurança? Escreva para
+  <a href="mailto:seguranca@leadenricher.app">seguranca@leadenricher.app</a>.
+  Respondemos em até 48 horas úteis.</p>
+</main>
+<footer class="lg-footer">
+  LeadEnricher © 2026 ·
+  <a href="/termos">Termos de Uso</a>·
+  <a href="/privacidade">Privacidade</a>·
+  <a href="/seguranca">Segurança</a>
+</footer>
+</body>
+</html>

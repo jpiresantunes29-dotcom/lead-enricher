@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Política de Privacidade — LeadEnricher</title>
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>'/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <style>{% include 'legal_base.css' %}</style>
+</head>
+<body>
+<header class="lg-header">
+  <a class="lg-logo" href="/">LeadEnricher</a>
+  <a class="lg-back" href="/app">Ir para o app →</a>
+</header>
+<main class="lg-wrap">
+  <div class="lg-kicker">Institucional</div>
+  <h1>Política de Privacidade</h1>
+  <p class="lg-updated">Última atualização: julho de 2026 · Elaborada com base na LGPD (Lei nº 13.709/2018)</p>
+
+  <h2>1. Quais dados tratamos</h2>
+  <ul>
+    <li><strong>Dados de conta:</strong> e-mail e identificador do provedor de login.
+    Não armazenamos senhas — o acesso é por link de e-mail ou OAuth.</li>
+    <li><strong>Dados de empresas (leads):</strong> informações corporativas públicas —
+    domínio, razão social/nome fantasia, site, página institucional no LinkedIn,
+    registros DNS/MX, porte estimado, setor e contatos corporativos genéricos.</li>
+    <li><strong>Dados de contatos profissionais (decisores):</strong> nome, cargo e
+    perfil profissional público, e-mails corporativos prováveis e telefone comercial,
+    quando disponíveis em fontes públicas.</li>
+    <li><strong>Dados de uso:</strong> contagem de análises para controle de cota e
+    registros técnicos de acesso (logs).</li>
+  </ul>
+
+  <h2>2. Bases legais</h2>
+  <ul>
+    <li><strong>Execução de contrato</strong> (art. 7º, V) para dados de conta e cobrança.</li>
+    <li><strong>Legítimo interesse</strong> (art. 7º, IX) para o tratamento de dados
+    profissionais públicos com finalidade de prospecção B2B, respeitados os direitos do
+    titular e o teste de balanceamento.</li>
+  </ul>
+
+  <h2>3. Compartilhamento</h2>
+  <ul>
+    <li><strong>Operadores de infraestrutura:</strong> Vercel (hospedagem), Supabase
+    (banco de dados e autenticação) e Stripe (pagamentos).</li>
+    <li><strong>Integrações configuradas por você:</strong> ao ativar um webhook de CRM,
+    os dados do lead são enviados ao endpoint que você indicou, sob sua responsabilidade
+    como controlador desse fluxo.</li>
+    <li>Não vendemos dados pessoais a terceiros.</li>
+  </ul>
+
+  <h2>4. Retenção e exclusão</h2>
+  <ul>
+    <li>Leads e contatos podem ser excluídos pelo usuário a qualquer momento na
+    plataforma (Histórico → remover).</li>
+    <li>Dados de contatos profissionais vinculados a leads sem atividade são
+    anonimizados periodicamente conforme nossa política de retenção.</li>
+    <li>Com o encerramento da conta, os dados associados são excluídos em até 30 dias,
+    exceto registros exigidos por obrigação legal.</li>
+  </ul>
+
+  <h2>5. Direitos do titular</h2>
+  <p>Nos termos do art. 18 da LGPD, qualquer titular pode solicitar confirmação de
+  tratamento, acesso, correção, anonimização ou eliminação de seus dados, bem como se
+  opor ao tratamento baseado em legítimo interesse. Atendemos solicitações pelo canal
+  abaixo em até 15 dias.</p>
+
+  <h2>6. Segurança</h2>
+  <p>Adotamos TLS em todas as comunicações, autenticação sem senha, assinatura HMAC nos
+  webhooks e criptografia em repouso provida pela infraestrutura. Detalhes na página
+  <a href="/seguranca">Segurança</a>.</p>
+
+  <h2>7. Encarregado (DPO) e contato</h2>
+  <p>Solicitações relacionadas a dados pessoais:
+  <a href="mailto:privacidade@leadenricher.app">privacidade@leadenricher.app</a>.</p>
+
+  <div class="lg-note">Esta política é um modelo inicial e deve ser revisada por
+  assessoria jurídica especializada em proteção de dados antes da operação em escala.</div>
+</main>
+<footer class="lg-footer">
+  LeadEnricher © 2026 ·
+  <a href="/termos">Termos de Uso</a>·
+  <a href="/privacidade">Privacidade</a>·
+  <a href="/seguranca">Segurança</a>
+</footer>
+</body>
+</html>

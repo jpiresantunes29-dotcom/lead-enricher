@@ -27,7 +27,9 @@ _CACHE_TTL_DAYS = 7
 
 
 def _check_quota(profile: Profile, db: Session):
-    _maybe_reset_quota(profile)
+    if _maybe_reset_quota(profile):
+        # Persiste o reset mesmo em caminhos que não commitam depois (cache hit)
+        db.commit()
     if profile.searches_limit > 0 and profile.searches_used >= profile.searches_limit:
         raise HTTPException(
             status_code=402,

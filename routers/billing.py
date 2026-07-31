@@ -144,7 +144,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             if profile and profile.plan != "free":
                 profile.plan = "free"
                 profile.searches_limit = PLAN_LIMITS["free"]
-                profile.quota_reset_at = None
+                profile.quota_reset_at = _next_reset()  # free também renova por ciclo
                 logger.info("Customer %s downgraded to free.", customer_id)
 
     elif event["type"] == "invoice.paid":

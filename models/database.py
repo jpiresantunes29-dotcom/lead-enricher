@@ -9,6 +9,10 @@ from sqlalchemy.orm import sessionmaker, relationship
 load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./lead_enricher.db")
+if DATABASE_URL.startswith("postgres://"):
+    # Supabase/Heroku entregam a connection string com o esquema legado
+    # "postgres://", que o SQLAlchemy 2.0 não reconhece mais (exige "postgresql://").
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
 _connect_args = {"check_same_thread": False} if _is_sqlite else {}

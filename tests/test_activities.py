@@ -151,3 +151,31 @@ def test_dashboard_metrics(client):
     assert m["funil_por_estagio"].get("reuniao_agendada") == 1
     # 2 pendências: follow-up do no_answer + reunião do meeting_scheduled
     assert m["followups_pendentes"] == 2
+
+
+# ── fila do dia (/api/followups/today) ────────────────────────────────────────
+def test_today_followups_lists_tasks_due_today(client):
+    """Regressão: o endpoint filtrava type='followup', que nunca é gerado —
+    as regras criam 'task' (follow-up) e 'meeting' (reunião)."""
+    lead = _make_lead(client)
+    client.post(
+        f"/api/leads/{lead['id']}/activities",
+        json={"type": "call", "outcome": "meeting_scheduled",
+              "meeting_at": datetime.now(UTC).isoformat()},
+    )
+    resp = client.get("/api/followups/today")
+    assert resp.status_code == 200
+    items = resp.json()
+    assert len(items) == 1
+    assert items[0]["lead_id"] == lead["id"]
+    assert items[0]["domain"] == "nubank.com.br"
+
+
+def test_today_followups_ignores_other_days(client):
+    lead = _make_lead(client)
+    client.post(
+        f"/api/leads/{lead['id']}/activities",
+        json={"type": "task", "notes": "ligar depois",
+              "due_at": (datetime.now(UTC) + timedelta(days=5)).isoformat()},
+    )
+    assert client.get("/api/followups/today").json() == []

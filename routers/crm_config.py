@@ -20,15 +20,6 @@ class CRMConnectionCreate(BaseModel):
     account_id: str | None = None
 
 
-class CRMConnectionOut(BaseModel):
-    provider: str
-    webhook_url: str | None
-    is_active: bool
-
-    class Config:
-        from_attributes = True
-
-
 @router.get("/crm/connections")
 def list_connections(
     db: Session = Depends(get_db),

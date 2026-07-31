@@ -11,21 +11,27 @@ _JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 # Habilite com DEMO_MODE=1 (default: ligado em dev).
 DEMO_MODE_ENABLED = os.getenv("DEMO_MODE", "1") == "1"
 DEMO_TOKEN_PREFIX = "demo-session-"
-DEMO_USER_ID = "demo-user-2026"
-_DEMO_PAYLOAD = {
-    "sub": DEMO_USER_ID,
-    "email": "demo@leadenricher.app",
-    "_demo": True,
-}
+DEMO_USER_PREFIX = "demo-"
+
+
+def is_demo_user(user_id: str) -> bool:
+    """User demo (efêmero, por navegador). UUIDs do Supabase nunca têm esse prefixo."""
+    return bool(user_id) and user_id.startswith(DEMO_USER_PREFIX)
 
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(_security),
 ) -> dict:
     token = credentials.credentials
-    # Demo bypass: qualquer token "demo-session-*" libera o user demo.
+    # Demo bypass: cada token "demo-session-<rand>" vira um user próprio —
+    # sessões demo NÃO compartilham dados entre navegadores/visitantes.
     if DEMO_MODE_ENABLED and token.startswith(DEMO_TOKEN_PREFIX):
-        return dict(_DEMO_PAYLOAD)
+        suffix = token[len(DEMO_TOKEN_PREFIX):][:32] or "anon"
+        return {
+            "sub": f"{DEMO_USER_PREFIX}{suffix}",
+            "email": "demo@leadenricher.app",
+            "_demo": True,
+        }
     try:
         payload = jwt.decode(
             token,

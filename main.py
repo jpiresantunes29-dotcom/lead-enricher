@@ -11,7 +11,7 @@ from slowapi.errors import RateLimitExceeded
 
 from models.database import init_db
 from middleware.auth import rate_limit_key
-from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, batch, crm_config
+from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
 
 # ── Logging estruturado ───────────────────────────────────────────────────────
 logging.config.dictConfig({
@@ -67,7 +67,6 @@ app.include_router(export.router)
 app.include_router(activities.router)
 app.include_router(dashboard.router)
 app.include_router(integrations.router)
-app.include_router(batch.router)
 app.include_router(crm_config.router)
 
 
@@ -92,3 +91,19 @@ def app_page(request: Request):
 def landing_alias():
     # Alias usado durante o desenvolvimento — a landing agora é a home.
     return RedirectResponse("/", status_code=308)
+
+
+# ── Páginas institucionais (confiança/LGPD) ──────────────────────────────────
+@app.get("/termos", response_class=HTMLResponse, include_in_schema=False)
+def termos(request: Request):
+    return templates.TemplateResponse(request, "termos.html")
+
+
+@app.get("/privacidade", response_class=HTMLResponse, include_in_schema=False)
+def privacidade(request: Request):
+    return templates.TemplateResponse(request, "privacidade.html")
+
+
+@app.get("/seguranca", response_class=HTMLResponse, include_in_schema=False)
+def seguranca(request: Request):
+    return templates.TemplateResponse(request, "seguranca.html")

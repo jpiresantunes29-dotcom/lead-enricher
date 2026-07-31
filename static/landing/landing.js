@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════════
-   Landing "Gold Signal" — orquestrador (fase L1)
+   Landing corporativa — orquestrador
    Espec: docs/DESIGN_LANDING_V3.md §7-§8
    Vendor (UMD via <script defer>): window.Lenis, window.gsap,
    window.ScrollTrigger — usados a partir da fase L2.
@@ -123,34 +123,7 @@ async function initFooterStatus() {
   el.textContent = '● status indisponível';
 }
 
-// ── Boot sequence (§5.0) — 1ª visita, máx ~1.2s, skippable ─────────
-function bootSequence() {
-  if (env.reducedMotion || sessionStorage.getItem('le-boot')) return;
-  sessionStorage.setItem('le-boot', '1');
-  const overlay = document.createElement('div');
-  overlay.className = 'boot';
-  overlay.innerHTML = '<span class="boot-line mono"></span><span class="boot-caret"></span>';
-  document.body.appendChild(overlay);
-  const line = overlay.querySelector('.boot-line');
-  const text = 'resolving leadenricher.app … 200 OK';
-  let i = 0;
-  const close = () => {
-    clearInterval(timer);
-    overlay.classList.add('out');
-    setTimeout(() => overlay.remove(), 450);
-  };
-  const timer = setInterval(() => {
-    line.textContent = text.slice(0, ++i);
-    if (i >= text.length) {
-      clearInterval(timer);
-      setTimeout(close, 280);
-    }
-  }, 22);
-  overlay.addEventListener('click', close);
-}
-
 // ── Boot ───────────────────────────────────────────────────────────
-bootSequence();
 initLenis();
 initReveals();
 initSpotlight();
@@ -158,23 +131,16 @@ initMagnetic();
 initCounters();
 initFooterStatus();
 
-// Efeitos pesados carregam após o first paint e fora do caminho crítico (§8).
+// Efeitos de scroll carregam após o first paint e fora do caminho crítico (§8).
+// A boot sequence, o cursor custom, o terminal e a rede de partículas foram
+// removidos no redesign corporativo — liam como "ferramenta de dev".
 const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 200));
 idle(async () => {
-  const { initTerminal } = await import('./fx/terminal.js');
-  initTerminal(document.getElementById('terminal-body'), env);
-
   if (!env.reducedMotion && !env.lowPower) {
-    const { initNetwork } = await import('./fx/network.js');
-    initNetwork(document.getElementById('fx-network'), env);
-
     const { initSpine } = await import('./fx/spine.js');
     initSpine(env);
 
     const { initJourney } = await import('./fx/journey.js');
     initJourney(env);
-
-    const { initCursor } = await import('./fx/cursor.js');
-    initCursor(env);
   }
 });

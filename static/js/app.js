@@ -4,36 +4,6 @@
    #followups · #history · #settings · #lead-<id>
    ════════════════════════════════════════════════════════════════ */
 
-/* ══════ CELEBRATION ══════ */
-function celebrate(){
-  const canvas=document.getElementById('celebrate-canvas');
-  canvas.width=window.innerWidth;canvas.height=window.innerHeight;
-  const ctx=canvas.getContext('2d');
-  canvas.classList.add('active');
-  const colors=['#F5B700','#FFD84D','#FFF3C4','#4ade80','#60a5fa'];
-  const particles=Array.from({length:55},()=>({
-    x:Math.random()*canvas.width,y:-10,
-    vx:(Math.random()-.5)*4,vy:Math.random()*4+2,
-    r:Math.random()*4+2,c:colors[Math.floor(Math.random()*colors.length)],
-    life:1,rot:Math.random()*360,rv:(Math.random()-.5)*5,
-  }));
-  let frame=0;
-  function tick(){
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    let alive=false;
-    for(const p of particles){
-      p.x+=p.vx;p.y+=p.vy;p.vy+=.08;p.life-=.012;p.rot+=p.rv;
-      if(p.life<=0)continue;alive=true;
-      ctx.save();ctx.globalAlpha=p.life;ctx.fillStyle=p.c;
-      ctx.translate(p.x,p.y);ctx.rotate(p.rot*Math.PI/180);
-      ctx.fillRect(-p.r,-p.r/2,p.r*2,p.r);ctx.restore();
-    }
-    if(alive&&frame++<200)requestAnimationFrame(tick);
-    else{ctx.clearRect(0,0,canvas.width,canvas.height);canvas.classList.remove('active');}
-  }
-  requestAnimationFrame(tick);
-}
-
 /* ══════ LOADING MESSAGES ══════ */
 const LOAD_MSGS=['Acessando o site...','Consultando LinkedIn...','Verificando DNS/MX...','Mapeando emails...','Identificando decisores...','Consolidando ficha...'];
 let loadInt=null;
@@ -116,10 +86,10 @@ function updateQuotaUI(){
   const rem=searches_limit-searches_used;
   el.style.display='block';
   if(rem>0){
-    el.innerHTML='Você tem <strong></strong> buscas neste ciclo.';
-    el.querySelector('strong').textContent=rem;
+    el.innerHTML='<strong></strong> análises disponíveis neste ciclo.';
+    el.querySelector('strong').textContent=`${rem} de ${searches_limit}`;
   }
-  else el.innerHTML=`<strong>Cota esgotada.</strong> <button onclick="startCheckout('pro')">Faça upgrade</button>`;
+  else el.innerHTML=`<strong>Cota do ciclo esgotada.</strong> <button onclick="startCheckout('pro')">Fazer upgrade</button>`;
 }
 
 function updateNavUser(){
@@ -133,7 +103,7 @@ function updateNavUser(){
     const{searches_used,searches_limit,plan}=_profile;
     const quota=plan==='enterprise'?'∞':`${searches_used}/${searches_limit}`;
     const el=document.getElementById('nav-quota');
-    if(el)el.textContent=`${quota} buscas`;
+    if(el)el.textContent=`${quota} análises`;
   }else{
     preauth.style.display='flex';
     if(postauth)postauth.style.display='none';
@@ -155,9 +125,9 @@ async function sendMagicLink(){
   btn.textContent='Enviando...';sp.style.display='inline-block';
   errEl.style.display='none';
   const{error}=await _sb.auth.signInWithOtp({email,options:{emailRedirectTo:_AUTH_REDIRECT}});
-  btn.textContent='Entrar com link mágico';sp.style.display='none';
+  btn.textContent='Receber link de acesso';sp.style.display='none';
   if(error){errEl.textContent=error.message;errEl.style.display='block';}
-  else{const ok=document.getElementById('auth-success');ok.textContent='Link enviado! Verifique seu email.';ok.style.display='block';}
+  else{const ok=document.getElementById('auth-success');ok.textContent='Link enviado. Verifique seu e-mail.';ok.style.display='block';}
 }
 
 async function signInWithGoogle(){await _sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:_AUTH_REDIRECT}});}
@@ -253,9 +223,8 @@ async function enrich(){
       showError(json.detail||'Erro ao enriquecer este domínio.');return;
     }
     if(!json.success||!json.data){showError(json.message||'Não foi possível coletar dados.');return;}
-    if(_profile)_profile.searches_used++;
-    updateQuotaUI();updateNavUser();
-    renderResult(json.data);celebrate();
+    loadProfile(); // recarrega cota do servidor — cache hit não consome busca
+    renderResult(json.data);
     if(json.data.id)history.replaceState(null,'','#lead-'+json.data.id);
   }catch(e){
     if(e.message!=='not_authenticated')showError('Erro de conexão com o servidor.');
@@ -484,6 +453,7 @@ async function loadIntegrations(){
 
 const IC_SPARK='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.7L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.3z"/></svg>';
 const IC_PUSH='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+const IC_DL='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 
 async function genAiSummary(force){
   if(!currentLeadId)return;
@@ -598,6 +568,7 @@ function renderResult(data){
       </div>
       <div class="result-hdr-right"><span id="score-pill-slot">${renderScorePill(data)}</span><span class="status-pill ${sc}">${sl}</span></div>
     </div>
+    <div class="lead-actions" id="lead-actions"></div>
     <div class="result-grid">${cards.join('')}</div>
     ${desc}${dns}
     <div class="dec-section">
@@ -641,17 +612,18 @@ function renderResult(data){
       </div>
       <div id="call-feedback" class="call-feedback"></div>
     </div>
-    <div class="integr-row" id="integr-row"></div>
     <div class="ai-box" id="ai-box" style="display:none"></div>
     <div id="timeline-box" style="display:none"></div>
   </div>`;
-  // Ações de integração (só aparecem se configuradas)
+  // Barra de ações: exportação sempre; IA e CRM conforme configuração
   const integ=_integr||{};
-  const integBtns=[
-    integ.ai?`<button class="call-btn" onclick="genAiSummary()">${IC_SPARK} Resumo IA</button>`:'',
-    integ.crm_webhook?`<button class="call-btn" onclick="pushToCrm()">${IC_PUSH} Enviar ao CRM</button>`:'',
+  document.getElementById('lead-actions').innerHTML=[
+    `<span class="la-lbl">Ações</span>`,
+    `<button class="la-btn" onclick="exportLead(${data.id},'csv')">${IC_DL} CSV</button>`,
+    `<button class="la-btn" onclick="exportLead(${data.id},'xlsx')">${IC_DL} Excel</button>`,
+    integ.ai?`<button class="la-btn" onclick="genAiSummary()">${IC_SPARK} Resumo IA</button>`:'',
+    integ.crm_webhook?`<button class="la-btn accent" onclick="pushToCrm()">${IC_PUSH} Enviar ao CRM</button>`:'',
   ].filter(Boolean).join('');
-  if(integBtns)document.getElementById('integr-row').innerHTML=integBtns;
   if(data.ai_summary){
     const box=document.getElementById('ai-box');
     box.style.display='block';
@@ -721,36 +693,78 @@ async function loadHistory(){
 
 function filterHistory(q){renderHistory(q);}
 
+/* Ordenação da tabela de histórico */
+let _histSort={key:'created_at',dir:-1};
+
+function _histEmpMin(l){
+  const e=l.employee_count;
+  if(!e||typeof e!=='object')return -1;
+  return e.exact||e.min||-1;
+}
+function _histSortVal(l,key){
+  switch(key){
+    case 'company':return (l.company_name||l.domain||'').toLowerCase();
+    case 'domain':return (l.domain||'').toLowerCase();
+    case 'score':return l.score??-1;
+    case 'stage':return STAGE_ORDER.indexOf(l.stage||'novo');
+    case 'employees':return _histEmpMin(l);
+    default:return l.created_at||'';
+  }
+}
+function sortHistory(key){
+  if(_histSort.key===key)_histSort.dir*=-1;
+  else _histSort={key,dir:(key==='created_at'||key==='score'||key==='employees')?-1:1};
+  renderHistory(document.getElementById('history-filter').value);
+}
+
 function renderHistory(q){
   const body=document.getElementById('history-body');
   const count=document.getElementById('history-count');
   const norm=(q||'').trim().toLowerCase();
-  const leads=norm?_histLeads.filter(l=>
+  const leads=(norm?_histLeads.filter(l=>
     (l.company_name||'').toLowerCase().includes(norm)||(l.domain||'').toLowerCase().includes(norm)
-  ):_histLeads;
+  ):[..._histLeads]).sort((a,b)=>{
+    const va=_histSortVal(a,_histSort.key),vb=_histSortVal(b,_histSort.key);
+    return (va<vb?-1:va>vb?1:0)*_histSort.dir;
+  });
   count.textContent=_histLeads.length?`${leads.length} de ${_histLeads.length} lead${_histLeads.length!==1?'s':''}`:'';
   if(!_histLeads.length){
     body.innerHTML=`<div class="muted-box">Nenhum lead ainda.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Fazer minha primeira busca</a></div>`;
     return;
   }
   if(!leads.length){body.innerHTML='<div class="muted-box">Nenhum lead corresponde ao filtro.</div>';return;}
-  body.innerHTML=leads.map(l=>{
-    const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'short',year:'numeric'});
-    const emp=l.employee_count?(typeof l.employee_count==='object'?(l.employee_count.band||l.employee_count.raw||''):l.employee_count):'';
-    return `<div id="row-${l.id}" class="hist-row">
-      <div class="hist-ava">${esc((l.company_name||l.domain||'?')[0].toUpperCase())}</div>
-      <div class="hist-main">
-        <div class="hist-name">${esc(l.company_name||l.domain)}</div>
-        <div class="hist-meta">${esc(l.domain||'')}${l.mx_provider?` · ${esc(l.mx_provider)}`:''}${emp?` · ${esc(emp)} func.`:''}</div>
-      </div>
-      <div class="hist-date">${date}</div>
-      <div class="hist-actions">
+
+  const th=(label,key)=>{
+    if(!key)return `<th>${label}</th>`;
+    const on=_histSort.key===key;
+    const arrow=on?(_histSort.dir>0?' ↑':' ↓'):'';
+    return `<th><button class="th-sort${on?' on':''}" onclick="sortHistory('${key}')">${label}${arrow}</button></th>`;
+  };
+  const rows=leads.map(l=>{
+    const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
+    const e=l.employee_count;
+    const emp=e?(typeof e==='object'?(e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'—')):e):'—';
+    const score=l.score!=null?`<span class="kb-prio prio-${l.priority||'baixa'}" title="prioridade ${l.priority||''}">${l.score}</span>`:'—';
+    return `<tr id="row-${l.id}">
+      <td class="td-co"><button class="td-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
+      <td class="td-mono">${esc(l.domain||'—')}</td>
+      <td>${score}</td>
+      <td><span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
+      <td class="td-mono">${esc(String(emp))}</td>
+      <td class="td-mono td-date">${date}</td>
+      <td class="td-actions">
         <button class="hist-btn primary" onclick="loadLeadIntoView(${l.id})">Ver</button>
         <button class="hist-btn" onclick="exportLead(${l.id},'csv')" title="Exportar CSV">CSV</button>
         <button class="hist-btn danger" onclick="deleteLead(${l.id})" title="Remover">✕</button>
-      </div>
-    </div>`;
+      </td>
+    </tr>`;
   }).join('');
+  body.innerHTML=`<div class="tbl-scroll"><table class="lead-tbl">
+    <thead><tr>
+      ${th('Empresa','company')}${th('Domínio','domain')}${th('Score','score')}${th('Estágio','stage')}${th('Funcionários','employees')}${th('Data','created_at')}${th('Ações',null)}
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
 }
 
 async function deleteLead(leadId){
@@ -821,8 +835,8 @@ function renderSettings(me,conns){
   const reset=me?.quota_reset_at?new Date(me.quota_reset_at).toLocaleDateString('pt-BR'):null;
 
   const planActions=demo
-    ?`<p class="set-desc" style="margin:14px 0 0">Você está em <strong>modo demo</strong> — os dados desta sessão ficam neste navegador. Crie uma conta para manter seus leads.</p>
-      <div class="set-actions"><button class="set-btn primary" onclick="signOut().then(()=>openAuthModal())">Criar conta grátis</button></div>`
+    ?`<p class="set-desc" style="margin:14px 0 0">Você está em <strong>modo demonstração</strong> — os dados desta sessão ficam restritos a este navegador. Crie uma conta para manter seus leads.</p>
+      <div class="set-actions"><button class="set-btn primary" onclick="signOut().then(()=>openAuthModal())">Criar conta gratuita</button></div>`
     :plan==='free'
     ?`<div class="set-actions"><button class="set-btn primary" onclick="startCheckout('pro')">Fazer upgrade — Pro R$ 97/mês</button></div>`
     :`<div class="set-actions"><button class="set-btn ghost" onclick="openBillingPortal()">Gerenciar assinatura</button></div>`;
@@ -850,7 +864,7 @@ function renderSettings(me,conns){
       <div class="set-row" style="display:block">
         <span class="set-lbl">Uso do ciclo</span>
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
-          <span class="set-val" style="text-align:left">${unlimited?'Buscas ilimitadas':`${used} de ${limit} buscas`}</span>
+          <span class="set-val" style="text-align:left">${unlimited?'Análises ilimitadas':`${used} de ${limit} análises`}</span>
           ${reset&&!unlimited?`<span class="set-lbl">renova em ${reset}</span>`:''}
         </div>
         ${unlimited?'':`<div class="usage-track"><div class="usage-fill${pctUsed>=100?' full':''}" style="width:${pctUsed}%"></div></div>`}

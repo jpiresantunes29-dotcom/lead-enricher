@@ -27,6 +27,36 @@ HEADER_FONT_COLOR = "FFFFFF"
 ALT_ROW = "F4F3FF"
 
 
+def _format_employee_count(value) -> str:
+    """Converte o JSON consolidado {raw,min,max,band,exact} em texto legível."""
+    if not isinstance(value, dict):
+        return str(value) if value else ""
+    if value.get("exact"):
+        return str(value["exact"])
+    if value.get("min") and value.get("max"):
+        return f"{value['min']}–{value['max']}"
+    if value.get("min"):
+        return f"{value['min']}+"
+    return value.get("band") or value.get("raw") or ""
+
+
+def _field_value(lead, field):
+    """Resolve o valor de uma coluna, incluindo campos derivados do 1º decisor."""
+    if field.startswith("decision_maker_"):
+        dms = getattr(lead, "decision_makers", None) or []
+        if not dms:
+            return ""
+        dm = dms[0]
+        return {
+            "decision_maker_name": dm.name,
+            "decision_maker_title": dm.title_found or dm.title_searched,
+            "decision_maker_linkedin": dm.linkedin_url,
+        }.get(field) or ""
+    if field == "employee_count":
+        return _format_employee_count(getattr(lead, field, None))
+    return getattr(lead, field, None)
+
+
 def _thin_border():
     side = Side(style="thin", color="DDDDDD")
     return Border(left=side, right=side, top=side, bottom=side)
@@ -51,7 +81,7 @@ def build_excel(leads: List) -> bytes:
     for row_idx, lead in enumerate(leads, start=2):
         fill = PatternFill("solid", fgColor=ALT_ROW) if row_idx % 2 == 0 else None
         for col_idx, (_, field) in enumerate(HEADERS, start=1):
-            value = getattr(lead, field, None)
+            value = _field_value(lead, field)
             if value is None:
                 value = ""
             elif hasattr(value, "strftime"):
@@ -82,7 +112,7 @@ def build_csv(leads: List) -> bytes:
     for lead in leads:
         row = []
         for _, field in HEADERS:
-            value = getattr(lead, field, None)
+            value = _field_value(lead, field)
             if value is None:
                 row.append("")
             elif hasattr(value, "strftime"):

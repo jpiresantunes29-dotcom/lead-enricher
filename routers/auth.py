@@ -1,21 +1,26 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from models.database import get_db, Profile
-from middleware.auth import get_current_user, DEMO_USER_ID
+from middleware.auth import get_current_user, is_demo_user
 
 router = APIRouter(prefix="/api", tags=["auth"])
 
 
 def get_or_create_profile(db: Session, user_id: str) -> Profile:
+    from routers.billing import _next_reset  # import tardio evita ciclo
+
     profile = db.query(Profile).filter(Profile.id == user_id).first()
     if not profile:
         # User demo nasce no plano Pro para que toda a UI seja explorável
-        # sem topar paywall nem cota de 3.
-        is_demo = user_id == DEMO_USER_ID
+        # sem topar paywall nem cota do plano free.
+        is_demo = is_demo_user(user_id)
         profile = Profile(
             id=user_id,
             plan="pro" if is_demo else "free",
             searches_limit=500 if is_demo else 5,
+            # Sem esta data o _maybe_reset_quota nunca renova o plano free —
+            # a UI promete "buscas neste ciclo", então o ciclo precisa existir.
+            quota_reset_at=_next_reset(),
         )
         db.add(profile)
         db.commit()

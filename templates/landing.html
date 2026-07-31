@@ -16,10 +16,11 @@
     }
   </script>
 
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>' />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/landing/landing.css?v=3" />
+  <link rel="stylesheet" href="/static/landing/landing.css?v=4" />
 </head>
 <body>
 
@@ -35,48 +36,77 @@
   <nav class="nav-pill" aria-label="Navegação principal">
     <a href="#journey">Como funciona</a>
     <a href="#features">Recursos</a>
-    <a href="#proof">O produto</a>
+    <a href="#personas">Para quem</a>
     <a href="#pricing">Preços</a>
     <a href="#comparison">Comparação</a>
     <a href="#faq">Perguntas</a>
   </nav>
-  <a class="btn btn-gold" data-magnetic href="/app">Entrar</a>
+  <a class="btn btn-brand" data-magnetic href="/app">Entrar</a>
 </header>
 
 <!-- ── ATO I · HERO ── -->
 <section class="hero" id="hero" data-section="hero">
-  <canvas id="fx-network" class="hero-network" aria-hidden="true"></canvas>
-
   <div class="hero-inner">
     <div class="hero-copy">
-      <p class="eyebrow" data-reveal>// inteligência de prospecção</p>
+      <p class="eyebrow" data-reveal>// inteligência comercial B2B</p>
       <h1 class="hero-title" data-reveal>
         Digite um domínio.<br />
         Conheça a empresa <em class="shimmer">inteira</em>.
       </h1>
-      <p class="hero-sub mono" data-reveal>
-        DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos —
-        direto do domínio, sem planilha.
+      <p class="hero-sub" data-reveal>
+        Infraestrutura, porte, decisores e score de prioridade em segundos —
+        direto do domínio, sem planilha e sem base de dados paga.
       </p>
-      <div class="hero-actions" data-reveal>
-        <a class="btn btn-gold" data-magnetic href="/app">Começar grátis →</a>
-        <span class="hero-note mono">5 buscas grátis · sem cartão</span>
+      <form class="hero-form" action="/app" method="get" data-reveal>
+        <input class="hero-input mono" name="domain" placeholder="suaempresa.com.br"
+               autocomplete="off" spellcheck="false" aria-label="Domínio para analisar" />
+        <button class="btn btn-brand btn-sm" data-magnetic type="submit">Analisar →</button>
+      </form>
+      <p class="hero-note mono" data-reveal>5 análises gratuitas por mês · sem cartão de crédito</p>
+      <div class="hero-badges" data-reveal>
+        <span class="hero-badge">Dados públicos · conformidade LGPD</span>
+        <span class="hero-badge">Exportação e webhook para CRM</span>
       </div>
     </div>
 
-    <!-- Terminal-demo (fx/terminal.js anima; o form é real) -->
-    <div class="terminal" id="fx-terminal" data-reveal>
-      <div class="terminal-chrome" aria-hidden="true">
-        <span></span><span></span><span></span>
-        <span class="terminal-title mono">enrich — live</span>
+    <!-- Prévia do produto (a interface real, tema claro) -->
+    <div class="frame" data-reveal aria-label="Prévia da ficha de empresa no LeadEnricher">
+      <div class="frame-chrome" aria-hidden="true">
+        <i></i><i></i><i></i>
+        <span class="frame-url mono">app.leadenricher.com.br/app</span>
       </div>
-      <pre class="terminal-body mono" id="terminal-body" aria-live="polite"></pre>
-      <form class="terminal-input-row" action="/app" method="get">
-        <span class="mono" aria-hidden="true">$</span>
-        <input class="terminal-input mono" name="domain" placeholder="suaempresa.com.br"
-               autocomplete="off" spellcheck="false" aria-label="Domínio para enriquecer" />
-        <button class="btn btn-gold btn-sm" type="submit">enrich</button>
-      </form>
+      <div class="frame-body" aria-hidden="true">
+        <div class="frame-sb">
+          <div class="frame-brand"><i>L</i>LeadEnricher</div>
+          <div class="frame-nav on">Buscar</div>
+          <div class="frame-nav">Dashboard</div>
+          <div class="frame-nav">Pipeline</div>
+          <div class="frame-nav">Follow-ups</div>
+          <div class="frame-nav">Histórico</div>
+        </div>
+        <div class="frame-main">
+          <div class="frame-hdr">
+            <div class="frame-co">Acme Tecnologia<small>acme.com.br</small></div>
+            <span class="frame-score">87 · ALTA PRIORIDADE</span>
+          </div>
+          <div class="frame-grid">
+            <div class="frame-cell"><b>PROVEDOR MX</b><span>Google Workspace <em class="ok">✓</em></span></div>
+            <div class="frame-cell"><b>FUNCIONÁRIOS</b><span>51–200</span></div>
+            <div class="frame-cell"><b>SETOR</b><span>Tecnologia / SaaS</span></div>
+            <div class="frame-cell"><b>LOCALIZAÇÃO</b><span>São Paulo, SP</span></div>
+          </div>
+          <div class="frame-row">
+            <span class="frame-ava">M</span>
+            <span class="frame-dm">Marina Alves<small>Diretora de TI</small></span>
+            <span class="frame-chip">e-mail verificado</span>
+          </div>
+          <div class="frame-row">
+            <span class="frame-ava">R</span>
+            <span class="frame-dm">Rafael Nunes<small>CFO</small></span>
+            <span class="frame-chip">telefone direto</span>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -111,7 +141,7 @@
       <div class="jv-line">SPF   <span class="jv-ok">v=spf1 include:_spf… ✓</span></div>
       <div class="jv-line">DMARC <span class="jv-ok">p=reject ✓</span></div>
       <div class="jv-line jv-dim">NS · SOA · TXT · AAAA</div>
-      <div class="jv-line">HOST  <span class="jv-gold">AWS · ASN 16509</span></div>
+      <div class="jv-line">HOST  <span class="jv-brand">AWS · ASN 16509</span></div>
     </div>
   </div>
   <div class="journey-stage" data-station="profile">
@@ -121,7 +151,7 @@
       <p data-reveal>Porte, setor, localização e LinkedIn verificado da empresa.</p>
     </div>
     <div class="journey-visual mono" data-reveal aria-hidden="true">
-      <div class="jv-line">PORTE   <span class="jv-gold">51–200 funcionários</span></div>
+      <div class="jv-line">PORTE   <span class="jv-brand">51–200 funcionários</span></div>
       <div class="jv-line">SETOR   Tecnologia / SaaS</div>
       <div class="jv-line">LOCAL   São Paulo, BR</div>
       <div class="jv-line">SOCIAL  <span class="jv-ok">LinkedIn verificado ✓</span></div>
@@ -136,7 +166,7 @@
     <div class="journey-visual mono" data-reveal aria-hidden="true">
       <div class="jv-line">◉ CTO                <span class="jv-ok">e-mail ✓ SMTP</span></div>
       <div class="jv-line">◉ Diretor Comercial  <span class="jv-ok">e-mail ✓ SMTP</span></div>
-      <div class="jv-line">◉ Founder            <span class="jv-gold">telefone direto</span></div>
+      <div class="jv-line">◉ Founder            <span class="jv-brand">telefone direto</span></div>
     </div>
   </div>
   <div class="journey-stage" data-station="score">
@@ -164,6 +194,41 @@
     <article class="card" data-reveal data-spotlight><h3>Follow-up automático</h3><p>Não atendeu? Tarefa criada para daqui a 2 dias.</p></article>
     <article class="card" data-reveal data-spotlight><h3>Pipeline kanban</h3><p>Do novo lead à reunião agendada, sem sair da tela.</p></article>
     <article class="card" data-reveal data-spotlight><h3>Export &amp; CRM</h3><p>Excel, CSV, Dynamics, HubSpot, Pipedrive, webhook.</p></article>
+  </div>
+</section>
+
+<!-- ── Para quem é ── -->
+<section class="personas" id="personas" data-section="personas">
+  <p class="eyebrow mono" data-reveal>// para quem é</p>
+  <h2 class="section-title" data-reveal>Feito para quem precisa<br />bater meta no fim do mês.</h2>
+  <div class="persona-grid">
+    <article class="card persona" data-reveal data-spotlight>
+      <h3>SDR e pré-vendas</h3>
+      <p class="persona-pain">"Perco metade do dia garimpando contato antes de conseguir ligar."</p>
+      <ul class="persona-list">
+        <li>Lista de decisores com e-mail e telefone em uma busca</li>
+        <li>Score diz quem ligar primeiro</li>
+        <li>Follow-up criado sozinho quando não atendem</li>
+      </ul>
+    </article>
+    <article class="card persona" data-reveal data-spotlight>
+      <h3>Gerente comercial</h3>
+      <p class="persona-pain">"Não sei em que pé está o pipeline sem cobrar todo mundo."</p>
+      <ul class="persona-list">
+        <li>Funil por estágio e taxas de contato e reunião</li>
+        <li>Atividades registradas por lead, com histórico</li>
+        <li>Exportação em Excel para a reunião de resultados</li>
+      </ul>
+    </article>
+    <article class="card persona" data-reveal data-spotlight>
+      <h3>Agências e consultorias</h3>
+      <p class="persona-pain">"Cada cliente novo começa com uma planilha do zero."</p>
+      <ul class="persona-list">
+        <li>Enriquecimento por domínio, sem base paga por contato</li>
+        <li>Webhook envia o lead pronto ao CRM do cliente</li>
+        <li>Dados públicos, com origem e confiança declaradas</li>
+      </ul>
+    </article>
   </div>
 </section>
 
@@ -195,14 +260,14 @@
   <div class="pricing-grid">
     <article class="card price" data-reveal>
       <h3>Free</h3><p class="price-val mono">R$ 0</p>
-      <p>5 buscas/mês · dados completos · 1 cargo por busca</p>
+      <p>5 análises/mês · dados completos · 1 cargo por busca</p>
       <a class="btn btn-ghost" href="/app">Começar agora</a>
     </article>
     <article class="card price price-featured" data-reveal>
       <span class="price-badge mono">mais popular</span>
       <h3>Pro</h3><p class="price-val mono">R$ 97<span>/mês</span></p>
-      <p>500 buscas · decisores ilimitados · export · verificação premium</p>
-      <a class="btn btn-gold" data-magnetic href="/app">Assinar Pro</a>
+      <p>500 análises · decisores ilimitados · exportação · verificação premium</p>
+      <a class="btn btn-brand" data-magnetic href="/app">Assinar Pro</a>
     </article>
     <article class="card price" data-reveal>
       <h3>Enterprise</h3><p class="price-val mono">Custom</p>
@@ -231,7 +296,7 @@
     <div class="comp-col comp-col--highlight" data-reveal>
       <h3 style="color:var(--gold)">LeadEnricher</h3>
       <ul class="comp-list">
-        <li><strong>✓</strong> <strong>Grátis</strong> até 5 buscas · R$ 97/mês Pro</li>
+        <li><strong>✓</strong> <strong>Gratuito</strong> até 5 análises · R$ 97/mês no Pro</li>
         <li><strong>✓</strong> Banco de dados estruturado · export XLSX/CSV</li>
         <li><strong>✓</strong> Score explicável de 14 critérios</li>
         <li><strong>✓</strong> DNS + SPF/DMARC + hosting automático</li>
@@ -263,6 +328,18 @@
       <summary>E se a empresa não tiver website?</summary>
       <p>Busca de domínio ainda valida DNS, e-mail corporativo (via DNS) e decisores via LinkedIn/Google. Sempre há alguma trilha.</p>
     </details>
+    <details class="faq-item" data-reveal>
+      <summary>Como funciona a cota de análises?</summary>
+      <p>Cada domínio novo analisado consome uma unidade da cota. Reabrir um lead já analisado nos últimos 7 dias vem do cache e não consome nada. A cota renova a cada ciclo de 30 dias e não é cumulativa.</p>
+    </details>
+    <details class="faq-item" data-reveal>
+      <summary>Posso cancelar quando quiser?</summary>
+      <p>Sim. O cancelamento é feito pelo portal de assinatura em Configurações, sem contato com vendas, e vale até o fim do ciclo já pago. Não há multa nem fidelidade.</p>
+    </details>
+    <details class="faq-item" data-reveal>
+      <summary>Emitem nota fiscal para empresa?</summary>
+      <p>Sim. A cobrança é processada pela Stripe e o recibo fiscal é enviado por e-mail a cada ciclo. Para faturamento com CNPJ, dados de cobrança e condições específicas, fale com o time comercial.</p>
+    </details>
   </div>
 </section>
 
@@ -272,9 +349,9 @@
   <form class="cta-form" action="/app" method="get" data-reveal>
     <input class="cta-input mono" name="domain" placeholder="suaempresa.com.br"
            autocomplete="off" spellcheck="false" aria-label="Domínio para enriquecer" />
-    <button class="btn btn-gold" data-magnetic type="submit">Começar grátis →</button>
+    <button class="btn btn-brand" data-magnetic type="submit">Analisar agora →</button>
   </form>
-  <p class="hero-note mono" data-reveal>5 buscas grátis · sem cartão · sem senha</p>
+  <p class="hero-note mono" data-reveal>5 análises gratuitas · sem cartão · sem senha</p>
 </section>
 
 <!-- ── FOOTER ── -->
@@ -284,6 +361,9 @@
     <nav class="footer-links" aria-label="Rodapé">
       <a href="#features">Recursos</a>
       <a href="#pricing">Preços</a>
+      <a href="/termos">Termos</a>
+      <a href="/privacidade">Privacidade</a>
+      <a href="/seguranca">Segurança</a>
       <a href="/app">Entrar</a>
     </nav>
     <span class="footer-status mono" id="footer-status">● verificando…</span>
@@ -294,6 +374,6 @@
 <script defer src="/static/landing/vendor/lenis.min.js"></script>
 <script defer src="/static/landing/vendor/gsap.min.js"></script>
 <script defer src="/static/landing/vendor/ScrollTrigger.min.js"></script>
-<script type="module" src="/static/landing/landing.js?v=2"></script>
+<script type="module" src="/static/landing/landing.js?v=3"></script>
 </body>
 </html>

@@ -200,7 +200,7 @@ def test_home_serves_landing(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "fx-terminal" in resp.text  # terminal-demo da landing Gold Signal
+    assert "hero-title" in resp.text  # hero da landing
 
 
 def test_app_route_serves_product(client):
@@ -213,3 +213,21 @@ def test_landing_alias_redirects_home(client):
     resp = client.get("/landing", follow_redirects=False)
     assert resp.status_code == 308
     assert resp.headers["location"] == "/"
+
+
+# ── páginas institucionais (confiança/LGPD) ──────────────────────────────────
+@pytest.mark.parametrize(
+    "path,marker",
+    [
+        ("/termos", "Termos de Uso"),
+        ("/privacidade", "Política de Privacidade"),
+        ("/seguranca", "Segurança"),
+    ],
+)
+def test_institutional_pages(client, path, marker):
+    resp = client.get(path)
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert marker in resp.text
+    # o CSS compartilhado é incluído via Jinja — se o include falhar, some
+    assert "lg-wrap" in resp.text

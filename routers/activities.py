@@ -179,7 +179,9 @@ def today_followups(
         .join(Lead, Activity.lead_id == Lead.id)
         .filter(
             Lead.user_id == user_id,
-            Activity.type == "followup",
+            # Follow-ups derivados pelas regras nascem como type=task;
+            # reuniões como type=meeting. Não existe type="followup".
+            Activity.type.in_(("task", "meeting")),
             Activity.completed_at.is_(None),
             func.date(Activity.due_at) == today_date,
         )
