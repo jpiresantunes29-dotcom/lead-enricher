@@ -41,7 +41,14 @@ limiter = Limiter(key_func=rate_limit_key, default_limits=["60/minute"])
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("LeadEnricher starting up.")
-    init_db()
+    try:
+        init_db()
+    except Exception:
+        # Não deixa uma falha de init_db (conectividade, permissão de DDL no
+        # pooler etc.) derrubar o processo inteiro a cada cold start — o
+        # runtime Python da Vercel engole exceções de lifespan sem traceback,
+        # então logamos explicitamente para conseguir diagnosticar.
+        logger.exception("init_db() falhou; app segue no ar sem garantir o schema.")
     yield
     logger.info("LeadEnricher shutting down.")
 
