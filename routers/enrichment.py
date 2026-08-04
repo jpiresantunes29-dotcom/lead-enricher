@@ -9,10 +9,10 @@ from models.schemas import (
     EnrichRequest, EnrichResponse, LeadOut,
     DecisoresRequest, DecisoresResponse, DecisionMakerOut,
 )
-from services.enricher import enrich_company
+from services.enricher import enrich_company, ENRICHMENT_VERSION
 from services._utils import normalize_domain
 from services.decision_finder import find_decision_makers
-from services.lead_scorer import apply_score
+from services.people.waterfall import ingest_enrichment
 from middleware.auth import get_current_user, rate_limit_key
 from routers.auth import get_or_create_profile
 from routers.billing import _maybe_reset_quota
@@ -37,8 +37,8 @@ def _check_quota(profile: Profile, db: Session):
         )
 
 
-def _find_cached_lead(db: Session, domain: str, user_id: str) -> Lead | None:
-    """Retorna lead recente do mesmo domínio para o mesmo usuário, se existir."""
+def _recent_leads(db: Session, domain: str, user_id: str):
+    """Fichas do domínio dentro da janela de cache, mais recente primeiro."""
     cutoff = datetime.now(UTC) - timedelta(days=_CACHE_TTL_DAYS)
     return (
         db.query(Lead)
@@ -49,8 +49,30 @@ def _find_cached_lead(db: Session, domain: str, user_id: str) -> Lead | None:
             Lead.created_at >= cutoff,
         )
         .order_by(Lead.created_at.desc())
-        .first()
     )
+
+
+def _find_cached_lead(db: Session, domain: str, user_id: str) -> Lead | None:
+    """
+    Retorna lead recente do mesmo domínio para o mesmo usuário, se existir.
+
+    Ficha gerada por uma versão anterior da coleta não conta como cache: a
+    correção que a tornou obsoleta precisa chegar ao usuário na próxima busca,
+    não daqui a 7 dias.
+    """
+    return _recent_leads(db, domain, user_id).filter(
+        Lead.enrichment_version == ENRICHMENT_VERSION
+    ).first()
+
+
+def _find_stale_lead(db: Session, domain: str, user_id: str) -> Lead | None:
+    """
+    Ficha defasada que o usuário teria recebido de graça se ainda valesse.
+
+    Só faz sentido consultar depois de _find_cached_lead() não achar nada —
+    aí qualquer ficha na janela é, por definição, de outra versão.
+    """
+    return _recent_leads(db, domain, user_id).first()
 
 
 @router.post("/enrich", response_model=EnrichResponse)
@@ -81,25 +103,40 @@ def enrich(
             data=LeadOut.model_validate(cached),
         )
 
-    # Incrementa cota antes da operação lenta para evitar race condition
-    profile.searches_used += 1
-    db.commit()
+    # Recoleta por ficha desatualizada é correção nossa, não busca nova: o
+    # usuário já pagou por este domínio e não pode pagar de novo.
+    stale = _find_stale_lead(db, domain, user_id)
+    charged = stale is None
+    if charged:
+        # Incrementa cota antes da operação lenta para evitar race condition
+        profile.searches_used += 1
+        db.commit()
 
     try:
         data = enrich_company(body.domain)
     except Exception as e:
-        profile.searches_used -= 1
-        db.commit()
+        if charged:
+            profile.searches_used -= 1
+            db.commit()
         logger.exception("Enrichment failed for domain=%s: %s", domain, e)
         raise HTTPException(status_code=500, detail=f"Erro ao enriquecer: {e}")
 
     lead_kwargs = {k: v for k, v in data.items() if hasattr(Lead, k)}
     lead_kwargs["user_id"] = user_id
     lead = Lead(**lead_kwargs)
-    apply_score(lead)  # score inicial — recalculado quando decisores chegarem
     db.add(lead)
     db.commit()
     db.refresh(lead)
+
+    # Alimenta o banco global de contatos: empresa, padrão de e-mail do domínio
+    # e dados públicos do CNPJ. Roda DEPOIS do commit do lead, em transação
+    # própria — uma falha aqui não pode custar a busca que o usuário já pagou.
+    try:
+        ingest_enrichment(db, data)
+        db.commit()
+    except Exception:
+        logger.exception("ingest_enrichment falhou domain=%s", domain)
+        db.rollback()
 
     logger.info("Enriched domain=%s status=%s user=%s", domain, data["status"], user_id)
 
@@ -133,6 +170,9 @@ def buscar_decisores(
             roles=body.roles,
             limit=8,
             linkedin_url=lead.linkedin_url,
+            # Com a sessão, os e-mails saem do padrão aprendido do domínio e os
+            # decisores encontrados entram no banco global de pessoas.
+            db=db,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao buscar decisores: {e}")
@@ -153,10 +193,6 @@ def buscar_decisores(
         db.add(dm)
         saved.append(dm)
 
-    # Sinais de decisor mudam o score — recalcula com todos os DMs do lead
-    all_dms = list(lead.decision_makers) + saved
-    apply_score(lead, all_dms)
-
     db.commit()
     for dm in saved:
         db.refresh(dm)
@@ -166,6 +202,4 @@ def buscar_decisores(
         success=True,
         message=f"{len(saved)} decisor(es) encontrado(s)." if saved else "Nenhum decisor encontrado para os cargos informados.",
         decisores=[DecisionMakerOut.model_validate(d) for d in saved],
-        lead_score=lead.score,
-        lead_priority=lead.priority,
     )

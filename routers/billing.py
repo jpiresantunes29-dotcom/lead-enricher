@@ -25,6 +25,14 @@ PLAN_LIMITS = {
     "enterprise": -1,  # -1 = ilimitado
 }
 
+# Créditos de revelação de contato (extensão) — medidor separado das buscas.
+# 1 crédito = 1 pessoa (e-mail + telefone). Sem cobrança quando não achamos nada.
+REVEAL_LIMITS = {
+    "free": 5,
+    "pro": 300,
+    "enterprise": -1,
+}
+
 
 def _next_reset() -> datetime:
     """Retorna a data de reset 30 dias a partir de agora."""
@@ -32,9 +40,11 @@ def _next_reset() -> datetime:
 
 
 def _maybe_reset_quota(profile: Profile) -> bool:
-    """Reseta searches_used se o prazo mensal passou. Retorna True se resetou."""
+    """Reseta as cotas do ciclo se o prazo mensal passou. True se resetou."""
     if profile.quota_reset_at and datetime.now(UTC) >= profile.quota_reset_at.replace(tzinfo=UTC):
         profile.searches_used = 0
+        # Créditos de revelação (extensão) seguem o mesmo ciclo das buscas
+        profile.reveals_used = 0
         profile.quota_reset_at = _next_reset()
         return True
     return False
@@ -131,6 +141,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 profile.plan = plan
                 profile.searches_limit = PLAN_LIMITS.get(plan, 500)
                 profile.searches_used = 0
+                profile.reveals_limit = REVEAL_LIMITS.get(plan, 300)
+                profile.reveals_used = 0
                 profile.quota_reset_at = _next_reset()
                 if customer_id:
                     profile.stripe_customer_id = customer_id
@@ -144,6 +156,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             if profile and profile.plan != "free":
                 profile.plan = "free"
                 profile.searches_limit = PLAN_LIMITS["free"]
+                profile.reveals_limit = REVEAL_LIMITS["free"]
                 profile.quota_reset_at = _next_reset()  # free também renova por ciclo
                 logger.info("Customer %s downgraded to free.", customer_id)
 
@@ -155,6 +168,7 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             profile = db.query(Profile).filter(Profile.stripe_customer_id == customer_id).first()
             if profile and profile.plan != "free":
                 profile.searches_used = 0
+                profile.reveals_used = 0
                 profile.quota_reset_at = _next_reset()
                 logger.info("Monthly quota reset for customer %s.", customer_id)
 

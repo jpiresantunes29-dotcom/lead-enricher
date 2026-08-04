@@ -7,7 +7,6 @@ import os
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from models.database import get_db, Lead, Activity, Profile, CRMConnection
@@ -20,10 +19,6 @@ from services.providers import hunter
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["integrations"])
-
-
-class CallScriptRequest(BaseModel):
-    product: str | None = None
 
 
 def _get_user_lead(db: Session, lead_id: int, user_id: str) -> Lead:
@@ -98,28 +93,6 @@ def ai_summary(
     lead.ai_summary = summary
     db.commit()
     return {"summary": summary, "cached": False}
-
-
-@router.post("/leads/{lead_id}/call-script")
-def call_script(
-    lead_id: int,
-    body: CallScriptRequest,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    """Roteiro de ligação personalizado (não cacheado — depende do produto)."""
-    if not ai_insights.is_configured():
-        raise HTTPException(status_code=503, detail="IA não configurada (ANTHROPIC_API_KEY ausente).")
-
-    user_id = current_user.get("sub")
-    profile = get_or_create_profile(db, user_id)
-    _check_ai_plan(profile)
-
-    lead = _get_user_lead(db, lead_id, user_id)
-    script = ai_insights.generate_call_script(lead, list(lead.decision_makers), body.product)
-    if not script:
-        raise HTTPException(status_code=502, detail="Falha ao gerar roteiro. Tente novamente.")
-    return {"script": script}
 
 
 @router.post("/leads/{lead_id}/push")

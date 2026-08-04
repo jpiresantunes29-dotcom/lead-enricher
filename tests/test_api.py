@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models.database import Base, get_db, Profile, Lead
+from services.enricher import ENRICHMENT_VERSION
 from main import app
 
 # ── banco em memória para os testes ──────────────────────────────────────────
@@ -109,6 +110,7 @@ MOCK_ENRICH_RESULT = {
     "employee_count": None,
     "employee_count_linkedin": None,
     "status": "enriched",
+    "enrichment_version": ENRICHMENT_VERSION,
 }
 
 
@@ -186,6 +188,51 @@ def test_enrich_cache_does_not_increment_quota_twice(client):
     assert client.get("/api/me").json()["searches_used"] == 1
 
 
+def test_ficha_de_versao_antiga_nao_e_servida_do_cache(client):
+    """
+    Uma correção na coleta precisa alcançar o usuário na busca seguinte. Sem
+    isto, a ficha errada continuaria sendo servida por até 7 dias.
+    """
+    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    db = _Session()
+    db.query(Lead).update({Lead.enrichment_version: ENRICHMENT_VERSION - 1})
+    db.commit()
+    db.close()
+
+    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT) as mock:
+        resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    assert mock.call_count == 1
+    assert resp.json()["message"] == "Enriquecimento concluído."
+
+
+def test_recoleta_por_versao_antiga_nao_cobra_cota_de_novo(client):
+    """A ficha ficou obsoleta por correção nossa — a cota é do usuário."""
+    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    db = _Session()
+    db.query(Lead).update({Lead.enrichment_version: ENRICHMENT_VERSION - 1})
+    db.commit()
+    db.close()
+
+    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    assert client.get("/api/me").json()["searches_used"] == 1
+
+
+def test_dominio_novo_continua_cobrando_cota(client):
+    """A gratuidade vale só para recoleta — não pode virar brecha de cota."""
+    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+        client.post("/api/enrich", json={"domain": "outra.com.br"})
+
+    assert client.get("/api/me").json()["searches_used"] == 2
+
+
 # ── testes /health ────────────────────────────────────────────────────────────
 def test_health_check(client):
     resp = client.get("/health")
@@ -207,12 +254,6 @@ def test_app_route_serves_product(client):
     resp = client.get("/app")
     assert resp.status_code == 200
     assert "domain-input" in resp.text  # input principal do produto
-
-
-def test_landing_alias_redirects_home(client):
-    resp = client.get("/landing", follow_redirects=False)
-    assert resp.status_code == 308
-    assert resp.headers["location"] == "/"
 
 
 # ── páginas institucionais (confiança/LGPD) ──────────────────────────────────

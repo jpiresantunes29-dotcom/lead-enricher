@@ -68,11 +68,10 @@ def test_push_sends_signed_payload(client, monkeypatch):
     expected = hmac.new(b"s3gr3do", captured["data"], hashlib.sha256).hexdigest()
     assert captured["headers"]["X-LeadEnricher-Signature"] == f"sha256={expected}"
 
-    # Payload contém o lead com score
+    # Payload contém o lead
     payload = json.loads(captured["data"])
     assert payload["event"] == "lead.push"
     assert payload["lead"]["company_name"] == "Nubank"
-    assert "score" in payload["lead"]
 
     # Auditoria: nota criada na timeline
     timeline = client.get(f"/api/leads/{lead['id']}/activities").json()
@@ -122,16 +121,6 @@ def test_ai_summary_generates_and_caches(client, monkeypatch):
     # O resumo cacheado aparece no LeadOut
     lead_out = client.get(f"/api/leads/{lead['id']}").json()
     assert lead_out["ai_summary"] == "Resumo executivo da Nubank."
-
-
-def test_call_script(client, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    lead = _make_lead(client)
-    _make_pro_profile()
-    with patch("services.ai_insights._call_claude", return_value="Roteiro: abertura..."):
-        resp = client.post(f"/api/leads/{lead['id']}/call-script", json={"product": "ERP"})
-    assert resp.status_code == 200
-    assert "Roteiro" in resp.json()["script"]
 
 
 # ── provedor Hunter ───────────────────────────────────────────────────────────

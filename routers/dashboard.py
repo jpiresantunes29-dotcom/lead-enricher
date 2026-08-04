@@ -43,12 +43,6 @@ def dashboard_metrics(
         .group_by(Lead.stage)
         .all()
     )
-    prioridades = dict(
-        db.query(Lead.priority, func.count(Lead.id))
-        .filter(Lead.user_id == user_id, Lead.status != "failed", Lead.priority.isnot(None))
-        .group_by(Lead.priority)
-        .all()
-    )
 
     pendentes_q = db.query(Activity).filter(
         Activity.user_id == user_id,
@@ -68,7 +62,6 @@ def dashboard_metrics(
         "taxa_reuniao": round(reunioes / ligacoes, 3) if ligacoes else 0.0,
         "conversao_oportunidade": round(oportunidades / leads_pesquisados, 3) if leads_pesquisados else 0.0,
         "funil_por_estagio": funil,
-        "leads_por_prioridade": prioridades,
         "followups_pendentes": followups_pendentes,
         "followups_atrasados": followups_atrasados,
     }

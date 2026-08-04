@@ -45,8 +45,6 @@ def _serialize_lead(lead: Any, decision_makers: List[Any], activities: List[Any]
             "employee_count": lead.employee_count,
             "sector": lead.sector,
             "location": lead.location,
-            "score": lead.score,
-            "priority": lead.priority,
             "stage": lead.stage,
         },
         "decision_makers": [

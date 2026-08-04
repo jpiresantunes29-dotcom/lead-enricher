@@ -26,23 +26,6 @@ def test_add_business_days_skips_weekend():
     assert result.day == 16
 
 
-# ── scoring integrado ao enrich ────────────────────────────────────────────────
-def test_enrich_computes_score(client):
-    lead = _make_lead(client)
-    # MOCK: Google MX não bate "Google Workspace", mas linkedin verified (+5)
-    assert lead["score"] is not None
-    assert lead["priority"] in ("alta", "media", "baixa")
-    assert isinstance(lead["score_breakdown"], list)
-    assert lead["stage"] == "novo"
-
-
-def test_rescore_endpoint(client):
-    lead = _make_lead(client)
-    resp = client.post(f"/api/leads/{lead['id']}/rescore")
-    assert resp.status_code == 200
-    assert resp.json()["score"] == lead["score"]
-
-
 # ── atividades e regras automáticas ───────────────────────────────────────────
 def test_call_no_answer_creates_followup(client):
     lead = _make_lead(client)

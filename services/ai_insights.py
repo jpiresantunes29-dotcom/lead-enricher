@@ -75,8 +75,6 @@ def _lead_context(lead: Any, decision_makers: Optional[List[Any]] = None) -> str
     if isinstance(emp, dict):
         add("Funcionários", emp.get("exact") or emp.get("band") or emp.get("min"))
 
-    add("Score de prioridade", f"{getattr(lead, 'score', None)} ({getattr(lead, 'priority', '')})")
-
     dns = getattr(lead, "dns_report", None)
     if isinstance(dns, dict):
         signals = []
@@ -110,20 +108,3 @@ def generate_summary(lead: Any, decision_makers: Optional[List[Any]] = None) -> 
         f"DADOS:\n{context}"
     )
     return _call_claude(prompt, max_tokens=500)
-
-
-def generate_call_script(lead: Any, decision_makers: Optional[List[Any]] = None,
-                         product: Optional[str] = None) -> Optional[str]:
-    """Roteiro de ligação personalizado (abertura, 2 perguntas, fechamento)."""
-    context = _lead_context(lead, decision_makers)
-    product_line = f"\nO QUE EU VENDO: {product}" if product else ""
-    prompt = (
-        "Você é um coach de vendas B2B brasileiro. Crie um roteiro de ligação "
-        "fria curto em português para o vendedor, com:\n"
-        "- Abertura de 2 frases (mencionando algo específico dos dados);\n"
-        "- 2 perguntas de descoberta relevantes ao contexto;\n"
-        "- 1 fechamento pedindo uma reunião de 20 minutos.\n"
-        "Tom: direto, humano, sem clichês. Não invente fatos."
-        f"{product_line}\n\nDADOS DA EMPRESA:\n{context}"
-    )
-    return _call_claude(prompt, max_tokens=600)

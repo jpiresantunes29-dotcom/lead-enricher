@@ -2,6 +2,12 @@
 
 > Criado em 2026-07-05, após auditoria completa do código.
 > Ordem sugerida: Fase 0 (dívidas) → Fase 1 (retenção) → Fase 2 (monetização corporativa).
+>
+> **Atualização 2026-07-31:** o Contact Intelligence (banco de contatos próprio,
+> padrão de e-mail por domínio, dados públicos de CNPJ e extensão de navegador)
+> foi implementado — ver [CONTACT_INTELLIGENCE.md](CONTACT_INTELLIGENCE.md).
+> O item 0.2 (fila assíncrona) ganhou urgência: `/api/extension/reveal` é
+> síncrono com teto de 12 s e o enriquecimento tem teto de 35 s.
 
 ---
 
@@ -126,7 +132,7 @@ período e comentário de IA — o que o vendedor manda pro gerente na sexta.
 
 | Ideia | Motivo do adiamento |
 |---|---|
-| Extensão Chrome (enriquecer a partir do LinkedIn) | Alto custo de manutenção (LinkedIn muda o DOM); revisitar quando houver base de usuários |
+| ~~Extensão Chrome (enriquecer a partir do LinkedIn)~~ | **Feita em 2026-07-31** — ver [CONTACT_INTELLIGENCE.md](CONTACT_INTELLIGENCE.md). O risco de quebra de DOM foi endereçado com extração em 4 camadas e telemetria do método usado |
 | Discador/telefonia integrada | Regulatório + custo; o registro manual de ligação cobre o fluxo hoje |
 | Enriquecimento de pessoa física (e-mail → perfil) | Risco LGPD alto; manter foco B2B por domínio |
 | App mobile | A UI atual é responsiva; PWA resolve 90 % por fração do custo |

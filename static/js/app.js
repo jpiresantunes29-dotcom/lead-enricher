@@ -169,10 +169,45 @@ function nav(route){
   else location.hash=route;
 }
 
+/* Cada view se apresenta na topbar: o que é a tela e para que serve. */
+const VIEW_META={
+  search:{
+    title:'Nova análise',
+    sub:'Digite o domínio da empresa e receba a ficha completa em segundos.',
+  },
+  pipeline:{
+    title:'Pipeline de prospecção',
+    sub:'Em que estágio está cada lead. Arraste o card ou use os botões para avançar.',
+  },
+  followups:{
+    title:'Follow-ups',
+    sub:'Tarefas criadas a partir das suas ligações. Comece pelas atrasadas.',
+  },
+  dashboard:{
+    title:'Dashboard comercial',
+    sub:'Esforço e conversão do período: quanto ligou, quanto virou contato e quanto virou reunião.',
+  },
+  history:{
+    title:'Histórico de leads',
+    sub:'Todas as empresas já analisadas. Filtre, reabra a ficha ou exporte para Excel.',
+  },
+  settings:{
+    title:'Configurações',
+    sub:'Plano e uso do ciclo, integração com CRM, extensão do navegador e sessão.',
+  },
+};
+
 function showView(v){
   document.querySelectorAll('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));
   const route=v==='search'?'':v;
   document.querySelectorAll('[data-route]').forEach(b=>b.classList.toggle('active',b.dataset.route===route));
+  const meta=VIEW_META[v]||VIEW_META.search;
+  const t=document.getElementById('tb-title'),s=document.getElementById('tb-sub');
+  if(t)t.textContent=meta.title;
+  if(s)s.textContent=meta.sub;
+  // Só as ações da tela atual ficam visíveis — nada de botão sem contexto.
+  document.querySelectorAll('.tb-slot').forEach(el=>el.classList.toggle('active',el.dataset.slot===v));
+  document.getElementById('tb-new-btn')?.classList.toggle('hidden',v==='search');
   window.scrollTo({top:0});
 }
 
