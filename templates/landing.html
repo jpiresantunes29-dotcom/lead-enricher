@@ -3,11 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="LeadEnricher — digite um domínio, conheça a empresa inteira. DNS, e-mail corporativo, decisores e score de prioridade em segundos." />
-  <meta property="og:title" content="LeadEnricher — Digite um domínio. Conheça a empresa inteira." />
-  <meta property="og:description" content="DNS, e-mail corporativo, decisores e score de prioridade em 5 segundos — direto do domínio, sem planilha." />
-  <meta property="og:type" content="website" />
-  <title>LeadEnricher — Digite um domínio. Conheça a empresa inteira.</title>
+{% include '_seo_head.html' %}
   <script>
     // Callbacks de auth do Supabase (magic link/OAuth) podem cair na raiz com o
     // token no hash — encaminha para o app, que tem o client do Supabase.
@@ -17,10 +13,11 @@
   </script>
 
   <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>' />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/landing/landing.css?v=4" />
+  <!-- Fontes self-hosted (scripts/fetch_fonts.py): sem round-trip para o Google, LCP menor -->
+  <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-600.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
+  <link rel="stylesheet" href="/static/landing/landing.css?v=6" />
 </head>
 <body>
 
@@ -36,9 +33,9 @@
   <nav class="nav-pill" aria-label="Navegação principal">
     <a href="#journey">Como funciona</a>
     <a href="#features">Recursos</a>
+    <a href="#extension">Extensão</a>
     <a href="#personas">Para quem</a>
     <a href="#pricing">Preços</a>
-    <a href="#comparison">Comparação</a>
     <a href="#faq">Perguntas</a>
   </nav>
   <a class="btn btn-brand" data-magnetic href="/app">Entrar</a>
@@ -54,8 +51,9 @@
         Conheça a empresa <em class="shimmer">inteira</em>.
       </h1>
       <p class="hero-sub" data-reveal>
-        Infraestrutura, porte, decisores e score de prioridade em segundos —
-        direto do domínio, sem planilha e sem base de dados paga.
+        Infraestrutura de e-mail, porte, setor, dados de CNPJ e decisores com
+        e-mail corporativo — em segundos, direto do domínio, sem planilha e sem
+        base de dados paga.
       </p>
       <form class="hero-form" action="/app" method="get" data-reveal>
         <input class="hero-input mono" name="domain" placeholder="suaempresa.com.br"
@@ -64,8 +62,8 @@
       </form>
       <p class="hero-note mono" data-reveal>5 análises gratuitas por mês · sem cartão de crédito</p>
       <div class="hero-badges" data-reveal>
-        <span class="hero-badge">Dados públicos · conformidade LGPD</span>
-        <span class="hero-badge">Exportação e webhook para CRM</span>
+        <span class="hero-badge">Fontes públicas · opt-out LGPD sem cadastro</span>
+        <span class="hero-badge">Exportação XLSX/CSV e webhook assinado</span>
       </div>
     </div>
 
@@ -78,19 +76,19 @@
       <div class="frame-body" aria-hidden="true">
         <div class="frame-sb">
           <div class="frame-brand"><i>L</i>LeadEnricher</div>
-          <div class="frame-nav on">Buscar</div>
-          <div class="frame-nav">Dashboard</div>
+          <div class="frame-nav on">Nova análise</div>
           <div class="frame-nav">Pipeline</div>
           <div class="frame-nav">Follow-ups</div>
+          <div class="frame-nav">Dashboard</div>
           <div class="frame-nav">Histórico</div>
         </div>
         <div class="frame-main">
           <div class="frame-hdr">
             <div class="frame-co">Acme Tecnologia<small>acme.com.br</small></div>
-            <span class="frame-score">87 · ALTA PRIORIDADE</span>
+            <span class="frame-score">FICHA COMPLETA</span>
           </div>
           <div class="frame-grid">
-            <div class="frame-cell"><b>PROVEDOR MX</b><span>Google Workspace <em class="ok">✓</em></span></div>
+            <div class="frame-cell"><b>SERVIDOR MX</b><span>Google Workspace <em class="ok">✓</em></span></div>
             <div class="frame-cell"><b>FUNCIONÁRIOS</b><span>51–200</span></div>
             <div class="frame-cell"><b>SETOR</b><span>Tecnologia / SaaS</span></div>
             <div class="frame-cell"><b>LOCALIZAÇÃO</b><span>São Paulo, SP</span></div>
@@ -98,12 +96,12 @@
           <div class="frame-row">
             <span class="frame-ava">M</span>
             <span class="frame-dm">Marina Alves<small>Diretora de TI</small></span>
-            <span class="frame-chip">e-mail verificado</span>
+            <span class="frame-chip">e-mail corporativo</span>
           </div>
           <div class="frame-row">
             <span class="frame-ava">R</span>
             <span class="frame-dm">Rafael Nunes<small>CFO</small></span>
-            <span class="frame-chip">telefone direto</span>
+            <span class="frame-chip">sócio na Receita</span>
           </div>
         </div>
       </div>
@@ -119,11 +117,13 @@
   <div class="marquee" data-reveal aria-hidden="true">
     <div class="marquee-track mono">
       <span>MX → Google Workspace</span><span>SPF ✓</span><span>DMARC p=reject</span>
-      <span>ASN 16509 · AWS</span><span>NS · SOA · TXT</span><span>porte 51–200</span>
-      <span>CTO encontrado</span><span>e-mail ✓ SMTP</span><span>score 87 · ALTA</span>
+      <span>DKIM · seletor google</span><span>ASN 16509 · AWS</span><span>NS · SOA · TXT · CAA</span>
+      <span>porte 51–200</span><span>CNPJ na Receita</span><span>quadro societário</span>
+      <span>CTO encontrado</span><span>padrão {first}.{last}</span><span>titular via RDAP</span>
       <span>MX → Google Workspace</span><span>SPF ✓</span><span>DMARC p=reject</span>
-      <span>ASN 16509 · AWS</span><span>NS · SOA · TXT</span><span>porte 51–200</span>
-      <span>CTO encontrado</span><span>e-mail ✓ SMTP</span><span>score 87 · ALTA</span>
+      <span>DKIM · seletor google</span><span>ASN 16509 · AWS</span><span>NS · SOA · TXT · CAA</span>
+      <span>porte 51–200</span><span>CNPJ na Receita</span><span>quadro societário</span>
+      <span>CTO encontrado</span><span>padrão {first}.{last}</span><span>titular via RDAP</span>
     </div>
   </div>
 </section>
@@ -161,24 +161,32 @@
     <div class="journey-copy">
       <p class="eyebrow mono" data-reveal>03 / DISCOVER</p>
       <h2 data-reveal>Encontramos quem decide.</h2>
-      <p data-reveal>Decisores reais, com e-mails verificados por SMTP.</p>
+      <p data-reveal>
+        Decisores por cargo, com e-mail corporativo montado pelo padrão do
+        próprio domínio — e o quadro societário que a Receita publica.
+      </p>
     </div>
     <div class="journey-visual mono" data-reveal aria-hidden="true">
-      <div class="jv-line">◉ CTO                <span class="jv-ok">e-mail ✓ SMTP</span></div>
-      <div class="jv-line">◉ Diretor Comercial  <span class="jv-ok">e-mail ✓ SMTP</span></div>
-      <div class="jv-line">◉ Founder            <span class="jv-brand">telefone direto</span></div>
+      <div class="jv-line">◉ CTO                <span class="jv-ok">e-mail · confiança 92</span></div>
+      <div class="jv-line">◉ Diretor Comercial  <span class="jv-ok">e-mail · confiança 88</span></div>
+      <div class="jv-line">◉ Sócio-administrador <span class="jv-brand">fonte: Receita Federal</span></div>
+      <div class="jv-line jv-dim">padrão do domínio: {first}.{last}@ · 4 amostras</div>
     </div>
   </div>
-  <div class="journey-stage" data-station="score">
+  <div class="journey-stage" data-station="work">
     <div class="journey-copy">
-      <p class="eyebrow mono" data-reveal>04 / SCORE</p>
-      <h2 data-reveal>Dizemos quem vem primeiro.</h2>
-      <p data-reveal>Score explicável, critério por critério. Alta prioridade carimbada.</p>
+      <p class="eyebrow mono" data-reveal>04 / TRABALHE</p>
+      <h2 data-reveal>Vira trabalho, não relatório.</h2>
+      <p data-reveal>
+        O lead entra no pipeline, a ligação vira follow-up com data e a ficha
+        sai em Excel ou vai para o seu CRM por webhook assinado.
+      </p>
     </div>
-    <div class="journey-visual mono journey-visual--score" data-reveal aria-hidden="true">
-      <div class="jv-score"><span data-jcount="87">87</span><small>/100</small></div>
-      <div class="jv-stamp">ALTA PRIORIDADE</div>
-      <div class="jv-line jv-dim">+10 Google Workspace · +15 e-mail válido · +20 telefone</div>
+    <div class="journey-visual mono" data-reveal aria-hidden="true">
+      <div class="jv-line">PIPELINE   <span class="jv-brand">novo → contatado → reunião</span></div>
+      <div class="jv-line">LIGAÇÃO    não atendeu <span class="jv-ok">→ follow-up em 2 dias</span></div>
+      <div class="jv-line">REUNIÃO    <span class="jv-ok">convite .ics gerado ✓</span></div>
+      <div class="jv-line">SAÍDA      XLSX · CSV · <span class="jv-brand">webhook HMAC</span></div>
     </div>
   </div>
 </section>
@@ -188,12 +196,44 @@
   <p class="eyebrow mono" data-reveal>// recursos</p>
   <h2 class="section-title" data-reveal>Cada coluna da sua planilha,<br />preenchida sozinha.</h2>
   <div class="bento-grid">
-    <article class="card card-lg" data-reveal data-spotlight><h3>Relatório DNS completo</h3><p>MX, SPF, DMARC, hosting e ASN — o raio-X técnico da empresa.</p></article>
-    <article class="card card-lg" data-reveal data-spotlight><h3>Decisores com e-mail verificado</h3><p>Padrões testados por SMTP. Só o que existe e responde.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Score explicável</h3><p>Cada ponto tem evidência. Nada de caixa-preta.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Follow-up automático</h3><p>Não atendeu? Tarefa criada para daqui a 2 dias.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Pipeline kanban</h3><p>Do novo lead à reunião agendada, sem sair da tela.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Export &amp; CRM</h3><p>Excel, CSV, Dynamics, HubSpot, Pipedrive, webhook.</p></article>
+    <article class="card card-lg" data-reveal data-spotlight><h3>Relatório DNS completo</h3><p>MX, NS, SPF, DMARC, DKIM, CAA, SOA, hosts com IP e ASN e o titular do domínio no RDAP — o raio-X técnico, sem sair da ficha.</p></article>
+    <article class="card card-lg" data-reveal data-spotlight><h3>Decisores por cargo</h3><p>Perfis públicos do LinkedIn filtrados por cargo, com e-mail corporativo montado pelo padrão do domínio e nota de confiança em cada endereço.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Dados de CNPJ</h3><p>Razão social, situação, porte, telefone e quadro societário direto das bases públicas da Receita.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Follow-up automático</h3><p>Não atendeu? Tarefa criada para daqui a 2 dias. Reunião marcada vira convite .ics.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Pipeline kanban</h3><p>Do novo lead à reunião agendada, com dashboard de taxas de contato e reunião.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Exportação e CRM</h3><p>Excel, CSV e webhook assinado com HMAC-SHA256 — plugue em Zapier, Make, Power Automate ou no seu endpoint.</p></article>
+  </div>
+</section>
+
+<!-- ── Extensão para LinkedIn ── -->
+<section class="extension" id="extension" data-section="extension">
+  <p class="eyebrow mono" data-reveal>// extensão do navegador</p>
+  <h2 class="section-title" data-reveal>O contato aparece onde<br />você já está prospectando.</h2>
+  <div class="ext-grid">
+    <div class="ext-copy">
+      <p class="ext-lead" data-reveal>
+        Instale a extensão do Chrome ou Edge, conecte com um código gerado no
+        app e o LeadEnricher passa a trabalhar dentro do LinkedIn.
+      </p>
+      <ul class="persona-list" data-reveal>
+        <li>No perfil: nome, cargo, empresa e o contato mascarado com botão <strong>Revelar</strong></li>
+        <li>Na página da empresa: CNPJ, situação cadastral, porte, telefone e decisores</li>
+        <li>Um clique salva o lead direto no seu pipeline</li>
+        <li>Só lê a página que você abriu — nunca navega nem clica sozinha</li>
+      </ul>
+      <p class="ext-note mono" data-reveal>
+        1 crédito = 1 pessoa revelada · nada é cobrado quando não encontramos
+        contato · repetir a mesma pessoa em 90 dias é grátis
+      </p>
+    </div>
+    <div class="ext-card mono" data-reveal aria-hidden="true">
+      <div class="ext-card-hdr">linkedin.com/in/marina-alves</div>
+      <div class="ext-row"><span>E-MAIL</span>m•••••@acme.com.br <em class="jv-ok">confiança 92</em></div>
+      <div class="ext-row"><span>TELEFONE</span>(11) 3•••-•••• <em class="jv-dim">Receita Federal</em></div>
+      <div class="ext-row"><span>EMPRESA</span>Acme Tecnologia · CNPJ ativo</div>
+      <div class="ext-cta">Revelar contato · 1 crédito</div>
+      <div class="ext-foot">Sem contato encontrado = sem crédito consumido</div>
+    </div>
   </div>
 </section>
 
@@ -206,8 +246,8 @@
       <h3>SDR e pré-vendas</h3>
       <p class="persona-pain">"Perco metade do dia garimpando contato antes de conseguir ligar."</p>
       <ul class="persona-list">
-        <li>Lista de decisores com e-mail e telefone em uma busca</li>
-        <li>Score diz quem ligar primeiro</li>
+        <li>Decisores por cargo e e-mail corporativo em uma busca</li>
+        <li>Telefone e sócios da empresa vindos do CNPJ</li>
         <li>Follow-up criado sozinho quando não atendem</li>
       </ul>
     </article>
@@ -225,8 +265,8 @@
       <p class="persona-pain">"Cada cliente novo começa com uma planilha do zero."</p>
       <ul class="persona-list">
         <li>Enriquecimento por domínio, sem base paga por contato</li>
-        <li>Webhook envia o lead pronto ao CRM do cliente</li>
-        <li>Dados públicos, com origem e confiança declaradas</li>
+        <li>Webhook assinado envia o lead pronto ao CRM do cliente</li>
+        <li>Fontes públicas, com origem e confiança declaradas em cada dado</li>
       </ul>
     </article>
   </div>
@@ -239,17 +279,17 @@
   <div class="proof-card mono" data-reveal aria-hidden="true">
     <div class="proof-hdr">
       <span class="proof-co">acme.com.br · Acme Tecnologia</span>
-      <span class="proof-score">87 · ALTA PRIORIDADE</span>
+      <span class="proof-score">FICHA COMPLETA</span>
     </div>
     <div class="proof-grid">
-      <div class="proof-cell"><span>MX</span>Google Workspace <em class="jv-ok">✓</em></div>
+      <div class="proof-cell"><span>SERVIDOR MX</span>aspmx.l.google.com <em class="jv-ok">✓</em></div>
       <div class="proof-cell"><span>PORTE</span>51–200 funcionários</div>
       <div class="proof-cell"><span>SETOR</span>Tecnologia / SaaS</div>
-      <div class="proof-cell"><span>DECISOR</span>CTO · e-mail <em class="jv-ok">✓ SMTP</em></div>
-      <div class="proof-cell"><span>LINKEDIN</span>verificado <em class="jv-ok">✓</em></div>
-      <div class="proof-cell"><span>PRÓXIMO PASSO</span>Ligar hoje · follow-up automático</div>
+      <div class="proof-cell"><span>DECISOR</span>CTO · e-mail <em class="jv-ok">confiança 92</em></div>
+      <div class="proof-cell"><span>LINKEDIN</span>página confirmada <em class="jv-ok">✓</em></div>
+      <div class="proof-cell"><span>CNPJ</span>ativo · 3 sócios listados</div>
     </div>
-    <div class="proof-foot">score explicável · exportação XLSX/CSV · envio ao CRM em 1 clique</div>
+    <div class="proof-foot">relatório DNS completo · exportação XLSX/CSV · envio ao CRM em 1 clique</div>
   </div>
 </section>
 
@@ -260,18 +300,18 @@
   <div class="pricing-grid">
     <article class="card price" data-reveal>
       <h3>Free</h3><p class="price-val mono">R$ 0</p>
-      <p>5 análises/mês · dados completos · 1 cargo por busca</p>
+      <p>5 análises de empresa por mês · ficha completa e relatório DNS · 5 revelações de contato na extensão</p>
       <a class="btn btn-ghost" href="/app">Começar agora</a>
     </article>
     <article class="card price price-featured" data-reveal>
       <span class="price-badge mono">mais popular</span>
       <h3>Pro</h3><p class="price-val mono">R$ 97<span>/mês</span></p>
-      <p>500 análises · decisores ilimitados · exportação · verificação premium</p>
+      <p>500 análises por mês · 300 revelações de contato · exportação XLSX/CSV · webhook para CRM · resumo executivo com IA</p>
       <a class="btn btn-brand" data-magnetic href="/app">Assinar Pro</a>
     </article>
     <article class="card price" data-reveal>
-      <h3>Enterprise</h3><p class="price-val mono">Custom</p>
-      <p>Ilimitado · API com SLA · CRM nativo · SSO</p>
+      <h3>Enterprise</h3><p class="price-val mono">Sob consulta</p>
+      <p>Análises e revelações ilimitadas · faturamento com CNPJ · condições e prazos combinados com o time</p>
       <a class="btn btn-ghost" href="mailto:jpires.antunes29@gmail.com?subject=LeadEnricher%20Enterprise">Falar com vendas</a>
     </article>
   </div>
@@ -280,28 +320,28 @@
 <!-- ── ATO IV · Comparação ── -->
 <section class="comparison" id="comparison" data-section="comparison">
   <p class="eyebrow mono" data-reveal>// comparação</p>
-  <h2 class="section-title" data-reveal>LeadEnricher vs. Lusha + planilha</h2>
+  <h2 class="section-title" data-reveal>LeadEnricher vs. base importada + planilha</h2>
   <div class="comparison-grid">
     <div class="comp-col" data-reveal>
-      <h3 style="color:#999">Lusha + Google Sheets</h3>
+      <h3 style="color:#999">Base de contatos importada + planilha</h3>
       <ul class="comp-list">
-        <li style="opacity:.5"><strong>✗</strong> Lusha custa <strong>$99+</strong>/mês (em dólar)</li>
-        <li style="opacity:.7"><strong>✗</strong> Dados em planilha (versioning caótico)</li>
-        <li><strong>✗</strong> Nenhuma score de prioridade</li>
-        <li style="opacity:.7"><strong>✗</strong> DNS/infraestrutura manual</li>
-        <li style="opacity:.8"><strong>✗</strong> Sem follow-up automático</li>
+        <li style="opacity:.7"><strong>✗</strong> Assinatura cobrada em dólar, por usuário</li>
+        <li style="opacity:.7"><strong>✗</strong> Dados espalhados em planilha, sem histórico do contato</li>
+        <li><strong>✗</strong> Sem CNPJ, quadro societário ou situação cadastral</li>
+        <li style="opacity:.8"><strong>✗</strong> Infraestrutura de e-mail (MX, SPF, DMARC) por fora, na mão</li>
+        <li style="opacity:.8"><strong>✗</strong> Follow-up depende de você lembrar</li>
         <li style="opacity:.7"><strong>✗</strong> Exportação e integração manuais</li>
       </ul>
     </div>
     <div class="comp-col comp-col--highlight" data-reveal>
-      <h3 style="color:var(--gold)">LeadEnricher</h3>
+      <h3 style="color:var(--brand-bright)">LeadEnricher</h3>
       <ul class="comp-list">
-        <li><strong>✓</strong> <strong>Gratuito</strong> até 5 análises · R$ 97/mês no Pro</li>
-        <li><strong>✓</strong> Banco de dados estruturado · export XLSX/CSV</li>
-        <li><strong>✓</strong> Score explicável de 14 critérios</li>
-        <li><strong>✓</strong> DNS + SPF/DMARC + hosting automático</li>
-        <li><strong>✓</strong> Follow-ups + .ics + regras automáticas</li>
-        <li><strong>✓</strong> Webhook CRM universal (Zapier/Dynamics/HubSpot)</li>
+        <li><strong>✓</strong> <strong>Grátis</strong> até 5 análises/mês · R$ 97/mês no Pro, em real</li>
+        <li><strong>✓</strong> Lead, decisores e atividades no mesmo lugar, com timeline</li>
+        <li><strong>✓</strong> CNPJ, sócios, porte e telefone das bases públicas da Receita</li>
+        <li><strong>✓</strong> Relatório DNS completo com ASN, DKIM e titular do domínio</li>
+        <li><strong>✓</strong> Follow-up criado sozinho · convite .ics para a reunião</li>
+        <li><strong>✓</strong> Webhook assinado (HMAC) para Zapier, Make ou Power Automate</li>
       </ul>
     </div>
   </div>
@@ -311,35 +351,14 @@
 <section class="faq" id="faq" data-section="faq">
   <p class="eyebrow mono" data-reveal>// perguntas</p>
   <h2 class="section-title" data-reveal>Perguntas frequentes</h2>
+  {# Mesma lista alimenta o JSON-LD (FAQPage) — ver services/seo.py #}
   <div class="faq-grid">
+    {%- for question, answer in faq %}
     <details class="faq-item" data-reveal>
-      <summary>Como funciona a enumeração de decisores?</summary>
-      <p>Buscamos em LinkedIn (perfis públicos), Google, Bing e DuckDuckGo filtrando por cargo na empresa. Depois validamos cada email via SMTP — se não responder, marcamos como "não verificado".</p>
+      <summary>{{ question }}</summary>
+      <p>{{ answer }}</p>
     </details>
-    <details class="faq-item" data-reveal>
-      <summary>Meus dados estão seguros?</summary>
-      <p>Sim. Autenticação via Supabase (padrão enterprise), dados criptografados em repouso no Postgres. Sem venda para terceiros. Conformidade LGPD: decisores inativos são anonimizados após 90 dias.</p>
-    </details>
-    <details class="faq-item" data-reveal>
-      <summary>Posso integrar com meu CRM?</summary>
-      <p>Sim! Webhook assinado envia leads para Zapier, Make, Power Automate ou qualquer endpoint. Ou configure HubSpot/Pipedrive nativos nos planos Pro+.</p>
-    </details>
-    <details class="faq-item" data-reveal>
-      <summary>E se a empresa não tiver website?</summary>
-      <p>Busca de domínio ainda valida DNS, e-mail corporativo (via DNS) e decisores via LinkedIn/Google. Sempre há alguma trilha.</p>
-    </details>
-    <details class="faq-item" data-reveal>
-      <summary>Como funciona a cota de análises?</summary>
-      <p>Cada domínio novo analisado consome uma unidade da cota. Reabrir um lead já analisado nos últimos 7 dias vem do cache e não consome nada. A cota renova a cada ciclo de 30 dias e não é cumulativa.</p>
-    </details>
-    <details class="faq-item" data-reveal>
-      <summary>Posso cancelar quando quiser?</summary>
-      <p>Sim. O cancelamento é feito pelo portal de assinatura em Configurações, sem contato com vendas, e vale até o fim do ciclo já pago. Não há multa nem fidelidade.</p>
-    </details>
-    <details class="faq-item" data-reveal>
-      <summary>Emitem nota fiscal para empresa?</summary>
-      <p>Sim. A cobrança é processada pela Stripe e o recibo fiscal é enviado por e-mail a cada ciclo. Para faturamento com CNPJ, dados de cobrança e condições específicas, fale com o time comercial.</p>
-    </details>
+    {%- endfor %}
   </div>
 </section>
 
@@ -360,7 +379,10 @@
     <span class="nav-brand">LeadEnricher</span>
     <nav class="footer-links" aria-label="Rodapé">
       <a href="#features">Recursos</a>
+      <a href="#extension">Extensão</a>
       <a href="#pricing">Preços</a>
+      <a href="/guias">Guias</a>
+      <a href="/remover-meus-dados">Remover meus dados</a>
       <a href="/termos">Termos</a>
       <a href="/privacidade">Privacidade</a>
       <a href="/seguranca">Segurança</a>

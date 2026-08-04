@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Segurança — LeadEnricher</title>
+{% include '_seo_head.html' %}
   <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>'/>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin/>
+  <link rel="stylesheet" href="/static/fonts/fonts.css?v=1"/>
   <style>{% include 'legal_base.css' %}</style>
 </head>
 <body>
@@ -51,8 +51,9 @@
   <ul>
     <li>Tratamos apenas dados corporativos e profissionais de fontes públicas, com
     finalidade declarada de prospecção B2B.</li>
-    <li>Exclusão de leads disponível em um clique; anonimização periódica de contatos
-    inativos conforme política de retenção.</li>
+    <li>Exclusão de leads disponível em um clique; opt-out público e permanente do
+    titular em <a href="/remover-meus-dados">Remover meus dados</a>, que bloqueia
+    tanto a entrega quanto a gravação futura do dado.</li>
     <li>Detalhes completos na <a href="/privacidade">Política de Privacidade</a>.</li>
   </ul>
 
@@ -63,6 +64,7 @@
 </main>
 <footer class="lg-footer">
   LeadEnricher © 2026 ·
+  <a href="/guias">Guias</a>·
   <a href="/termos">Termos de Uso</a>·
   <a href="/privacidade">Privacidade</a>·
   <a href="/seguranca">Segurança</a>

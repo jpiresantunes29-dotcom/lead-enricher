@@ -89,7 +89,7 @@ function updateQuotaUI(){
     el.innerHTML='<strong></strong> análises disponíveis neste ciclo.';
     el.querySelector('strong').textContent=`${rem} de ${searches_limit}`;
   }
-  else el.innerHTML=`<strong>Cota do ciclo esgotada.</strong> <button onclick="startCheckout('pro')">Fazer upgrade</button>`;
+  else el.innerHTML=`<strong>Seu crédito foi esgotado.</strong> <button onclick="startCheckout('pro')">Contratar mais análises</button>`;
 }
 
 function updateNavUser(){
@@ -231,31 +231,6 @@ async function enrich(){
   }finally{setLoading(false);stopLoad();}
 }
 
-/* ══════ SCORE PILL + BREAKDOWN ══════ */
-let currentLeadData=null;
-
-function renderScorePill(data){
-  if(data.score==null)return'';
-  const p=data.priority||'baixa';
-  const labels={alta:'ALTA',media:'MÉDIA',baixa:'BAIXA'};
-  const rows=(data.score_breakdown||[]).map(it=>
-    `<div class="sp-row"><span class="sp-crit">${esc(it.criterion)}</span><span class="sp-evi">${esc(it.evidence||'')}</span><span class="sp-pts">+${it.points}</span></div>`
-  ).join('')||'<div class="sp-row"><span class="sp-crit">Nenhum sinal pontuado ainda — busque decisores para subir o score.</span></div>';
-  return `<span class="score-wrap"><button class="score-pill prio-${p}" onclick="toggleScorePop(event)" title="Ver composição do score">${data.score} · ${labels[p]||p}</button><div class="score-pop" id="score-pop" onclick="event.stopPropagation()"><div class="sp-title">Por que ${data.score} pontos?</div>${rows}<div class="sp-foot">Modelo ${esc(data.score_version||'v1')} · recalculado ao encontrar decisores</div></div></span>`;
-}
-function toggleScorePop(e){e.stopPropagation();const el=document.getElementById('score-pop');if(el)el.classList.toggle('open');}
-document.addEventListener('click',()=>{const el=document.getElementById('score-pop');if(el)el.classList.remove('open');});
-
-async function refreshLeadScore(){
-  if(!currentLeadId)return;
-  try{
-    const resp=await authFetch(`/api/leads/${currentLeadId}`);
-    if(!resp.ok)return;
-    currentLeadData=await resp.json();
-    const slot=document.getElementById('score-pill-slot');
-    if(slot)slot.innerHTML=renderScorePill(currentLeadData);
-  }catch(_){}
-}
 
 /* ══════ REGISTRO DE LIGAÇÕES ══════ */
 function toggleMeetRow(){
@@ -342,7 +317,6 @@ async function completeActivity(id){
 /* ══════ VIEW: DASHBOARD ══════ */
 const STAGE_LABELS={novo:'Novo',contatado:'Contatado',reuniao_agendada:'Reunião agendada',oportunidade:'Oportunidade',ganho:'Ganho',perdido:'Perdido'};
 const STAGE_ORDER=['novo','contatado','reuniao_agendada','oportunidade','ganho','perdido'];
-const PRIO_LABELS={alta:'Alta',media:'Média',baixa:'Baixa'};
 
 async function loadDashboard(){
   const body=document.getElementById('dashboard-body');
@@ -366,10 +340,6 @@ async function loadDashboard(){
       const v=m.funil_por_estagio[s]||0;
       return `<div class="fn-row"><span class="fn-lbl">${STAGE_LABELS[s]}</span><div class="fn-track"><div class="fn-bar" style="width:${Math.max(2,(v/funilMax)*100)}%"></div></div><span class="fn-val">${v}</span></div>`;
     }).join('');
-    const prio=['alta','media','baixa'].map(p=>{
-      const v=m.leads_por_prioridade[p]||0;
-      return `<span class="score-pill static prio-${p}">${PRIO_LABELS[p]}: ${v}</span>`;
-    }).join('');
     body.innerHTML=`
       <div class="kpi-grid">
         ${kpi(m.leads_pesquisados,'leads pesquisados')}
@@ -382,8 +352,6 @@ async function loadDashboard(){
       <div class="panel panel-pad">
         <div class="dash-sec-title" style="margin-top:0">Funil por estágio</div>
         <div class="funnel">${funil}</div>
-        <div class="dash-sec-title">Leads por prioridade</div>
-        <div class="prio-row">${prio}</div>
       </div>`;
   }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
 }
@@ -407,9 +375,8 @@ async function loadPipeline(){
         const i=STAGE_ORDER.indexOf(stage);
         const left=i>0?`<button class="kb-move" title="Voltar" onclick="moveLead(${l.id},'${STAGE_ORDER[i-1]}')">‹</button>`:'<span></span>';
         const right=i<STAGE_ORDER.length-1?`<button class="kb-move" title="Avançar" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">›</button>`:'<span></span>';
-        const prio=l.priority?`<span class="kb-prio prio-${l.priority}">${l.score??''}</span>`:'';
         return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)">
-          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button>${prio}</div>
+          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button></div>
           <div class="kb-domain">${esc(l.domain||'')}</div>
           <div class="kb-card-actions">${left}${right}</div>
         </div>`;
@@ -453,7 +420,6 @@ async function loadIntegrations(){
 
 const IC_SPARK='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.7L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.3z"/></svg>';
 const IC_PUSH='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
-const IC_DL='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 
 async function genAiSummary(force){
   if(!currentLeadId)return;
@@ -546,31 +512,32 @@ function renderResult(data){
   const cell=(lbl,val,opts={})=>{const d=opts.delay||0;if(!val)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val muted">—</span></div>`;if(opts.isLink)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><a class="data-val link" href="${val}" target="_blank" rel="noopener">${esc(opts.disp||val)}</a></div>`;return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val">${esc(val)}</span></div>`;};
   const ws=data.website?data.website.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
   const li=data.linkedin_url?data.linkedin_url.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
+  const _mxCell=primaryMx(data);
   let d=0;
   const cards=[
     cell('Site',ws,{ic:IC.globe,isLink:true,disp:ws,delay:d+=50}),
-    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.li}LinkedIn</span>${data.linkedin_url?`<a class="data-val link" href="${data.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(data.linkedin_confidence)}`:'<span class="data-val muted">—</span>'}</div>`,
-    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.mail}Provedor MX</span>${data.mx_provider?`<span class="mx-tag">${esc(data.mx_provider)}</span>${cb(data.mx_provider_confidence)}`:'<span class="data-val muted">—</span>'}</div>`,
+    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.li}LinkedIn</span>${data.linkedin_url?`<a class="data-val link" href="${data.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(data.linkedin_confidence)}`:`<a class="data-val link" href="https://www.google.com/search?q=${encodeURIComponent('site:linkedin.com/company "'+(data.company_name||data.domain||'')+'"')}" target="_blank" rel="noopener">Buscar no Google →</a>`}</div>`,
+    // A ficha mostra o servidor MX como ele é publicado no DNS. O nome
+    // comercial do provedor e o resto da infraestrutura ficam no relatório
+    // completo, logo abaixo.
+    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.mail}Domínio MX</span>${_mxCell?`<span class="data-val mono">${esc(_mxCell.host)}</span>${_mxCell.count>1?`<span class="data-sub">+${_mxCell.count-1} servidor(es) de reserva</span>`:''}`:'<span class="data-val muted">—</span>'}</div>`,
     cell('Funcionários',emp,{ic:IC.users,delay:d+=50}),
     cell('Localização',data.location,{ic:IC.pin,delay:d+=50}),
     cell('Setor',data.sector,{ic:IC.tag,delay:d+=50}),
-    cell('Email Corporativo',data.corporate_email,{ic:IC.mail,delay:d+=50}),
-    cell('Telefone',data.phone,{ic:IC.phone,delay:d+=50}),
   ];
   if(data.hosting_provider)cards.push(cell('Hosting',data.hosting_provider,{ic:IC.globe,delay:d+=50}));
-  const desc=data.description?`<div class="result-desc">${esc(data.description)}</div>`:'';
-  const dns=renderDNS(data.dns_report);
+  const dns=renderInfra(data);
   root.innerHTML=`<div class="result-card">
     <div class="result-hdr">
       <div class="result-co">
         <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
         <div><div class="result-name">${esc(data.company_name||data.domain||'Empresa')}</div><div class="result-domain">${esc(data.domain||'')}</div></div>
       </div>
-      <div class="result-hdr-right"><span id="score-pill-slot">${renderScorePill(data)}</span><span class="status-pill ${sc}">${sl}</span></div>
+      <div class="result-hdr-right"><span class="status-pill ${sc}">${sl}</span></div>
     </div>
     <div class="lead-actions" id="lead-actions"></div>
     <div class="result-grid">${cards.join('')}</div>
-    ${desc}${dns}
+    ${dns}
     <div class="dec-section">
       <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Mapear Decisores</div>
       <div class="dec-sub">Informe o cargo e receba perfis com LinkedIn e emails.</div>
@@ -615,13 +582,10 @@ function renderResult(data){
     <div class="ai-box" id="ai-box" style="display:none"></div>
     <div id="timeline-box" style="display:none"></div>
   </div>`;
-  // Barra de ações: exportação sempre; IA e CRM conforme configuração
+  // Barra de ações: IA e CRM conforme configuração (exportação é em massa, ver Histórico)
   const integ=_integr||{};
   document.getElementById('lead-actions').innerHTML=[
-    `<span class="la-lbl">Ações</span>`,
-    `<button class="la-btn" onclick="exportLead(${data.id},'csv')">${IC_DL} CSV</button>`,
-    `<button class="la-btn" onclick="exportLead(${data.id},'xlsx')">${IC_DL} Excel</button>`,
-    integ.ai?`<button class="la-btn" onclick="genAiSummary()">${IC_SPARK} Resumo IA</button>`:'',
+    integ.ai?`<span class="la-lbl">Ações</span><button class="la-btn" onclick="genAiSummary()">${IC_SPARK} Resumo IA</button>`:'',
     integ.crm_webhook?`<button class="la-btn accent" onclick="pushToCrm()">${IC_PUSH} Enviar ao CRM</button>`:'',
   ].filter(Boolean).join('');
   if(data.ai_summary){
@@ -651,7 +615,6 @@ async function searchDecisores(){
     const json=await resp.json();
     if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">${esc(json.detail||json.message||'Erro.')}</div>`;return;}
     renderDecisores(json.decisores);
-    refreshLeadScore(); // sinais de decisor mudam o score
   }catch(e){list.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
   finally{btn.disabled=false;bText.textContent='Buscar';bSpin.style.display='none';}
 }
@@ -669,11 +632,328 @@ function renderDecisores(list){
   }).join('');
 }
 
-function renderDNS(dns){
-  if(!dns||(!dns.mx&&!dns.a))return'';
-  const e=(s)=>esc(String(s||''));
-  const mx=(dns.mx||[]).map(m=>`<tr><td class="dns-prio">${m.priority}</td><td>${e(m.host)}</td><td>${e(m.ip||'—')}</td><td>${e(m.asn_org||'—')}</td><td>${e(m.country||'—')}</td></tr>`).join('');
-  return `<details class="dns-report"><summary><span class="dns-tog">⌄</span>Relatório DNS completo</summary><div class="dns-body"><div class="dns-sec"><h4>MX</h4><table class="dns-tbl"><thead><tr><th>Prio</th><th>Host</th><th>IP</th><th>ASN</th><th>País</th></tr></thead><tbody>${mx||'<tr><td colspan="5">sem registros</td></tr>'}</tbody></table></div><div class="dns-grid"><div class="dns-sec"><h4>A</h4><ul class="dns-ul">${(dns.a||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div><div class="dns-sec"><h4>NS</h4><ul class="dns-ul">${(dns.ns||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div></div>${dns.spf?`<div class="dns-sec"><h4>SPF</h4><div class="dns-rec">${e(dns.spf)}</div></div>`:''}</div></details>`;
+/* ══════ INFRAESTRUTURA DE DNS E E-MAIL ══════
+   A ficha comercial mostra só o servidor MX. Aqui embaixo fica o relatório
+   técnico completo (estilo DNS Dumpster), fechado por padrão: registros MX,
+   NS, TXT, SOA, CAA, SRV, autenticação de e-mail, hosts com ASN/PTR/banner
+   HTTP e o registro do domínio. A coleta é sob demanda (~15-25 s) e o
+   resultado fica guardado no lead — abrir de novo é instantâneo. */
+const VERIF_LABELS={google_verify:'Google',ms_verify:'Microsoft',fb_verify:'Facebook',atlassian_verify:'Atlassian'};
+const _dnsFull={};    // leadId → relatório completo já coletado
+const _dnsBusy={};    // leadId → coleta em andamento
+
+/* Servidor MX de menor prioridade — é o que a ficha mostra no lugar do nome
+   comercial do provedor. */
+function primaryMx(data){
+  const list=(data.dns_report&&data.dns_report.mx)||data.mx_records||[];
+  if(!list.length)return null;
+  const sorted=[...list].sort((a,b)=>(a.priority==null?99:a.priority)-(b.priority==null?99:b.priority));
+  return {host:sorted[0].host,count:list.length};
+}
+
+function _fmtDate(iso){
+  if(!iso)return null;
+  const d=new Date(iso);
+  return isNaN(d)?null:d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function _fmtTtl(s){
+  if(s==null)return '';
+  if(s>=86400)return Math.round(s/86400)+'d';
+  if(s>=3600)return Math.round(s/3600)+'h';
+  if(s>=60)return Math.round(s/60)+'min';
+  return s+'s';
+}
+
+/* Casca da seção: cabeçalho clicável com os chips de resumo + corpo vazio. */
+function renderInfra(data){
+  const e=(s)=>esc(String(s==null?'':s));
+  const dns=data.dns_report||null;
+  const mx=primaryMx(data);
+  if(!data.domain&&!mx)return'';
+  const provider=data.mx_provider||(dns&&dns.mx_provider);
+  const chips=[
+    provider?`<span class="dnsx-chip accent">${e(provider)}</span>`:'',
+    data.hosting_provider?`<span class="dnsx-chip">${e(data.hosting_provider)}</span>`:'',
+    dns&&dns.spf?'<span class="dnsx-chip ok">SPF</span>':'',
+    dns&&dns.dmarc?'<span class="dnsx-chip ok">DMARC</span>':'',
+  ].filter(Boolean).join('');
+  return `<section class="dnsx" id="dnsx">
+    <button type="button" class="dnsx-toggle" id="dnsx-toggle" aria-expanded="false" onclick="toggleDnsPanel()">
+      <span class="infra-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg></span>
+      <span class="dnsx-txt">
+        <span class="dnsx-title">Relatório DNS completo</span>
+        <span class="dnsx-sub">Registros MX, NS, TXT, SPF/DMARC/DKIM, hosts com IP e ASN, e titular de ${e(data.domain||'')}</span>
+      </span>
+      <span class="dnsx-chips">${chips}</span>
+      <span class="dnsx-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </button>
+    <div class="dnsx-body" id="dnsx-body" hidden></div>
+  </section>`;
+}
+
+async function toggleDnsPanel(){
+  const sec=document.getElementById('dnsx');
+  const body=document.getElementById('dnsx-body');
+  const btn=document.getElementById('dnsx-toggle');
+  if(!sec||!body)return;
+  const open=!sec.classList.contains('open');
+  sec.classList.toggle('open',open);
+  btn.setAttribute('aria-expanded',open?'true':'false');
+  body.hidden=!open;
+  if(!open)return;
+  const id=currentLeadId;
+  if(_dnsFull[id]){body.innerHTML=renderDnsFull(_dnsFull[id]);return;}
+  if(_dnsBusy[id])return;
+  await loadDnsReport(false);
+}
+
+async function loadDnsReport(refresh){
+  const body=document.getElementById('dnsx-body');
+  const id=currentLeadId;
+  if(!body||!id||_dnsBusy[id])return;
+  _dnsBusy[id]=true;
+  // O que o enriquecimento já coletou aparece na hora; o relatório completo
+  // substitui quando chega — ninguém fica olhando para um spinner vazio.
+  body.innerHTML=renderDnsBasic(currentLeadData)+
+    `<div class="dnsx-load"><span class="spinner"></span>Consultando DNS, logs de certificado, ASN e RDAP… (até 25s)</div>`;
+  try{
+    const resp=await authFetch(`/api/leads/${id}/dns${refresh?'?refresh=true':''}`);
+    const json=await resp.json();
+    if(!resp.ok||!json.report)throw new Error(json.detail||json.message||'falhou');
+    _dnsFull[id]=json.report;
+    if(currentLeadId===id&&!body.hidden)body.innerHTML=renderDnsFull(json.report);
+  }catch(err){
+    if(err.message==='not_authenticated')return;
+    body.innerHTML=renderDnsBasic(currentLeadData)+
+      `<div class="dnsx-err">Não foi possível coletar o relatório completo. <a href="#" onclick="loadDnsReport(true);return false">Tentar de novo</a></div>`;
+  }finally{_dnsBusy[id]=false;}
+}
+
+function copyDnsJson(){
+  const rep=_dnsFull[currentLeadId];
+  if(!rep)return;
+  navigator.clipboard.writeText(JSON.stringify(rep,null,2)).then(()=>{
+    const btn=document.getElementById('dnsx-copy');
+    if(!btn)return;
+    const old=btn.textContent;btn.textContent='Copiado ✓';
+    setTimeout(()=>{btn.textContent=old;},1600);
+  }).catch(()=>{});
+}
+
+/* Prévia com o que a ficha já tem guardado (sem rede). */
+function renderDnsBasic(data){
+  const dns=(data&&data.dns_report)||((data&&(data.mx_records||[]).length)?{mx:data.mx_records}:null);
+  if(!dns)return'';
+  const e=(s)=>esc(String(s==null?'':s));
+  const mx=dns.mx||[];
+  const ns=dns.ns_records&&dns.ns_records.length?dns.ns_records:(dns.ns||[]).map(h=>({host:h,ip:null}));
+  if(!mx.length&&!ns.length)return'';
+  const mxRows=mx.map(m=>`<div class="ir">
+    <div class="ir-c"><span class="ir-line"><span class="ir-prio">${e(m.priority)}</span><span class="ir-mx">${e(m.host)}</span></span></div>
+    <div class="ir-c">${m.ip?`<span class="ir-ip">${e(m.ip)}</span>`:'<span class="ir-nil">sem IP</span>'}${m.ptr&&m.ptr!==m.host?`<span class="ir-sub">${e(m.ptr)}</span>`:''}</div>
+    <div class="ir-c">${m.asn?`<span class="ir-line"><span class="ir-k">ASN:</span><span class="ir-asn">${e(m.asn)}</span></span>`:'<span class="ir-nil">—</span>'}${m.asn_cidr?`<span class="ir-sub net">${e(m.asn_cidr)}</span>`:''}</div>
+    <div class="ir-c">${m.asn_org?`<span class="ir-org">${e(m.asn_org)}</span>`:'<span class="ir-nil">—</span>'}${(m.country_name||m.country)?`<span class="ir-sub geo">${e(m.country_name||m.country)}</span>`:''}</div>
+  </div>`).join('');
+  return `<div class="infra-panel">
+    <div class="infra-blk">
+      <div class="infra-blk-hdr">Registros MX<span class="infra-count">${mx.length}</span></div>
+      ${mx.length?mxRows:'<div class="infra-empty">Nenhum registro MX publicado — o domínio não recebe e-mail.</div>'}
+    </div>
+  </div>`;
+}
+
+/* ── Relatório completo ──────────────────────────────────────────────────── */
+function renderDnsFull(r){
+  const e=(s)=>esc(String(s==null?'':s));
+  const nil='<span class="ir-nil">—</span>';
+  const s=r.summary||{},rec=r.records||{},em=r.email||{},reg=r.registration||null;
+  const mono=(v)=>v?`<span class="dcode">${e(v)}</span>`:nil;
+  const blk=(title,count,inner,meta)=>`<div class="infra-blk">
+    <div class="infra-blk-hdr">${title}${count!=null?`<span class="infra-count">${count}</span>`:''}${meta?`<span class="infra-hdr-meta">${meta}</span>`:''}</div>
+    ${inner}</div>`;
+  const tab=(cols,rows)=>rows.length?`<div class="dtab-wrap"><table class="dtab">
+    <thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(cells=>`<tr>${cells.map(c=>`<td>${c==null||c===''?nil:c}</td>`).join('')}</tr>`).join('')}</tbody>
+  </table></div>`:'<div class="infra-empty">Nada publicado.</div>';
+  const net=(x)=>[x.asn?`<span class="dcode">AS${e(x.asn)}</span>`:'',x.asn_cidr?`<span class="ir-sub net">${e(x.asn_cidr)}</span>`:''].filter(Boolean).join('<br/>')||nil;
+  const org=(x)=>[x.asn_org?e(x.asn_org):'',(x.country_name||x.country)?`<span class="ir-sub geo">${e(x.country_name||x.country)}</span>`:''].filter(Boolean).join('<br/>')||nil;
+
+  /* resumo */
+  const tile=(lbl,val,extra)=>`<div class="dtile"><span class="dtile-lbl">${lbl}</span><span class="dtile-val">${val||nil}</span>${extra?`<span class="dtile-sub">${extra}</span>`:''}</div>`;
+  const dmarcTag=s.dmarc_policy?`<span class="ir-pol ${e(s.dmarc_policy)}">p=${e(s.dmarc_policy)}</span>`:'<span class="ir-nil">sem DMARC</span>';
+  const summary=`<div class="dsum">
+    ${tile('Servidor MX',s.mx_host?mono(s.mx_host):nil,s.mx_count>1?`+${s.mx_count-1} de reserva`:'')}
+    ${tile('Provedor de e-mail',s.mx_provider?`<span class="mx-tag">${e(s.mx_provider)}</span>`:nil)}
+    ${tile('Hospedagem do site',s.hosting_provider?e(s.hosting_provider):nil,[s.hosting_asn?'AS'+e(s.hosting_asn):'',s.hosting_country?e(s.hosting_country):''].filter(Boolean).join(' · '))}
+    ${tile('Autenticação',`${s.spf?'<span class="dnsx-chip ok">SPF</span>':'<span class="dnsx-chip off">sem SPF</span>'} ${dmarcTag} ${s.dkim_selectors?`<span class="dnsx-chip ok">DKIM ${s.dkim_selectors}</span>`:'<span class="dnsx-chip off">sem DKIM</span>'}`)}
+    ${tile('Titular do domínio',reg&&(reg.owner||reg.registrar)?e(reg.owner||reg.registrar):nil,reg&&reg.owner_cnpj?`CNPJ ${e(reg.owner_cnpj)}`:(reg&&reg.registrar&&reg.owner?`Registrar: ${e(reg.registrar)}`:''))}
+    ${tile('Registro',_fmtDate(s.registered_on)?e(_fmtDate(s.registered_on)):nil,_fmtDate(s.expires_on)?`expira em ${e(_fmtDate(s.expires_on))}`:'')}
+    ${tile('DNSSEC',s.dnssec?'<span class="dnsx-chip ok">assinado</span>':'<span class="dnsx-chip off">não assinado</span>')}
+    ${tile('Volume',`${e(s.records_total||0)} registros`,`${e(s.hosts_total||0)} hosts mapeados`)}
+  </div>`;
+
+  /* MX */
+  const mxBlk=blk('Registros MX',(rec.mx||[]).length,
+    tab(['Prio','Servidor de e-mail','IP · PTR','ASN · rede','Organização · país','TTL'],
+      (rec.mx||[]).map(m=>[
+        `<span class="ir-prio">${e(m.priority)}</span>`,
+        `<span class="ir-mx">${e(m.host)}</span>`,
+        [m.ip?`<span class="ir-ip">${e(m.ip)}</span>`:'',m.ptr&&m.ptr!==m.host?`<span class="ir-sub">${e(m.ptr)}</span>`:''].filter(Boolean).join('<br/>'),
+        net(m),org(m),`<span class="ir-sub">${e(_fmtTtl(m.ttl))}</span>`,
+      ])),
+    s.mx_provider?`<span class="ir-tag">${e(s.mx_provider)}</span>`:'');
+
+  /* NS */
+  const nsBlk=blk('Servidores DNS (NS)',(rec.ns||[]).length,
+    tab(['Servidor','IP','ASN','Organização · país','TTL'],
+      (rec.ns||[]).map(n=>[
+        `<span class="ir-ns">${e(n.host)}</span>`,
+        n.ip?`<span class="ir-ip">${e(n.ip)}</span>`:'',
+        n.asn?`<span class="dcode">AS${e(n.asn)}</span>`:'',
+        org(n),`<span class="ir-sub">${e(_fmtTtl(n.ttl))}</span>`,
+      ])));
+
+  /* Hosts */
+  const roleLbl={site:'site',mx:'MX',ns:'NS',host:'host'};
+  const http=(h)=>{
+    if(!h.http)return '';
+    const st=h.http.status;
+    const cls=st>=200&&st<300?'ok':(st>=300&&st<400?'warn':'off');
+    return [`<span class="dnsx-chip ${cls}">${e(st)}</span>`,
+            h.http.server?`<span class="ir-sub">${e(h.http.server)}</span>`:'',
+            h.http.powered_by?`<span class="ir-sub">${e(h.http.powered_by)}</span>`:'',
+            h.http.title?`<span class="ir-sub geo">${e(h.http.title)}</span>`:''].filter(Boolean).join('<br/>');
+  };
+  const hostsBlk=blk('Hosts e subdomínios',(r.hosts||[]).length,
+    tab(['Host','Tipo','IP · PTR','ASN · rede','Organização · país','HTTP'],
+      (r.hosts||[]).map(h=>[
+        `<span class="ir-ns">${e(h.host)}</span>`,
+        `<span class="ir-tag">${e(roleLbl[h.role]||h.role)}</span>`,
+        [h.ip?`<span class="ir-ip">${e(h.ip)}</span>`:'',h.ptr&&h.ptr!==h.host?`<span class="ir-sub">${e(h.ptr)}</span>`:''].filter(Boolean).join('<br/>'),
+        net(h),org(h),http(h),
+      ])),
+    'IP, PTR e ASN de cada nome encontrado em logs de certificado e na varredura de nomes comuns');
+
+  /* Autenticação de e-mail */
+  const spf=em.spf,dmarc=em.dmarc;
+  const spfBlk=blk('SPF — quem pode enviar como '+e(r.domain),spf?spf.mechanisms.length:null,
+    spf?`<div class="dnsx-raw">${e(spf.raw)}</div>`+
+      tab(['Mecanismo','Valor','Efeito'],
+        spf.mechanisms.map(m=>[
+          `<span class="ir-tag">${e(m.type)}</span>`,
+          m.value?`<span class="dcode">${e(m.value)}</span>`:'',
+          `${e(m.qualifier_label)}${m.costs_lookup?' <span class="ir-sub">(consulta DNS)</span>':''}`,
+        ]))+
+      `<div class="infra-auth"><div class="ia"><div class="ia-k">Política final</div><div class="ia-v"><span class="dcode">${e(spf.all||'—')}</span><span class="ir-sub geo">${e(spf.policy_label)}</span></div></div>
+       <div class="ia"><div class="ia-k">Consultas DNS</div><div class="ia-v">${e(spf.lookups)} de ${e(spf.lookup_limit)}${spf.over_limit?' <span class="dnsx-chip off">acima do limite — SPF inválido</span>':''}</div></div></div>`
+    :'<div class="infra-empty">Sem SPF publicado — qualquer servidor pode enviar e-mail em nome do domínio.</div>');
+
+  const dmarcRows=dmarc?Object.entries(dmarc.tags).map(([k,v])=>[
+    `<span class="dcode">${e(k)}</span>`,`<span class="ir-sub">${e(v)}</span>`,
+    e({v:'Versão do protocolo',p:'Política para o domínio',sp:'Política para subdomínios',pct:'% das mensagens sob a política',rua:'Relatórios agregados',ruf:'Relatórios forenses',adkim:'Alinhamento DKIM',aspf:'Alinhamento SPF',fo:'Quando gerar relatório',ri:'Intervalo dos relatórios'}[k]||''),
+  ]):[];
+  const dmarcBlk=blk('DMARC — o que fazer com o e-mail falso',dmarc?dmarcRows.length:null,
+    dmarc?`<div class="dnsx-raw">${e(dmarc.raw)}</div>`+tab(['Tag','Valor','O que significa'],dmarcRows)+
+      `<div class="infra-auth"><div class="ia"><div class="ia-k">Efeito</div><div class="ia-v"><span class="ir-pol ${e(dmarc.policy||'none')}">p=${e(dmarc.policy||'—')}</span><span class="ir-sub geo">${e(dmarc.policy_label)}</span></div></div></div>`
+    :'<div class="infra-empty">Sem DMARC publicado — ninguém é avisado quando o domínio é usado em fraude.</div>');
+
+  const dkimBlk=blk('DKIM — chaves de assinatura',(em.dkim||[]).length,
+    tab(['Seletor','Registro','Tipo','Tamanho da chave'],
+      (em.dkim||[]).map(d=>[
+        `<span class="ir-tag">${e(d.selector)}</span>`,
+        `<span class="dcode">${e(d.host)}</span>`,
+        e(d.key_type||'—'),
+        d.key_bits?`${e(d.key_bits)} bits${d.weak_key?' <span class="dnsx-chip off">fraca</span>':' <span class="dnsx-chip ok">ok</span>'}`:'',
+      ])),
+    // Não existe enumeração de seletor DKIM no DNS: o que aparece é o que
+    // respondeu na varredura dos nomes que os provedores usam.
+    (em.dkim||[]).length?'<span class="ir-sub">encontrados por varredura de seletores conhecidos</span>'
+      :'<span class="ir-sub">nenhum seletor conhecido respondeu</span>');
+
+  const policyRows=[];
+  if(em.mta_sts)policyRows.push(['<span class="ir-tag">MTA-STS</span>',`<span class="dcode">${e(em.mta_sts.host)}</span>`,[em.mta_sts.txt?e(em.mta_sts.txt):'',em.mta_sts.policy?`modo <span class="dcode">${e(em.mta_sts.policy.mode)}</span> · MX na política: ${e((em.mta_sts.policy.mx||[]).join(', '))}`:''].filter(Boolean).join('<br/>')]);
+  if(em.tls_rpt)policyRows.push(['<span class="ir-tag">TLS-RPT</span>',`<span class="dcode">${e(em.tls_rpt.host)}</span>`,e(em.tls_rpt.raw)]);
+  if(em.bimi)policyRows.push(['<span class="ir-tag">BIMI</span>',`<span class="dcode">${e(em.bimi.host)}</span>`,e(em.bimi.raw)]);
+  const policyBlk=policyRows.length?blk('Políticas de transporte e marca',policyRows.length,tab(['Padrão','Registro','Conteúdo'],policyRows)):'';
+
+  /* TXT */
+  const txtBlk=blk('Registros TXT',(rec.txt||[]).length,
+    tab(['Tipo','Valor publicado'],
+      (rec.txt||[]).map(t=>[
+        t.label?`<span class="ir-tag">${e(t.label)}</span>`:'<span class="ir-sub">não classificado</span>',
+        `<span class="dcode wrap">${e(t.value)}</span>`,
+      ])),
+    rec.ttl&&rec.ttl.TXT?`<span class="ir-sub">TTL ${e(_fmtTtl(rec.ttl.TXT))}</span>`:'');
+
+  /* Stack */
+  const stackBlk=(r.stack||[]).length?blk('Ferramentas identificadas',(r.stack||[]).length,
+    `<div class="infra-chips">${r.stack.map(x=>`<span class="ir-tag">${e(x.label)}</span>`).join('')}</div>`,
+    'Serviços que a empresa verificou no próprio DNS'):'';
+
+  /* Endereços do site */
+  const ipsBlk=((rec.a||[]).length||(rec.aaaa||[]).length)?blk('Endereços do site (A / AAAA)',(rec.a||[]).length+(rec.aaaa||[]).length,
+    `<div class="infra-chips">${(rec.a||[]).map(ip=>`<span class="ir-ip">${e(ip)}</span>`).join('')}${(rec.aaaa||[]).map(ip=>`<span class="ir-ip v6">${e(ip)}</span>`).join('')}</div>`,
+    (rec.cname||[]).length?`<span class="ir-sub">CNAME: ${(rec.cname||[]).map(c=>e(c.host)+' → '+e(c.target)).join(' · ')}</span>`:''):'';
+
+  /* SOA / CAA / SRV / DNSSEC */
+  const soa=rec.soa;
+  const soaBlk=soa?blk('SOA — autoridade da zona',null,
+    tab(['Campo','Código','Valor'],[
+      ['Servidor primário','<span class="dcode">MNAME</span>',`<span class="dcode">${e(soa.mname)}</span>`],
+      ['Contato responsável','<span class="dcode">RNAME</span>',`<span class="dcode">${e(soa.rname)}</span>`],
+      ['Versão da zona','<span class="dcode">SERIAL</span>',`<span class="dcode">${e(soa.serial)}</span>`],
+      ['Atualização','<span class="dcode">REFRESH</span>',e(_fmtTtl(soa.refresh))],
+      ['Nova tentativa','<span class="dcode">RETRY</span>',e(_fmtTtl(soa.retry))],
+      ['Expiração','<span class="dcode">EXPIRE</span>',e(_fmtTtl(soa.expire))],
+      ['Cache negativo','<span class="dcode">MINIMUM</span>',e(_fmtTtl(soa.minimum))],
+    ])):'';
+
+  const caaBlk=(rec.caa||[]).length?blk('CAA — quem pode emitir certificado',(rec.caa||[]).length,
+    tab(['Flags','Tag','Autoridade'],(rec.caa||[]).map(c=>[`<span class="dcode">${e(c.flags)}</span>`,`<span class="ir-tag">${e(c.tag)}</span>`,`<span class="dcode">${e(c.value)}</span>`]))):'';
+
+  const srvBlk=(rec.srv||[]).length?blk('Registros SRV',(rec.srv||[]).length,
+    tab(['Serviço','Registro','Destino','Prioridade · peso'],(rec.srv||[]).map(x=>[
+      e(x.service),`<span class="dcode">${e(x.name)}</span>`,
+      `<span class="dcode">${e(x.target)}:${e(x.port)}</span>`,
+      `<span class="ir-sub">${e(x.priority)} · ${e(x.weight)}</span>`,
+    ]))):'';
+
+  const ds=r.dnssec||{};
+  const dnssecBlk=blk('DNSSEC',null,
+    ds.signed?tab(['Key tag','Algoritmo','Digest'],(ds.ds||[]).map(d=>[`<span class="dcode">${e(d.key_tag)}</span>`,`<span class="dcode">${e(d.algorithm)}</span>`,`<span class="dcode">${e(d.digest_type)}</span>`]))
+      :'<div class="infra-empty">Zona não assinada — as respostas DNS deste domínio não podem ser validadas criptograficamente.</div>',
+    ds.dnskey_count?`<span class="ir-sub">${e(ds.dnskey_count)} DNSKEY</span>`:'');
+
+  /* Registro do domínio */
+  const regBlk=reg?blk('Registro do domínio',null,
+    tab(['Campo','Valor'],[
+      ['Titular',reg.owner?e(reg.owner):''],
+      ['CNPJ',reg.owner_cnpj?`<span class="dcode">${e(reg.owner_cnpj)}</span>`:''],
+      ['Registrar',reg.registrar?e(reg.registrar):''],
+      ['Registrado em',_fmtDate(reg.registered_on)?e(_fmtDate(reg.registered_on)):''],
+      ['Expira em',_fmtDate(reg.expires_on)?e(_fmtDate(reg.expires_on)):''],
+      ['Última alteração',_fmtDate(reg.changed_on)?e(_fmtDate(reg.changed_on)):''],
+      ['Status',(reg.status||[]).map(x=>`<span class="ir-tag">${e(x)}</span>`).join(' ')],
+      ['Contatos',(reg.contacts||[]).map(c=>`${e(c.name||'—')}${c.email?` <span class="dcode">${e(c.email)}</span>`:''} <span class="ir-sub">${e((c.roles||[]).join(', '))}</span>`).join('<br/>')],
+      ['NS declarados',(reg.nameservers||[]).map(n=>`<span class="dcode">${e(n)}</span>`).join(' ')],
+    ].filter(row=>row[1])),
+    `<span class="ir-sub">fonte: ${e(reg.source||'RDAP')}</span>`):'';
+
+  const warn=(r.warnings||[]).length?`<div class="dnsx-warn">${r.warnings.map(w=>`<div>${e(w)}</div>`).join('')}</div>`:'';
+  const when=r.collected_at?new Date(r.collected_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+
+  return `${summary}
+    <div class="infra-panel">
+      ${mxBlk}${spfBlk}${dmarcBlk}${dkimBlk}${policyBlk}${txtBlk}${stackBlk}${nsBlk}${ipsBlk}${hostsBlk}${soaBlk}${caaBlk}${srvBlk}${dnssecBlk}${regBlk}
+    </div>
+    ${warn}
+    <div class="dnsx-foot">
+      <span>Coletado em ${e(when)}${r.elapsed_ms?` · ${(r.elapsed_ms/1000).toFixed(1)}s`:''} · DNS ao vivo, Team Cymru (ASN), Cert Spotter (certificados) e RDAP</span>
+      <span class="dnsx-foot-btns">
+        <button class="la-btn" id="dnsx-copy" onclick="copyDnsJson()">Copiar JSON</button>
+        <button class="la-btn" onclick="loadDnsReport(true)">Recoletar</button>
+      </span>
+    </div>`;
 }
 
 /* ══════ VIEW: HISTÓRICO ══════ */
@@ -705,7 +985,6 @@ function _histSortVal(l,key){
   switch(key){
     case 'company':return (l.company_name||l.domain||'').toLowerCase();
     case 'domain':return (l.domain||'').toLowerCase();
-    case 'score':return l.score??-1;
     case 'stage':return STAGE_ORDER.indexOf(l.stage||'novo');
     case 'employees':return _histEmpMin(l);
     default:return l.created_at||'';
@@ -713,7 +992,7 @@ function _histSortVal(l,key){
 }
 function sortHistory(key){
   if(_histSort.key===key)_histSort.dir*=-1;
-  else _histSort={key,dir:(key==='created_at'||key==='score'||key==='employees')?-1:1};
+  else _histSort={key,dir:(key==='created_at'||key==='employees')?-1:1};
   renderHistory(document.getElementById('history-filter').value);
 }
 
@@ -744,24 +1023,21 @@ function renderHistory(q){
     const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
     const e=l.employee_count;
     const emp=e?(typeof e==='object'?(e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'—')):e):'—';
-    const score=l.score!=null?`<span class="kb-prio prio-${l.priority||'baixa'}" title="prioridade ${l.priority||''}">${l.score}</span>`:'—';
     return `<tr id="row-${l.id}">
-      <td class="td-co"><button class="td-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
+      <td class="td-co"><button class="td-name" onclick="openLeadSummary(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
       <td class="td-mono">${esc(l.domain||'—')}</td>
-      <td>${score}</td>
       <td><span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
       <td class="td-mono">${esc(String(emp))}</td>
       <td class="td-mono td-date">${date}</td>
       <td class="td-actions">
-        <button class="hist-btn primary" onclick="loadLeadIntoView(${l.id})">Ver</button>
-        <button class="hist-btn" onclick="exportLead(${l.id},'csv')" title="Exportar CSV">CSV</button>
+        <button class="hist-btn primary" onclick="openLeadSummary(${l.id})">Ver</button>
         <button class="hist-btn danger" onclick="deleteLead(${l.id})" title="Remover">✕</button>
       </td>
     </tr>`;
   }).join('');
   body.innerHTML=`<div class="tbl-scroll"><table class="lead-tbl">
     <thead><tr>
-      ${th('Empresa','company')}${th('Domínio','domain')}${th('Score','score')}${th('Estágio','stage')}${th('Funcionários','employees')}${th('Data','created_at')}${th('Ações',null)}
+      ${th('Empresa','company')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Funcionários','employees')}${th('Data','created_at')}${th('Ações',null)}
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -780,30 +1056,95 @@ async function deleteLead(leadId){
   }
 }
 
-async function exportLead(leadId,fmt){
-  const token=await getToken();if(!token)return;
-  const resp=await fetch(`/api/export/${leadId}?format=${fmt}`,{headers:{Authorization:`Bearer ${token}`}});
-  if(!resp.ok){alert('Erro ao exportar.');return;}
-  const blob=await resp.blob();
-  const url=URL.createObjectURL(blob);
-  const cd=resp.headers.get('content-disposition')||'';
-  const match=cd.match(/filename="([^"]+)"/);
-  const a=document.createElement('a');
-  a.href=url;a.download=match?match[1]:`lead_${leadId}.${fmt}`;
-  document.body.appendChild(a);a.click();
-  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+/* ══════ RESUMO RÁPIDO (popup) ══════ */
+function openLeadSummary(leadId){
+  const lead=_histLeads.find(l=>l.id===leadId);
+  if(!lead)return;
+  document.getElementById('lead-summary-body').innerHTML=renderLeadSummary(lead);
+  document.getElementById('lead-summary-modal').classList.add('open');
+}
+function closeLeadSummary(){document.getElementById('lead-summary-modal').classList.remove('open');}
+
+function renderLeadSummary(l){
+  const smap={enriched:['Enriquecido','enriched'],partial:['Parcial','partial'],failed:['Falhou','failed']};
+  const[sl,sc]=smap[l.status]||['—','partial'];
+  const init=(l.company_name||l.domain||'?').trim()[0].toUpperCase();
+  const fav=l.domain?`https://www.google.com/s2/favicons?domain=${l.domain}&sz=64`:'';
+  const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:['OK','verified'],probable:['~','probable'],unverified:['?','unverified'],high:['OK','verified'],medium:['~','probable'],low:['?','unverified']};const[lb,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${lb}</span>`;};
+  let emp='';
+  if(l.employee_count){if(typeof l.employee_count==='object'){const e=l.employee_count;if(e.exact)emp=e.exact.toLocaleString('pt-BR');else if(e.min&&e.max)emp=`${e.min.toLocaleString('pt-BR')}–${e.max.toLocaleString('pt-BR')} (faixa)`;else if(e.min)emp=`${e.min.toLocaleString('pt-BR')}+ (faixa)`;else if(e.band)emp=e.band;else emp=e.raw||'';}else emp=l.employee_count;}
+  const ws=l.website?l.website.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
+  const li=l.linkedin_url?l.linkedin_url.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
+  const row=(lbl,val)=>val?`<div class="set-row"><span class="set-lbl">${lbl}</span><span class="set-val">${val}</span></div>`:'';
+  const rows=[
+    row('Site',ws?`<a class="data-val link" href="${l.website}" target="_blank" rel="noopener">${esc(ws)}</a>`:''),
+    row('LinkedIn',l.linkedin_url?`<a class="data-val link" href="${l.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(l.linkedin_confidence)}`:''),
+    row('Funcionários',emp?esc(String(emp)):''),
+    row('Localização',l.location?esc(l.location):''),
+    row('Setor',l.sector?esc(l.sector):''),
+    row('Provedor de e-mail',l.mx_provider?`<span class="mx-tag">${esc(l.mx_provider)}</span>${cb(l.mx_provider_confidence)}`:''),
+    row('Estágio',`<span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span>`),
+    row('Criado em',new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'})),
+  ].join('');
+  const ai=l.ai_summary?`<div class="ai-box" style="margin:16px 0 0"><div class="ai-title">${IC_SPARK} Resumo IA</div><div class="ai-text">${esc(l.ai_summary)}</div></div>`:'';
+  return `
+    <div class="ls-hdr">
+      <div class="ls-co">
+        <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
+        <div><div class="result-name">${esc(l.company_name||l.domain||'Empresa')}</div><div class="result-domain">${esc(l.domain||'')}</div></div>
+      </div>
+      <span class="status-pill ${sc}">${sl}</span>
+    </div>
+    <div class="ls-rows">${rows}</div>
+    ${ai}
+    <div class="ls-footer">
+      <button class="la-btn" onclick="closeLeadSummary();loadLeadIntoView(${l.id})">Ver ficha completa e decisores →</button>
+    </div>`;
 }
 
-async function exportAll(fmt){
+/* ══════ EXPORTAÇÃO EM MASSA ══════ */
+function openExportModal(){
+  document.getElementById('export-modal').classList.add('open');
+  setExportPreset('30days');
+}
+function closeExportModal(){document.getElementById('export-modal').classList.remove('open');}
+
+function setExportPreset(preset){
+  document.querySelectorAll('.export-opt').forEach(b=>b.classList.toggle('active',b.dataset.preset===preset));
+  document.getElementById('export-custom-range').style.display=preset==='custom'?'flex':'none';
+  document.getElementById('export-modal').dataset.preset=preset;
+}
+
+async function runExport(fmt){
+  const preset=document.getElementById('export-modal').dataset.preset||'30days';
+  const params=new URLSearchParams({format:fmt,preset});
+  if(preset==='custom'){
+    const start=document.getElementById('export-date-start').value;
+    const end=document.getElementById('export-date-end').value;
+    if(!start||!end){alert('Informe as duas datas do intervalo.');return;}
+    params.set('date_start',start);params.set('date_end',end);
+  }
   const token=await getToken();if(!token)return;
-  const resp=await fetch(`/api/export?format=${fmt}`,{headers:{Authorization:`Bearer ${token}`}});
-  if(!resp.ok){alert('Nenhum lead para exportar.');return;}
-  const blob=await resp.blob();
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url;a.download=`leads_enriquecidos.${fmt}`;
-  document.body.appendChild(a);a.click();
-  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+  const btn=document.getElementById(`export-btn-${fmt}`);
+  const label=btn.textContent;btn.disabled=true;btn.textContent='Gerando…';
+  try{
+    const resp=await fetch(`/api/export?${params.toString()}`,{headers:{Authorization:`Bearer ${token}`}});
+    if(!resp.ok){
+      const j=await resp.json().catch(()=>({}));
+      alert(j.detail||'Nenhum lead encontrado para o período selecionado.');
+      return;
+    }
+    const blob=await resp.blob();
+    const url=URL.createObjectURL(blob);
+    const cd=resp.headers.get('content-disposition')||'';
+    const match=cd.match(/filename="([^"]+)"/);
+    const a=document.createElement('a');
+    a.href=url;a.download=match?match[1]:`leads.${fmt==='xlsx'?'xlsx':'csv'}`;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+    closeExportModal();
+  }catch(e){alert('Erro de conexão ao exportar.');}
+  finally{btn.disabled=false;btn.textContent=label;}
 }
 
 /* ══════ VIEW: CONFIGURAÇÕES ══════ */
@@ -833,6 +1174,9 @@ function renderSettings(me,conns){
   const used=me?.searches_used??0,limit=me?.searches_limit??0;
   const pctUsed=unlimited?0:Math.min(100,Math.round((used/Math.max(1,limit))*100));
   const reset=me?.quota_reset_at?new Date(me.quota_reset_at).toLocaleDateString('pt-BR'):null;
+  // Créditos da extensão: medidor separado das análises de empresa
+  const revealsUsed=me?.reveals_used??0,revealsLimit=me?.reveals_limit??0;
+  const revealsUnlimited=revealsLimit<0;
 
   const planActions=demo
     ?`<p class="set-desc" style="margin:14px 0 0">Você está em <strong>modo demonstração</strong> — os dados desta sessão ficam restritos a este navegador. Crie uma conta para manter seus leads.</p>
@@ -869,6 +1213,7 @@ function renderSettings(me,conns){
         </div>
         ${unlimited?'':`<div class="usage-track"><div class="usage-fill${pctUsed>=100?' full':''}" style="width:${pctUsed}%"></div></div>`}
       </div>
+      <div class="set-row"><span class="set-lbl">Revelações de contato</span><span class="set-val">${revealsUnlimited?'ilimitadas':`${revealsUsed} de ${revealsLimit}`}</span></div>
       ${planActions}
     </div>
 
@@ -891,10 +1236,40 @@ function renderSettings(me,conns){
     </div>
 
     <div class="panel panel-pad">
+      <div class="set-title">Extensão do navegador</div>
+      <p class="set-desc">
+        Instale a extensão e veja <strong>decisores, e-mail corporativo verificado e telefone da empresa</strong>
+        direto nas páginas do LinkedIn. Gere um código abaixo e cole na extensão para conectar este navegador.
+        Cada revelação consome 1 crédito — <strong>e nada é cobrado quando não encontramos contato</strong>.
+      </p>
+      <div class="set-actions">
+        <button class="set-btn primary" onclick="generatePairCode()">Gerar código de pareamento</button>
+      </div>
+      <p id="ext-feedback" class="set-feedback"></p>
+    </div>
+
+    <div class="panel panel-pad">
       <div class="set-title">Sessão</div>
       <p class="set-desc">Encerra sua sessão neste navegador.</p>
       <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
     </div>`;
+}
+
+/* ══════ EXTENSÃO: código de pareamento ══════ */
+async function generatePairCode(){
+  const el=document.getElementById('ext-feedback');
+  if(!el)return;
+  el.textContent='Gerando…';el.className='set-feedback ok';
+  try{
+    const resp=await authFetch('/api/extension/pair-code',{method:'POST',body:'{}'});
+    if(!resp.ok){el.textContent='Não conseguimos gerar o código agora.';el.className='set-feedback err';return;}
+    const data=await resp.json();
+    el.innerHTML=`Cole este código na extensão: <strong style="font-size:18px;letter-spacing:2px">${esc(data.code)}</strong>
+      <br><span class="set-lbl">Válido por ${data.expires_in_minutes} minutos.</span>`;
+    el.className='set-feedback ok';
+  }catch(e){
+    if(e.message!=='not_authenticated'){el.textContent='Erro de conexão.';el.className='set-feedback err';}
+  }
 }
 
 function _crmFeedback(msg,ok){
@@ -952,7 +1327,6 @@ function setLoading(s){
 function showError(m){const el=document.getElementById('error-banner');el.textContent=m;el.style.display='block';}
 function hideError(){document.getElementById('error-banner').style.display='none';}
 function hideResults(){document.getElementById('results-section').innerHTML='';}
-function fillExample(v){const el=document.getElementById('domain-input');el.value=v;el.focus();}
 function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 /* ══════ ATALHOS DE TECLADO ══════ */
