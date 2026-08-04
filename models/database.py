@@ -2,7 +2,10 @@ import os
 from datetime import datetime, UTC
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, ForeignKey, JSON, Boolean
+from sqlalchemy import (
+    create_engine, Column, Integer, String, DateTime, Text, ForeignKey, JSON,
+    Boolean, Float, UniqueConstraint, Index,
+)
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 
@@ -28,6 +31,9 @@ class Profile(Base):
     plan = Column(String(20), nullable=False, default="free")
     searches_used = Column(Integer, nullable=False, default=0)
     searches_limit = Column(Integer, nullable=False, default=5)
+    # Créditos de revelação de contato (extensão) — medidor independente das buscas
+    reveals_used = Column(Integer, nullable=False, default=0)
+    reveals_limit = Column(Integer, nullable=False, default=5)
     stripe_customer_id = Column(String(255), nullable=True)
     quota_reset_at = Column(DateTime, nullable=True)  # próximo reset mensal
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
@@ -65,11 +71,9 @@ class Lead(Base):
     corporate_email = Column(String(255))
     phone = Column(String(100))
     status = Column(String(50), default="enriched")
-    # Lead scoring (services/lead_scorer.py)
-    score = Column(Integer, nullable=True)
-    priority = Column(String(10), nullable=True)   # alta | media | baixa
-    score_breakdown = Column(JSON, nullable=True)  # [{criterion, points, evidence}]
-    score_version = Column(String(10), nullable=True)
+    # Versão da lógica de coleta que gerou a ficha (services.enricher).
+    # Ficha de versão antiga não é servida do cache — ver routers/enrichment.py.
+    enrichment_version = Column(Integer, nullable=True)
     # Pipeline comercial
     stage = Column(String(20), nullable=False, default="novo")
     # Fase 5 — resumo executivo gerado por IA (cacheado)
@@ -118,12 +122,202 @@ class Activity(Base):
     lead = relationship("Lead", back_populates="activities")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Contact Intelligence — entidades globais (compartilhadas entre usuários)
+#
+# Lead continua sendo "a empresa dentro da pipeline de UM usuário".
+# Company/Person são o banco de dados de contatos do produto: cada revelação
+# alimenta o estoque próprio e a próxima consulta sai do cache, de graça.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Company(Base):
+    __tablename__ = "companies"
+
+    id = Column(Integer, primary_key=True, index=True)
+    domain = Column(String(255), unique=True, index=True, nullable=False)
+    linkedin_slug = Column(String(255), index=True, nullable=True)
+    name = Column(String(255))
+    cnpj = Column(String(14), index=True, nullable=True)
+    sector = Column(String(255))
+    location = Column(String(255))
+    employee_count = Column(JSON)
+    phone = Column(String(100))          # telefone comercial consolidado
+    phones = Column(JSON)                # [{e164, formatted, type, source, confidence}]
+    main_email = Column(String(255))
+    emails = Column(JSON)                # e-mails vistos no domínio (alimenta padrão)
+    cnpj_data = Column(JSON)             # recorte público da Receita (razão social, QSA...)
+    enriched_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+    persons = relationship("Person", back_populates="company")
+
+
+class Person(Base):
+    __tablename__ = "persons"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Chave de deduplicação: slug do LinkedIn quando existe; senão hash de
+    # nome normalizado + domínio da empresa.
+    dedupe_key = Column(String(120), unique=True, index=True, nullable=False)
+    linkedin_slug = Column(String(255), index=True, nullable=True)
+    full_name = Column(String(255))
+    first_name = Column(String(120))
+    last_name = Column(String(120))
+    headline = Column(String(500))
+    title = Column(String(255))
+    seniority = Column(String(30))       # founder|c_level|vp|director|head|manager|other
+    department = Column(String(30))      # tech|sales|marketing|finance|hr|ops|legal|other
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True, index=True)
+    company_name_raw = Column(String(255))
+    company_domain = Column(String(255), index=True, nullable=True)
+    location = Column(String(255))
+    photo_url = Column(String(1000))
+    source = Column(String(40))          # linkedin_dom|search|cnpj_qsa|site|manual
+    last_seen_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+    company = relationship("Company", back_populates="persons")
+    emails = relationship("PersonEmail", back_populates="person", cascade="all, delete-orphan")
+    phones = relationship("PersonPhone", back_populates="person", cascade="all, delete-orphan")
+
+
+class PersonEmail(Base):
+    __tablename__ = "person_emails"
+    __table_args__ = (UniqueConstraint("person_id", "email", name="uq_person_email"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    email = Column(String(320), nullable=False)
+    type = Column(String(20), default="work")     # work | generic
+    status = Column(String(20), default="unknown")  # valid|catch_all|invalid|unknown
+    confidence = Column(Integer, default=0)         # 0-100
+    source = Column(String(40))                     # pattern|site|smtp|hunter|cnpj
+    pattern = Column(String(50), nullable=True)     # padrão que gerou o palpite
+    verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+    person = relationship("Person", back_populates="emails")
+
+
+class PersonPhone(Base):
+    __tablename__ = "person_phones"
+    __table_args__ = (UniqueConstraint("person_id", "e164", name="uq_person_phone"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    e164 = Column(String(20), nullable=False)
+    formatted = Column(String(40))
+    type = Column(String(20))            # mobile|fixed_line|company|unknown
+    confidence = Column(Integer, default=0)
+    source = Column(String(40))          # site|cnpj|places|apollo...
+    verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+    person = relationship("Person", back_populates="phones")
+
+
+class EmailPattern(Base):
+    """
+    Padrão de e-mail aprendido por domínio — a peça de maior ROI do produto.
+    Um e-mail confirmado ensina o formato da empresa inteira.
+    """
+    __tablename__ = "email_patterns"
+
+    domain = Column(String(255), primary_key=True)
+    pattern = Column(String(50), nullable=True)   # ex.: "{first}.{last}"
+    confidence = Column(Integer, default=0)
+    samples_count = Column(Integer, default=0)
+    votes = Column(JSON)                          # {"{first}.{last}": 3, "{f}{last}": 1}
+    evidence = Column(JSON)                       # [{email, name, source}] (máx. 5)
+    catch_all = Column(Boolean, nullable=True)    # domínio aceita qualquer destinatário
+    mx_ok = Column(Boolean, nullable=True)
+    last_confirmed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class Reveal(Base):
+    """Ledger de créditos: quem revelou quem, quando e por qual caminho."""
+    __tablename__ = "reveals"
+    __table_args__ = (Index("ix_reveals_user_person", "user_id", "person_id"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
+    kind = Column(String(20), default="both")     # email|phone|both
+    credits_charged = Column(Integer, default=0)
+    found_email = Column(Boolean, default=False)
+    found_phone = Column(Boolean, default=False)
+    provider_chain = Column(JSON)                 # ["cache", "pattern+smtp", "cnpj"]
+    cost_usd = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class ProviderCall(Base):
+    """Auditoria de custo/latência por provedor externo."""
+    __tablename__ = "provider_calls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    provider = Column(String(40), nullable=False, index=True)
+    operation = Column(String(40))
+    hit = Column(Boolean, default=False)
+    cost_usd = Column(Float, default=0.0)
+    latency_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class OptOut(Base):
+    """
+    LGPD: bloqueio permanente. Guardamos apenas o HASH do valor — o pedido de
+    remoção não pode virar mais uma base de dados pessoais.
+    """
+    __tablename__ = "opt_outs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String(20), nullable=False)      # email|phone|linkedin
+    value_hash = Column(String(64), nullable=False, unique=True, index=True)
+    reason = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+
+
+class ExtensionToken(Base):
+    """Pareamento navegador ↔ conta, via código curto exibido no /app."""
+    __tablename__ = "extension_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    code = Column(String(16), nullable=True, index=True)      # código de pareamento
+    code_expires_at = Column(DateTime, nullable=True)
+    token_hash = Column(String(64), nullable=True, index=True)
+    device_label = Column(String(120), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+_JSON_DDL = "TEXT" if _is_sqlite else "JSON"
+
+# Colunas adicionadas depois que a tabela já existia em produção.
+_ADDITIVE_COLUMNS = {
+    "leads": {
+        "stage": "VARCHAR(20) DEFAULT 'novo'",
+        "ai_summary": "TEXT",
+        "enrichment_version": "INTEGER",
+    },
+    "profiles": {
+        "reveals_used": "INTEGER DEFAULT 0",
+        "reveals_limit": "INTEGER DEFAULT 5",
+    },
+}
 
 
 def _ensure_new_columns():
@@ -135,21 +329,15 @@ def _ensure_new_columns():
     from sqlalchemy import inspect, text
 
     inspector = inspect(engine)
-    if "leads" not in inspector.get_table_names():
-        return
-    existing = {c["name"] for c in inspector.get_columns("leads")}
-    additions = {
-        "score": "INTEGER",
-        "priority": "VARCHAR(10)",
-        "score_breakdown": "JSON" if not _is_sqlite else "TEXT",
-        "score_version": "VARCHAR(10)",
-        "stage": "VARCHAR(20) DEFAULT 'novo'",
-        "ai_summary": "TEXT",
-    }
+    tables = set(inspector.get_table_names())
     with engine.begin() as conn:
-        for name, ddl in additions.items():
-            if name not in existing:
-                conn.execute(text(f"ALTER TABLE leads ADD COLUMN {name} {ddl}"))
+        for table, additions in _ADDITIVE_COLUMNS.items():
+            if table not in tables:
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl in additions.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
 class CRMConnection(Base):
