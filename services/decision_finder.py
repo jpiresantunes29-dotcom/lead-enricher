@@ -2,10 +2,15 @@
 Encontra decisores em uma empresa filtrando por cargo, com VERIFICAÇÃO.
 
 Estratégia (em ordem de prioridade):
+  0. Quadro societário da Receita (CNPJ) — associação oficial empresa→pessoa
   1. Aba People/Pessoas do LinkedIn (linkedin.com/company/{slug}/people/)
      — fonte direta; associação empresa→pessoa é garantida pela página
   2. Fallback: Multi-engine search (SearXNG → DDG → Bing → Google)
      com query: site:linkedin.com/in "{cargo}" "{empresa}"
+
+Com uma sessão de banco (`db`), os e-mails deixam de ser palpite fixo e passam
+a sair do padrão aprendido do domínio, e cada decisor encontrado é gravado no
+banco global de pessoas — alimentando as próximas buscas de graça.
 
 Cargos de decisão reconhecidos e priorizados por TITLE_PRIORITY.
 Sem dependência de APIs pagas.
@@ -20,7 +25,7 @@ from bs4 import BeautifulSoup
 
 from ._utils import normalize_domain, HEADERS, LINKEDIN_COMPANY_RE
 from ._ddg import search_multi
-from .email_verifier import verify_emails
+from .email_verifier import verify_batch, verify_emails
 
 logger = logging.getLogger(__name__)
 
@@ -124,20 +129,68 @@ def _match_confidence(snippet: str, title: str, role: str, company: str) -> str:
     return "low"
 
 
+def _probable_emails(name: str, domain: str, verify: bool, db=None) -> List[dict]:
+    """
+    Palpites de e-mail para a pessoa.
+
+    Com `db`, usa o padrão aprendido do domínio (alta precisão) e verifica os
+    candidatos em uma única rodada paralela. Sem `db`, cai na heurística fixa.
+    """
+    if db is not None:
+        from .people import email_patterns as ep
+
+        candidates = ep.candidates(db, domain, name, limit=4)
+        emails_raw = [c["email"] for c in candidates]
+        confidence_by_email = {c["email"]: c["confidence"] for c in candidates}
+        pattern_by_email = {c["email"]: c["pattern"] for c in candidates}
+    else:
+        emails_raw = _generate_emails(name, domain)
+        confidence_by_email = {}
+        pattern_by_email = {}
+
+    if not emails_raw:
+        return []
+
+    if verify:
+        results = verify_batch(emails_raw, budget_seconds=6.0)
+    else:
+        results = [{"email": e, "status": "unknown"} for e in emails_raw]
+
+    out = []
+    for item in results:
+        email = item["email"]
+        status = item["status"]
+        base = confidence_by_email.get(email, 30)
+        if status == "valid":
+            confidence = 97
+        elif status == "invalid":
+            continue
+        elif status == "catch_all":
+            confidence = min(base, 70)
+        else:
+            confidence = base
+        out.append({
+            "email": email,
+            "status": status,
+            "confidence": confidence,
+            "pattern": pattern_by_email.get(email),
+        })
+
+    out.sort(key=lambda e: -e["confidence"])
+    return out
+
+
 def _build_decisor(name: str, title_found: str, slug: str, domain: str,
                    source_role: str, snippet: str, confidence: str,
-                   verify_emails_smtp: bool) -> dict:
-    emails_raw = _generate_emails(name, domain)
-    if verify_emails_smtp and emails_raw:
-        probable_emails = verify_emails(emails_raw, max_checks=3)
-    else:
-        probable_emails = [{"email": e, "status": "unknown"} for e in emails_raw]
+                   verify_emails_smtp: bool, db=None,
+                   linkedin_url: Optional[str] = None) -> dict:
+    probable_emails = _probable_emails(name, domain, verify_emails_smtp, db=db)
     return {
         "name": name,
         "title_searched": source_role,
         "title_found": title_found,
         "snippet": snippet,
-        "linkedin_url": f"https://www.linkedin.com/in/{slug}",
+        "linkedin_url": linkedin_url or (f"https://www.linkedin.com/in/{slug}" if slug else None),
         "probable_emails": probable_emails,
         "match_confidence": confidence,
         "phone": None,
@@ -154,6 +207,7 @@ def _fetch_people_tab_decisors(
     roles: List[str],
     domain: str,
     verify_emails_smtp: bool,
+    db=None,
 ) -> List[dict]:
     """
     Extrai decisores diretamente da aba People/Pessoas do LinkedIn.
@@ -221,6 +275,7 @@ def _fetch_people_tab_decisors(
             snippet=f"Encontrado na aba People de {company_name} no LinkedIn.",
             confidence="high",
             verify_emails_smtp=verify_emails_smtp,
+            db=db,
         ))
 
     # Estratégia B: JSON embutido na página (LinkedIn injeta dados em scripts)
@@ -229,7 +284,8 @@ def _fetch_people_tab_decisors(
             try:
                 import json
                 data = json.loads(script.string or "")
-                _extract_from_json(data, roles, company_name, domain, seen_slugs, found, verify_emails_smtp)
+                _extract_from_json(data, roles, company_name, domain, seen_slugs, found,
+                                   verify_emails_smtp, db)
             except Exception:
                 continue
 
@@ -238,7 +294,7 @@ def _fetch_people_tab_decisors(
 
 def _extract_from_json(data, roles: List[str], company_name: str,
                        domain: str, seen_slugs: set, found: List[dict],
-                       verify_emails_smtp: bool):
+                       verify_emails_smtp: bool, db=None):
     """Extrai recursivamente perfis de estruturas JSON do LinkedIn."""
     if isinstance(data, dict):
         name = data.get("firstName", "") or data.get("name", "")
@@ -260,13 +316,16 @@ def _extract_from_json(data, roles: List[str], company_name: str,
                     snippet=f"Encontrado via dados estruturados da página People de {company_name}.",
                     confidence="high",
                     verify_emails_smtp=verify_emails_smtp,
+                    db=db,
                 ))
         for v in data.values():
             if isinstance(v, (dict, list)):
-                _extract_from_json(v, roles, company_name, domain, seen_slugs, found, verify_emails_smtp)
+                _extract_from_json(v, roles, company_name, domain, seen_slugs, found,
+                                   verify_emails_smtp, db)
     elif isinstance(data, list):
         for item in data:
-            _extract_from_json(item, roles, company_name, domain, seen_slugs, found, verify_emails_smtp)
+            _extract_from_json(item, roles, company_name, domain, seen_slugs, found,
+                               verify_emails_smtp, db)
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +346,79 @@ def _search_one_role(role: str, company_term: str) -> List[dict]:
 # Ponto de entrada público
 # ---------------------------------------------------------------------------
 
+def _qsa_decisors(db, domain: str, company_name: str, roles: List[str],
+                  verify_emails_smtp: bool) -> List[dict]:
+    """
+    Fonte 0 — sócios administradores registrados na Receita Federal.
+
+    É a única fonte em que a ligação empresa→pessoa é oficial (não inferida),
+    e cobre justamente a PME brasileira, onde o LinkedIn é fraco.
+    """
+    if db is None:
+        return []
+    from .people import repository as repo
+    from .providers import cnpj_receita
+
+    company = repo.get_company(db, domain)
+    if not company or not company.cnpj_data:
+        return []
+
+    socios = cnpj_receita.decision_makers_from_qsa(
+        {"qsa": (company.cnpj_data or {}).get("socios") or []}
+    )
+    out = []
+    for socio in socios:
+        out.append(_build_decisor(
+            name=socio["name"],
+            title_found=socio["title"],
+            slug="",
+            domain=domain,
+            source_role=roles[0] if roles else socio["title"],
+            snippet=(
+                f"Sócio administrador de {company_name} no registro público da "
+                f"Receita Federal (CNPJ {company.cnpj})."
+            ),
+            confidence="high",
+            verify_emails_smtp=verify_emails_smtp,
+            db=db,
+            linkedin_url=None,
+        ))
+    return out
+
+
+def _persist_decisors(db, decisors: List[dict], domain: str, company_name: Optional[str]) -> None:
+    """Grava os decisores no banco global de pessoas (alimenta o cache futuro)."""
+    if db is None or not decisors:
+        return
+    from .people import repository as repo
+    from .people import email_patterns as ep
+
+    company = repo.get_company(db, domain) or repo.upsert_company(db, domain, name=company_name)
+    for item in decisors:
+        person = repo.upsert_person(
+            db,
+            full_name=item.get("name"),
+            linkedin_url=item.get("linkedin_url"),
+            title=item.get("title_found") or item.get("title_searched"),
+            company_domain=domain,
+            company_name=company_name,
+            company=company,
+            source="search" if item.get("linkedin_url") else "cnpj_qsa",
+        )
+        if not person:
+            continue
+        for email in item.get("probable_emails") or []:
+            row = repo.add_email(
+                db, person, email["email"],
+                status=email.get("status", "unknown"),
+                confidence=int(email.get("confidence") or 0),
+                source="pattern",
+                pattern=email.get("pattern"),
+            )
+            if row and email.get("status") == "valid":
+                ep.learn_from_email(db, domain, email["email"], person.full_name, source="smtp")
+
+
 def find_decision_makers(
     domain: str,
     company_name: Optional[str],
@@ -294,13 +426,15 @@ def find_decision_makers(
     limit: int = 5,
     verify_emails_smtp: bool = False,
     linkedin_url: Optional[str] = None,
+    db=None,
 ) -> List[dict]:
     """
     Busca decisores e devolve lista com:
       name, title_searched, title_found, snippet, linkedin_url,
-      probable_emails (lista de {email, status}), match_confidence, phone
+      probable_emails (lista de {email, status, confidence}), match_confidence, phone
 
     Estratégia:
+      0. Quadro societário da Receita (se o CNPJ da empresa já é conhecido)
       1. Aba People do LinkedIn (se linkedin_url disponível)
       2. Fallback: busca por motor de pesquisa por cargo
     Sem dependência de APIs pagas.
@@ -309,21 +443,34 @@ def find_decision_makers(
     company_term = company_name or domain.split(".")[0]
     found: List[dict] = []
     seen_slugs: set = set()
+    seen_names: set = set()
+
+    # Fonte 0: registro público da Receita — associação oficial
+    for r in _qsa_decisors(db, domain, company_term, roles, verify_emails_smtp):
+        name_key = (r.get("name") or "").lower()
+        if name_key and name_key not in seen_names:
+            seen_names.add(name_key)
+            found.append(r)
+        if len(found) >= limit:
+            break
 
     # Fonte 1: aba People — acesso direto, confiança alta
-    if linkedin_url:
+    if linkedin_url and len(found) < limit:
         people_results = _fetch_people_tab_decisors(
             linkedin_url=linkedin_url,
             company_name=company_term,
             roles=roles,
             domain=domain,
             verify_emails_smtp=verify_emails_smtp,
+            db=db,
         )
         for r in people_results:
-            slug = LINKEDIN_PROFILE_RE.search(r.get("linkedin_url", ""))
-            slug_key = slug.group(1).lower() if slug else r.get("name", "").lower()
-            if slug_key not in seen_slugs:
+            slug = LINKEDIN_PROFILE_RE.search(r.get("linkedin_url") or "")
+            slug_key = slug.group(1).lower() if slug else (r.get("name") or "").lower()
+            name_key = (r.get("name") or "").lower()
+            if slug_key not in seen_slugs and name_key not in seen_names:
                 seen_slugs.add(slug_key)
+                seen_names.add(name_key)
                 found.append(r)
             if len(found) >= limit:
                 break
@@ -342,11 +489,13 @@ def find_decision_makers(
                 slug = m.group(1).lower()
                 if slug in seen_slugs:
                     continue
-                seen_slugs.add(slug)
-
                 title = r.get("title", "")
                 snippet = r.get("snippet", "")
                 name = _extract_name(title, slug)
+                if (name or "").lower() in seen_names:
+                    continue
+                seen_slugs.add(slug)
+                seen_names.add((name or "").lower())
                 confidence = _match_confidence(snippet, title, role, company_term)
 
                 found.append(_build_decisor(
@@ -358,6 +507,7 @@ def find_decision_makers(
                     snippet=snippet,
                     confidence=confidence,
                     verify_emails_smtp=verify_emails_smtp,
+                    db=db,
                 ))
                 if len(found) >= limit:
                     break
@@ -368,8 +518,11 @@ def find_decision_makers(
         _CONFIDENCE_ORDER.get(x.get("match_confidence", "low"), 2),
     ))
 
+    result = found[:limit]
+    _persist_decisors(db, result, domain, company_name)
+
     logger.info(
         "Decision makers found=%d domain=%s roles=%s",
-        len(found[:limit]), domain, roles,
+        len(result), domain, roles,
     )
-    return found[:limit]
+    return result

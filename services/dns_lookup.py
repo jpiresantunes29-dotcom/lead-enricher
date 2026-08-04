@@ -2,7 +2,7 @@
 DNS lookup completo no estilo DNS Dumpster.
 
 Coleta para um domínio:
-  - MX (com IP, ASN, organização e país de cada hostname)
+  - MX (com IP, PTR reverso, ASN, rede, organização e país de cada hostname)
   - A, AAAA (do raiz e do www)
   - NS
   - TXT (com extração estruturada de SPF, DMARC, DKIM, verifications)
@@ -13,9 +13,13 @@ Identifica:
   - Provedor de hosting (via ASN do A record)
   - Confiança alta (match exato), média (ASN), baixa (fallback domínio)
 """
+import logging
+import os
 import re
 import dns.resolver
+import dns.reversename
 import dns.exception
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import List, Optional
 
@@ -26,6 +30,16 @@ except Exception:
     IPWHOIS_OK = False
 
 from ._utils import normalize_domain
+
+logger = logging.getLogger(__name__)
+
+# Consulta RDAP/WHOIS é a etapa mais lenta do relatório (rede, sem SLA), então
+# roda sempre em paralelo e com teto de tempo.
+WHOIS_TIMEOUT = int(os.getenv("WHOIS_TIMEOUT", "4"))
+# Quantos servidores MX ganham a linha completa (IP, PTR, ASN, rede, país) no
+# painel "Infraestrutura de e-mail". Praticamente todo domínio publica no
+# máximo 4-5 MX; acima disso é cauda de fallback que não muda a leitura.
+MX_DETAIL_MAX = int(os.getenv("MX_DETAIL_MAX", "4"))
 
 
 # ============================================================
@@ -173,20 +187,122 @@ def _resolve_a(host: str) -> Optional[str]:
     return None
 
 
+_EMPTY_IP_INFO = {"asn": None, "asn_org": None, "asn_cidr": None,
+                  "country": None, "country_name": None}
+
+# Código ISO → país em português. O painel mostra "Brasil", não "BR": quem lê a
+# ficha é vendedor, não analista de rede. Códigos fora da lista caem no próprio
+# código (melhor que campo vazio).
+COUNTRY_NAMES = {
+    "BR": "Brasil", "US": "Estados Unidos", "CA": "Canadá", "MX": "México",
+    "AR": "Argentina", "CL": "Chile", "CO": "Colômbia", "PE": "Peru",
+    "UY": "Uruguai", "PY": "Paraguai", "BO": "Bolívia", "EC": "Equador",
+    "PT": "Portugal", "ES": "Espanha", "FR": "França", "DE": "Alemanha",
+    "IT": "Itália", "GB": "Reino Unido", "IE": "Irlanda", "NL": "Países Baixos",
+    "BE": "Bélgica", "CH": "Suíça", "AT": "Áustria", "SE": "Suécia",
+    "NO": "Noruega", "DK": "Dinamarca", "FI": "Finlândia", "PL": "Polônia",
+    "CZ": "Tchéquia", "RO": "Romênia", "RU": "Rússia", "UA": "Ucrânia",
+    "TR": "Turquia", "IL": "Israel", "AE": "Emirados Árabes Unidos",
+    "SA": "Arábia Saudita", "ZA": "África do Sul", "IN": "Índia",
+    "CN": "China", "HK": "Hong Kong", "TW": "Taiwan", "JP": "Japão",
+    "KR": "Coreia do Sul", "SG": "Singapura", "AU": "Austrália",
+    "NZ": "Nova Zelândia",
+}
+
+
+_ASN_PREFIX_RE = re.compile(r"^AS\d+\s*[-–]\s*", re.I)
+_ASN_COUNTRY_SUFFIX_RE = re.compile(r",\s*[A-Za-z]{2}$")
+
+
+def clean_asn_org(asn_org: Optional[str]) -> Optional[str]:
+    """
+    'AS265262 - Skymail Servicos de Computacao, BR' → 'Skymail Servicos de
+    Computacao'. A string crua do RDAP serve na tabela técnica; no campo
+    "Hosting" da ficha só atrapalha a leitura.
+    """
+    if not asn_org:
+        return None
+    text = _ASN_COUNTRY_SUFFIX_RE.sub("", _ASN_PREFIX_RE.sub("", asn_org.strip()))
+    return text.strip() or None
+
+
+def country_label(code: Optional[str]) -> Optional[str]:
+    """'BR' → 'Brasil'. Desconhecido volta como veio."""
+    if not code:
+        return None
+    return COUNTRY_NAMES.get(code.upper(), code.upper())
+
+
 @lru_cache(maxsize=512)
 def _ip_info(ip: str) -> dict:
-    """Lookup ASN/org via ipwhois (RDAP). Cacheado por IP."""
+    """
+    Lookup ASN/org/rede via ipwhois (RDAP). Cacheado por IP.
+
+    Com timeout curto: sem ele, um servidor WHOIS lento sozinho estoura o
+    tempo da requisição inteira (era o gargalo de ~80 s por domínio).
+    """
     if not IPWHOIS_OK or not ip:
-        return {"asn": None, "asn_org": None, "country": None}
+        return dict(_EMPTY_IP_INFO)
     try:
-        result = IPWhois(ip).lookup_rdap(asn_methods=["whois", "http"])
+        result = IPWhois(ip, timeout=WHOIS_TIMEOUT).lookup_rdap(
+            asn_methods=["whois", "http"], retry_count=0,
+        )
+        country = result.get("asn_country_code")
         return {
             "asn": result.get("asn"),
             "asn_org": (result.get("asn_description") or "").strip(),
-            "country": result.get("asn_country_code"),
+            "asn_cidr": result.get("asn_cidr"),
+            "country": country,
+            "country_name": country_label(country),
         }
+    except Exception as e:
+        logger.debug("Lookup de ASN falhou ip=%s: %s", ip, e)
+        return dict(_EMPTY_IP_INFO)
+
+
+@lru_cache(maxsize=512)
+def _ptr(ip: str) -> Optional[str]:
+    """
+    Hostname reverso (PTR) do IP. É o que revela o dono real da máquina quando
+    o MX usa nome próprio do cliente — 'mx-ha.empresa.com.br' apontando para um
+    PTR 'mx-ha.skymail.net.br' entrega o provedor terceirizado.
+    """
+    if not ip:
+        return None
+    try:
+        rev = str(dns.reversename.from_address(ip))
     except Exception:
-        return {"asn": None, "asn_org": None, "country": None}
+        return None
+    answers = _resolve(rev, "PTR", lifetime=3)
+    if answers:
+        return str(answers[0]).rstrip(".").lower()
+    return None
+
+
+# Sufixos públicos de dois níveis. Sem eles, o fallback de "mx.skymail.net.br"
+# devolvia "Net.Br" — o sufixo, não o provedor — direto no campo do vendedor.
+_TWO_LEVEL_SUFFIXES = {
+    "com.br", "net.br", "org.br", "adv.br", "eng.br", "ind.br", "srv.br",
+    "psc.br", "med.br", "esp.br", "tur.br", "agr.br", "art.br", "inf.br",
+    "co.uk", "org.uk", "me.uk", "com.mx", "com.ar", "com.co", "com.pe",
+    "com.uy", "com.py", "com.au", "net.au", "co.nz", "co.za", "co.jp",
+    "co.in", "com.pt", "com.es", "com.tr",
+}
+
+
+def registrable_name(hostname: str) -> Optional[str]:
+    """
+    Nome comercial provável a partir do hostname: 'mx-ha.skymail.net.br' →
+    'Skymail'. Usado só como último recurso, quando nem o hostname conhecido
+    nem o ASN identificaram o provedor.
+    """
+    host = (hostname or "").strip(".").lower()
+    parts = [p for p in host.split(".") if p]
+    if len(parts) < 2:
+        return None
+    suffix = ".".join(parts[-2:])
+    label = parts[-3] if (suffix in _TWO_LEVEL_SUFFIXES and len(parts) >= 3) else parts[-2]
+    return label.replace("-", " ").title() if label else None
 
 
 def identify_provider(hostname: str, asn_org: Optional[str]) -> tuple:
@@ -203,11 +319,10 @@ def identify_provider(hostname: str, asn_org: Optional[str]) -> tuple:
         for pattern, name in ASN_PATTERNS:
             if pattern in upper:
                 return name, "medium"
-    # Fallback: domínio raiz do hostname
-    if host:
-        parts = host.rsplit(".", 2)
-        if len(parts) >= 2:
-            return ".".join(parts[-2:]).title(), "low"
+    # Fallback: nome registrável do hostname
+    name = registrable_name(host)
+    if name:
+        return name, "low"
     return None, "none"
 
 
@@ -244,8 +359,14 @@ def get_dns_report(domain_input: str) -> dict:
     Coleta relatório DNS completo estilo DNS Dumpster.
 
     Retorna dict com:
-      domain, mx, a, aaaa, ns, txt, spf, dmarc, soa,
-      mx_provider, mx_provider_confidence, hosting_provider, hosting_confidence
+      domain, mx, a, aaaa, ns, ns_records, txt, spf, dmarc, soa,
+      mx_provider, mx_provider_confidence,
+      hosting_provider, hosting_confidence, hosting_asn, hosting_asn_org,
+      hosting_country
+
+    Cada item de `mx` traz priority, host, ip, ptr, asn, asn_org, asn_cidr,
+    country e country_name — é o que o painel "Infraestrutura de e-mail"
+    desenha linha a linha.
     """
     domain = normalize_domain(domain_input)
 
@@ -255,6 +376,7 @@ def get_dns_report(domain_input: str) -> dict:
         "a": [],
         "aaaa": [],
         "ns": [],
+        "ns_records": [],
         "txt": [],
         "spf": None,
         "dmarc": None,
@@ -265,71 +387,155 @@ def get_dns_report(domain_input: str) -> dict:
         "mx_provider_confidence": "none",
         "hosting_provider": None,
         "hosting_confidence": "none",
+        "hosting_asn": None,
+        "hosting_asn_org": None,
+        "hosting_country": None,
     }
 
+    # Todas as consultas DNS são independentes entre si — em paralelo o
+    # relatório inteiro custa o tempo da consulta mais lenta, não a soma.
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {
+            "mx": pool.submit(_resolve, domain, "MX", 6),
+            "a": pool.submit(_resolve, domain, "A"),
+            "a_www": pool.submit(_resolve, f"www.{domain}", "A"),
+            "aaaa": pool.submit(_resolve, domain, "AAAA"),
+            "aaaa_www": pool.submit(_resolve, f"www.{domain}", "AAAA"),
+            "ns": pool.submit(_resolve, domain, "NS"),
+            "txt": pool.submit(_resolve, domain, "TXT"),
+            "dmarc": pool.submit(_resolve, f"_dmarc.{domain}", "TXT"),
+            "soa": pool.submit(_resolve, domain, "SOA"),
+        }
+        answers = {}
+        for key, future in futures.items():
+            try:
+                answers[key] = future.result(timeout=12)
+            except Exception:
+                answers[key] = []
+
     # --- MX ---
-    mx_answers = _resolve(domain, "MX", lifetime=8)
+    mx_hosts = [
+        {"priority": r.preference, "host": str(r.exchange).rstrip(".").lower()}
+        for r in answers["mx"]
+    ]
+    mx_hosts.sort(key=lambda r: r["priority"])
+
+    # Provedor pelo hostname resolve a maioria dos casos (Google, Microsoft,
+    # Zoho, Locaweb...) sem tocar na rede. Só o que sobra vai para o WHOIS.
+    provider_name, provider_conf = None, "none"
+    for rec in mx_hosts:
+        name, conf = identify_provider(rec["host"], None)
+        if name and conf == "high":
+            provider_name, provider_conf = name, conf
+            break
+
+    # IPs dos MX e dos NS na mesma leva: são só consultas A, baratas, e o
+    # painel mostra o IP das duas famílias de registro.
+    ns_hosts = sorted({str(r).rstrip(".").lower() for r in answers["ns"]})
+    resolve_hosts = [rec["host"] for rec in mx_hosts[:8]] + ns_hosts[:MX_DETAIL_MAX]
+    host_ips = {}
+    if resolve_hosts:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            ip_futures = {h: pool.submit(_resolve_a, h) for h in dict.fromkeys(resolve_hosts)}
+            for host, future in ip_futures.items():
+                try:
+                    host_ips[host] = future.result(timeout=8)
+                except Exception:
+                    host_ips[host] = None
+    mx_ips = {rec["host"]: host_ips.get(rec["host"]) for rec in mx_hosts}
+
+    # --- A / AAAA (raiz e www) ---
+    report["a"] = sorted({str(r) for r in answers["a"]} | {str(r) for r in answers["a_www"]})
+    report["aaaa"] = sorted({str(r) for r in answers["aaaa"]} | {str(r) for r in answers["aaaa_www"]})
+
+    # O painel "Infraestrutura de e-mail" mostra ASN, rede e país em CADA linha
+    # de MX — então o WHOIS deixou de ser condicionado a "o hostname não
+    # identificou o provedor" e passa a rodar para todos os MX detalhados.
+    # O custo não explode porque tudo vai num único pool paralelo (o relatório
+    # espera o lookup mais lento, não a soma) e o resultado é cacheado por IP —
+    # Google, Microsoft e Locaweb se repetem entre domínios.
+    whois_targets = [ip for ip in (mx_ips.get(r["host"]) for r in mx_hosts[:MX_DETAIL_MAX]) if ip]
+    if report["a"]:
+        whois_targets.append(report["a"][0])
+    whois_targets = list(dict.fromkeys(whois_targets))
+    # PTR é consulta DNS comum (barata): vale para todo MX que tenha IP,
+    # inclusive os que ficaram de fora do teto do WHOIS.
+    ptr_targets = list(dict.fromkeys([ip for ip in mx_ips.values() if ip] + whois_targets))
+
+    whois_info = {}
+    ptr_info = {}
+    if whois_targets or ptr_targets:
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            whois_futures = {ip: pool.submit(_ip_info, ip) for ip in whois_targets}
+            ptr_futures = {ip: pool.submit(_ptr, ip) for ip in ptr_targets}
+            for ip, future in whois_futures.items():
+                try:
+                    whois_info[ip] = future.result(timeout=WHOIS_TIMEOUT + 2)
+                except Exception:
+                    whois_info[ip] = dict(_EMPTY_IP_INFO)
+            for ip, future in ptr_futures.items():
+                try:
+                    ptr_info[ip] = future.result(timeout=5)
+                except Exception:
+                    ptr_info[ip] = None
+
     mx_records = []
-    for rdata in mx_answers:
-        host = str(rdata.exchange).rstrip(".").lower()
-        ip = _resolve_a(host)
-        info = _ip_info(ip) if ip else {"asn": None, "asn_org": None, "country": None}
+    for rec in mx_hosts:
+        ip = mx_ips.get(rec["host"])
+        info = whois_info.get(ip) or dict(_EMPTY_IP_INFO)
         mx_records.append({
-            "priority": rdata.preference,
-            "host": host,
+            "priority": rec["priority"],
+            "host": rec["host"],
             "ip": ip,
+            "ptr": ptr_info.get(ip),
             "asn": info["asn"],
             "asn_org": info["asn_org"],
+            "asn_cidr": info.get("asn_cidr"),
             "country": info["country"],
+            "country_name": info.get("country_name") or country_label(info["country"]),
         })
-    mx_records.sort(key=lambda r: r["priority"])
     report["mx"] = mx_records
 
-    # Identifica provedor MX
-    if mx_records:
+    if mx_records and not provider_name:
         for rec in mx_records:
             name, conf = identify_provider(rec["host"], rec["asn_org"])
             if name and conf in ("high", "medium"):
-                report["mx_provider"] = name
-                report["mx_provider_confidence"] = conf
+                provider_name, provider_conf = name, conf
                 break
-        if not report["mx_provider"]:
-            name, conf = identify_provider(mx_records[0]["host"], mx_records[0]["asn_org"])
-            report["mx_provider"] = name
-            report["mx_provider_confidence"] = conf
-
-    # --- A (raiz e www) ---
-    a_records = set()
-    for host_to_check in (domain, f"www.{domain}"):
-        for rdata in _resolve(host_to_check, "A"):
-            a_records.add(str(rdata))
-    report["a"] = sorted(a_records)
+        if not provider_name:
+            provider_name, provider_conf = identify_provider(
+                mx_records[0]["host"], mx_records[0]["asn_org"]
+            )
+    if provider_name:
+        report["mx_provider"] = provider_name
+        report["mx_provider_confidence"] = provider_conf
 
     # Hosting provider via ASN do primeiro A
     if report["a"]:
-        info = _ip_info(report["a"][0])
+        info = whois_info.get(report["a"][0]) or dict(_EMPTY_IP_INFO)
+        report["hosting_asn"] = info["asn"]
+        report["hosting_asn_org"] = info["asn_org"]
+        report["hosting_country"] = info.get("country_name") or country_label(info["country"])
         if info["asn_org"]:
             name, conf = identify_provider("", info["asn_org"])
             if name:
                 report["hosting_provider"] = name
                 report["hosting_confidence"] = conf
             else:
-                report["hosting_provider"] = info["asn_org"]
+                report["hosting_provider"] = clean_asn_org(info["asn_org"])
                 report["hosting_confidence"] = "medium"
 
-    # --- AAAA ---
-    aaaa_records = set()
-    for host_to_check in (domain, f"www.{domain}"):
-        for rdata in _resolve(host_to_check, "AAAA"):
-            aaaa_records.add(str(rdata))
-    report["aaaa"] = sorted(aaaa_records)
-
     # --- NS ---
-    report["ns"] = sorted(str(r).rstrip(".").lower() for r in _resolve(domain, "NS"))
+    # `ns` continua lista de strings (consumidores antigos); `ns_records` é a
+    # versão com IP que o painel usa.
+    report["ns"] = ns_hosts
+    report["ns_records"] = [
+        {"host": h, "ip": host_ips.get(h)} for h in ns_hosts
+    ]
 
     # --- TXT ---
     txt_list = []
-    for rdata in _resolve(domain, "TXT"):
+    for rdata in answers["txt"]:
         txt = _txt_unquote(rdata)
         txt_list.append(txt)
         kind = _classify_txt(txt)
@@ -345,16 +551,15 @@ def get_dns_report(domain_input: str) -> dict:
 
     # DMARC fica em _dmarc.<domain>
     if not report["dmarc"]:
-        for rdata in _resolve(f"_dmarc.{domain}", "TXT"):
+        for rdata in answers["dmarc"]:
             txt = _txt_unquote(rdata)
             if txt.lower().startswith("v=dmarc1"):
                 report["dmarc"] = txt
                 break
 
     # --- SOA ---
-    soa_answers = _resolve(domain, "SOA")
-    if soa_answers:
-        soa = soa_answers[0]
+    if answers["soa"]:
+        soa = answers["soa"][0]
         report["soa"] = {
             "mname": str(soa.mname).rstrip(".").lower(),
             "rname": str(soa.rname).rstrip(".").lower(),
@@ -362,17 +567,3 @@ def get_dns_report(domain_input: str) -> dict:
         }
 
     return report
-
-
-# ============================================================
-# Compatibilidade com a API antiga
-# ============================================================
-def get_mx_provider(domain: str) -> dict:
-    """Wrapper de compatibilidade — devolve {provider, records, confidence}."""
-    report = get_dns_report(domain)
-    return {
-        "domain": report["domain"],
-        "provider": report["mx_provider"],
-        "records": [{"priority": r["priority"], "host": r["host"]} for r in report["mx"]],
-        "confidence": report["mx_provider_confidence"],
-    }
