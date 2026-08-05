@@ -84,6 +84,9 @@
       <h1 class="app-search-title">
         Inteligência comercial <span class="app-accent">em segundos.</span>
       </h1>
+      <p class="app-search-sub">
+        Cole um domínio e receba: empresa, decisores, score de prioridade e contatos.
+      </p>
 
       <div class="hero-search-box">
         <span class="hero-search-icon">
@@ -166,7 +169,10 @@
   <!-- ── VIEW: PIPELINE ── -->
   <section class="view view--wide" id="view-pipeline">
     <div class="view-head">
-      <div><h2>Pipeline de prospecção</h2></div>
+      <div>
+        <h2>Pipeline de prospecção</h2>
+        <div class="view-head-sub">Arraste os cards entre estágios ou use as setas.</div>
+      </div>
     </div>
     <div id="pipeline-body"></div>
   </section>
@@ -174,40 +180,38 @@
   <!-- ── VIEW: FOLLOW-UPS ── -->
   <section class="view" id="view-followups">
     <div class="view-head">
-      <div><h2>Follow-ups pendentes</h2></div>
+      <div>
+        <h2>Follow-ups pendentes</h2>
+        <div class="view-head-sub">Ligações registradas viram tarefas automaticamente.</div>
+      </div>
     </div>
     <div class="panel" id="followups-body"></div>
   </section>
 
   <!-- ── VIEW: HISTÓRICO ── -->
-  <section class="view view--wide" id="view-history">
+  <section class="view" id="view-history">
     <div class="view-head">
-      <div><h2>Histórico de leads</h2></div>
-    </div>
-    <div class="panel">
-      <div class="panel-toolbar">
-        <span class="panel-toolbar-meta" id="history-count"></span>
-        <div class="panel-toolbar-actions">
-          <input id="history-filter" class="hist-filter" placeholder="Filtrar por empresa ou domínio…"
-                 oninput="filterHistory(this.value)" autocomplete="off" />
-          <button class="ghost-btn" onclick="exportAll('csv')">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            CSV
-          </button>
-          <button class="ghost-btn" onclick="exportAll('xlsx')">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Excel
-          </button>
-        </div>
+      <div>
+        <h2>Histórico de leads</h2>
+        <div class="view-head-sub" id="history-count"></div>
       </div>
-      <div id="history-body"></div>
+      <div class="view-actions">
+        <input id="history-filter" class="hist-filter" placeholder="Filtrar por empresa ou domínio…"
+               oninput="filterHistory(this.value)" autocomplete="off" />
+        <button class="ghost-btn" onclick="exportAll('csv')">Exportar CSV</button>
+        <button class="ghost-btn" onclick="exportAll('xlsx')">Exportar Excel</button>
+      </div>
     </div>
+    <div class="panel" id="history-body"></div>
   </section>
 
   <!-- ── VIEW: CONFIGURAÇÕES ── -->
   <section class="view" id="view-settings">
     <div class="view-head">
-      <div><h2>Configurações</h2></div>
+      <div>
+        <h2>Configurações</h2>
+        <div class="view-head-sub">Conta, plano e integrações.</div>
+      </div>
     </div>
     <div id="settings-body" class="set-grid"></div>
   </section>
@@ -239,7 +243,7 @@
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
     </div>
     <h3 class="modal-title">Limite atingido</h3>
-    <p class="modal-text">500 análises por mês · decisores ilimitados · CRM · exportação.</p>
+    <p class="modal-text">Continue prospectando sem limites. 500 buscas/mês, decisores ilimitados, CRM e exportação.</p>
     <button class="modal-cta" onclick="closePaywall();startCheckout('pro')">Assinar Pro — R$ 97/mês →</button>
     <button class="modal-dismiss" onclick="closePaywall()">Não agora</button>
   </div>

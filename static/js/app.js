@@ -362,7 +362,7 @@ async function loadDashboard(){
     document.getElementById('dash-period').textContent=`Últimos ${m.period_days} dias`;
     if(!m.leads_pesquisados){
       body.innerHTML=`<div class="panel"><div class="muted-box">
-        Nenhum dado ainda.<br/>
+        Seu dashboard ganha vida com a primeira busca.<br/>
         <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar meu primeiro domínio</a>
       </div></div>`;
       return;
@@ -413,8 +413,8 @@ async function loadPipeline(){
     body.innerHTML=`<div class="kanban-wrap"><div class="kanban">${STAGE_ORDER.map(stage=>{
       const cards=byStage[stage].map(l=>{
         const i=STAGE_ORDER.indexOf(stage);
-        const left=i>0?`<button class="kb-move" title="Voltar" onclick="moveLead(${l.id},'${STAGE_ORDER[i-1]}')">${IC_CHEV_LEFT}</button>`:'<span></span>';
-        const right=i<STAGE_ORDER.length-1?`<button class="kb-move" title="Avançar" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">${IC_CHEV_RIGHT}</button>`:'<span></span>';
+        const left=i>0?`<button class="kb-move" title="Voltar" onclick="moveLead(${l.id},'${STAGE_ORDER[i-1]}')">‹</button>`:'<span></span>';
+        const right=i<STAGE_ORDER.length-1?`<button class="kb-move" title="Avançar" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">›</button>`:'<span></span>';
         const prio=l.priority?`<span class="kb-prio prio-${l.priority}">${l.score??''}</span>`:'';
         return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)">
           <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button>${prio}</div>
@@ -462,13 +462,6 @@ async function loadIntegrations(){
 const IC_SPARK='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.7L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.3z"/></svg>';
 const IC_PUSH='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
 const IC_DL='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
-const IC_CHECK='<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
-const IC_XMARK='<svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-const IC_TRASH='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
-const IC_CHEV_DOWN='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
-const IC_CHEV_UP='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>';
-const IC_CHEV_LEFT='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>';
-const IC_CHEV_RIGHT='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
 
 async function genAiSummary(force){
   if(!currentLeadId)return;
@@ -491,7 +484,7 @@ async function pushToCrm(){
   try{
     const resp=await authFetch(`/api/leads/${currentLeadId}/push`,{method:'POST'});
     const json=await resp.json();
-    fb.innerHTML=resp.ok?`${IC_CHECK} Lead enviado ao CRM com sucesso.`:esc(json.detail||'Falha no envio ao CRM.');
+    fb.textContent=resp.ok?'✓ Lead enviado ao CRM com sucesso.':(json.detail||'Falha no envio ao CRM.');
     if(resp.ok)loadTimeline();
   }catch(e){if(e.message!=='not_authenticated')fb.textContent='Erro de conexão.';}
 }
@@ -555,7 +548,7 @@ function renderResult(data){
     phone:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`,
     tag:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`,
   };
-  const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:[IC_CHECK,'verified'],probable:['~','probable'],unverified:['?','unverified'],high:[IC_CHECK,'verified'],medium:['~','probable'],low:['?','unverified']};const[l,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${l}</span>`;};
+  const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:['OK','verified'],probable:['~','probable'],unverified:['?','unverified'],high:['OK','verified'],medium:['~','probable'],low:['?','unverified']};const[l,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${l}</span>`;};
   let emp='';
   if(data.employee_count){if(typeof data.employee_count==='object'){const e=data.employee_count;if(e.exact)emp=e.exact.toLocaleString('pt-BR');else if(e.min&&e.max)emp=`${e.min.toLocaleString('pt-BR')}–${e.max.toLocaleString('pt-BR')} (faixa)`;else if(e.min)emp=`${e.min.toLocaleString('pt-BR')}+ (faixa)`;else if(e.band)emp=e.band;else emp=e.raw||'';}else emp=data.employee_count;}
   const cell=(lbl,val,opts={})=>{const d=opts.delay||0;if(!val)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val muted">—</span></div>`;if(opts.isLink)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><a class="data-val link" href="${val}" target="_blank" rel="noopener">${esc(opts.disp||val)}</a></div>`;return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val">${esc(val)}</span></div>`;};
@@ -588,6 +581,7 @@ function renderResult(data){
     ${desc}${dns}
     <div class="dec-section">
       <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Mapear Decisores</div>
+      <div class="dec-sub">Informe o cargo e receba perfis com LinkedIn e emails.</div>
       <div class="role-irow">
         <input id="role-input" class="role-inp" placeholder="Ex: Coordenador de TI, CFO, Diretor Comercial..." />
         <button class="role-srch-btn" id="role-btn" onclick="searchDecisores()">
@@ -612,6 +606,7 @@ function renderResult(data){
     </div>
     <div class="call-section">
       <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>Registrar ligação</div>
+      <div class="dec-sub">O resultado vira follow-up ou reunião automaticamente.</div>
       <div class="call-row">
         <button class="call-btn" onclick="logCall('no_answer')">Não atendeu</button>
         <button class="call-btn" onclick="logCall('busy')">Ocupado</button>
@@ -672,8 +667,8 @@ async function searchDecisores(){
 function renderDecisores(list){
   const root=document.getElementById('decisores-list');
   if(!list||!list.length){root.innerHTML=`<div class="empty-state-box"><div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/></svg></div><div class="empty-title">Nenhum resultado</div><div class="empty-sub">Tente variar o cargo — "Diretor TI" em vez de "Diretor de TI".</div></div>`;return;}
-  const mB=(c)=>{const m={high:[IC_CHECK,'verified'],medium:['~','probable'],low:['?','unverified']};const[l,cl]=m[c]||['?','unverified'];return `<span class="conf-badge ${cl}">${l}</span>`;};
-  const eC=(e)=>{if(typeof e==='string')return `<span class="meta-chip email">${esc(e)}</span>`;const m={valid:[IC_CHECK,'email-valid'],catch_all:['~','email-catchall'],invalid:[IC_XMARK,'email-invalid'],unknown:['?','']};const[ic,cl]=m[e.status]||m.unknown;return `<span class="meta-chip email ${cl}">${ic}<span>${esc(e.email)}</span></span>`;};
+  const mB=(c)=>{const m={high:['✓','verified'],medium:['~','probable'],low:['?','unverified']};const[l,cl]=m[c]||['?','unverified'];return `<span class="conf-badge ${cl}">${l}</span>`;};
+  const eC=(e)=>{if(typeof e==='string')return `<span class="meta-chip email">${esc(e)}</span>`;const m={valid:['✓','email-valid'],catch_all:['~','email-catchall'],invalid:['✗','email-invalid'],unknown:['?','']};const[ic,cl]=m[e.status]||m.unknown;return `<span class="meta-chip email ${cl}">${ic} ${esc(e.email)}</span>`;};
   root.innerHTML=list.map((p,i)=>{
     const init=(p.name||'?').trim()[0].toUpperCase();
     const emails=(p.probable_emails||[]).slice(0,4).map(eC).join('');
@@ -686,7 +681,7 @@ function renderDNS(dns){
   if(!dns||(!dns.mx&&!dns.a))return'';
   const e=(s)=>esc(String(s||''));
   const mx=(dns.mx||[]).map(m=>`<tr><td class="dns-prio">${m.priority}</td><td>${e(m.host)}</td><td>${e(m.ip||'—')}</td><td>${e(m.asn_org||'—')}</td><td>${e(m.country||'—')}</td></tr>`).join('');
-  return `<details class="dns-report"><summary><span class="dns-tog">${IC_CHEV_DOWN}</span>Relatório DNS completo</summary><div class="dns-body"><div class="dns-sec"><h4>MX</h4><table class="dns-tbl"><thead><tr><th>Prio</th><th>Host</th><th>IP</th><th>ASN</th><th>País</th></tr></thead><tbody>${mx||'<tr><td colspan="5">sem registros</td></tr>'}</tbody></table></div><div class="dns-grid"><div class="dns-sec"><h4>A</h4><ul class="dns-ul">${(dns.a||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div><div class="dns-sec"><h4>NS</h4><ul class="dns-ul">${(dns.ns||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div></div>${dns.spf?`<div class="dns-sec"><h4>SPF</h4><div class="dns-rec">${e(dns.spf)}</div></div>`:''}</div></details>`;
+  return `<details class="dns-report"><summary><span class="dns-tog">⌄</span>Relatório DNS completo</summary><div class="dns-body"><div class="dns-sec"><h4>MX</h4><table class="dns-tbl"><thead><tr><th>Prio</th><th>Host</th><th>IP</th><th>ASN</th><th>País</th></tr></thead><tbody>${mx||'<tr><td colspan="5">sem registros</td></tr>'}</tbody></table></div><div class="dns-grid"><div class="dns-sec"><h4>A</h4><ul class="dns-ul">${(dns.a||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div><div class="dns-sec"><h4>NS</h4><ul class="dns-ul">${(dns.ns||[]).map(x=>`<li>${e(x)}</li>`).join('')||'<li>—</li>'}</ul></div></div>${dns.spf?`<div class="dns-sec"><h4>SPF</h4><div class="dns-rec">${e(dns.spf)}</div></div>`:''}</div></details>`;
 }
 
 /* ══════ VIEW: HISTÓRICO ══════ */
@@ -750,8 +745,8 @@ function renderHistory(q){
   const th=(label,key)=>{
     if(!key)return `<th>${label}</th>`;
     const on=_histSort.key===key;
-    const arrow=on?(_histSort.dir>0?IC_CHEV_UP:IC_CHEV_DOWN):'';
-    return `<th><button class="th-sort${on?' on':''}" onclick="sortHistory('${key}')"><span>${label}</span>${arrow}</button></th>`;
+    const arrow=on?(_histSort.dir>0?' ↑':' ↓'):'';
+    return `<th><button class="th-sort${on?' on':''}" onclick="sortHistory('${key}')">${label}${arrow}</button></th>`;
   };
   const rows=leads.map(l=>{
     const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
@@ -773,7 +768,7 @@ function renderHistory(q){
           ? `<button class="hist-btn primary" onclick="enrichImportedLead(${l.id},this)" title="Coletar dados deste domínio (usa 1 busca)">Enriquecer</button>`
           : `<button class="hist-btn primary" onclick="loadLeadIntoView(${l.id})">Ver</button>`}
         <button class="hist-btn" onclick="exportLead(${l.id},'csv')" title="Exportar CSV">CSV</button>
-        <button class="hist-btn danger icon" onclick="deleteLead(${l.id})" title="Remover">${IC_TRASH}</button>
+        <button class="hist-btn danger" onclick="deleteLead(${l.id})" title="Remover">✕</button>
       </td>
     </tr>`;
   }).join('');
@@ -1065,7 +1060,7 @@ function renderSettings(me,conns){
   const reset=me?.quota_reset_at?new Date(me.quota_reset_at).toLocaleDateString('pt-BR'):null;
 
   const planActions=demo
-    ?`<p class="set-desc" style="margin:14px 0 0">Modo demonstração — dados restritos a este navegador.</p>
+    ?`<p class="set-desc" style="margin:14px 0 0">Você está em <strong>modo demonstração</strong> — os dados desta sessão ficam restritos a este navegador. Crie uma conta para manter seus leads.</p>
       <div class="set-actions"><button class="set-btn primary" onclick="signOut().then(()=>openAuthModal())">Criar conta gratuita</button></div>`
     :plan==='free'
     ?`<div class="set-actions"><button class="set-btn primary" onclick="startCheckout('pro')">Fazer upgrade — Pro R$ 97/mês</button></div>`
@@ -1104,7 +1099,11 @@ function renderSettings(me,conns){
 
     <div class="panel panel-pad">
       <div class="set-title">Integração CRM — webhook</div>
-      <p class="set-desc">POST assinado com HMAC-SHA256 · compatível com Zapier, Make e Power Automate.</p>
+      <p class="set-desc">
+        Enviamos cada lead (com decisores e atividades) via <strong>POST assinado com HMAC-SHA256</strong>
+        para o endpoint que você configurar — funciona com Zapier, Make, Power Automate ou seu próprio sistema.
+        O botão "Enviar ao CRM" aparece no card do lead quando há um webhook ativo.
+      </p>
       ${connCard}
       <div class="set-form">
         <input id="crm-url" class="set-input" placeholder="https://hooks.zapier.com/…" autocomplete="off" spellcheck="false"/>
@@ -1118,6 +1117,7 @@ function renderSettings(me,conns){
 
     <div class="panel panel-pad">
       <div class="set-title">Sessão</div>
+      <p class="set-desc">Encerra sua sessão neste navegador.</p>
       <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
     </div>`;
 }
