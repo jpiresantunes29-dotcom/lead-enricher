@@ -75,19 +75,32 @@ def _matches_name(domain: str, company_name: str) -> bool:
 
 
 def from_database(db: Session, company_name: Optional[str] = None,
-                  linkedin_slug: Optional[str] = None) -> Optional[str]:
-    """Resolve pelo que já está no banco — sem rede, milissegundos."""
+                  linkedin_slug: Optional[str] = None,
+                  user_id: Optional[str] = None) -> Optional[str]:
+    """
+    Resolve pelo que já está no banco — sem rede, milissegundos.
+
+    `Company` é global por definição (é o banco de contatos do produto), mas
+    `Lead` pertence a UM usuário: consultá-lo sem filtro deixava a pesquisa de
+    uma conta responder pela outra. Sem `user_id`, os leads ficam fora da
+    busca.
+    """
     if linkedin_slug:
         row = db.query(Company).filter(Company.linkedin_slug == linkedin_slug).first()
         if row:
             return row.domain
-        lead = (
-            db.query(Lead)
-            .filter(Lead.linkedin_url.ilike(f"%/company/{linkedin_slug}%"), Lead.domain.isnot(None))
-            .first()
-        )
-        if lead:
-            return lead.domain
+        if user_id:
+            lead = (
+                db.query(Lead)
+                .filter(
+                    Lead.user_id == user_id,
+                    Lead.linkedin_url.ilike(f"%/company/{linkedin_slug}%"),
+                    Lead.domain.isnot(None),
+                )
+                .first()
+            )
+            if lead:
+                return lead.domain
 
     if company_name:
         name = company_name.strip()
@@ -98,14 +111,19 @@ def from_database(db: Session, company_name: Optional[str] = None,
         )
         if row:
             return row.domain
-        lead = (
-            db.query(Lead)
-            .filter(func.lower(Lead.company_name) == name.lower(), Lead.domain.isnot(None))
-            .order_by(Lead.created_at.desc())
-            .first()
-        )
-        if lead:
-            return lead.domain
+        if user_id:
+            lead = (
+                db.query(Lead)
+                .filter(
+                    Lead.user_id == user_id,
+                    func.lower(Lead.company_name) == name.lower(),
+                    Lead.domain.isnot(None),
+                )
+                .order_by(Lead.created_at.desc())
+                .first()
+            )
+            if lead:
+                return lead.domain
     return None
 
 
@@ -147,9 +165,10 @@ def from_web(company_name: str, location: Optional[str] = None) -> Optional[dict
 
 
 def resolve(db: Session, company_name: Optional[str], linkedin_slug: Optional[str] = None,
-            location: Optional[str] = None, allow_network: bool = False) -> Optional[dict]:
+            location: Optional[str] = None, allow_network: bool = False,
+            user_id: Optional[str] = None) -> Optional[dict]:
     """Cascata completa: banco → (opcional) web."""
-    domain = from_database(db, company_name, linkedin_slug)
+    domain = from_database(db, company_name, linkedin_slug, user_id=user_id)
     if domain:
         return {"domain": domain, "confidence": 95, "source": "database"}
     if allow_network and company_name:

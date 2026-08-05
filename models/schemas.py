@@ -274,4 +274,7 @@ class OptOutRequest(BaseModel):
     """Pedido público de remoção (LGPD art. 18). Não exige conta."""
     kind: str                      # email | phone | linkedin
     value: str
+    # Canal de confirmação. Para kind="email" é o próprio valor; para telefone
+    # e LinkedIn é obrigatório, porque nenhum pedido vale sem confirmação.
+    contact_email: Optional[str] = None
     reason: Optional[str] = None

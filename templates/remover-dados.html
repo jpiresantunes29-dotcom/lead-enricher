@@ -53,6 +53,13 @@
            placeholder="joao.silva@empresa.com.br"/>
     <p class="rd-hint" id="rd-hint">Digite o e-mail exatamente como ele aparece.</p>
 
+    <div id="rd-contact-row" style="display:none">
+      <label for="rd-contact">E-mail para confirmação</label>
+      <input id="rd-contact" type="email" autocomplete="email"
+             placeholder="voce@empresa.com.br"/>
+      <p class="rd-hint">Enviamos o link de confirmação para este endereço.</p>
+    </div>
+
     <label for="rd-reason">Motivo (opcional)</label>
     <textarea id="rd-reason" placeholder="Se quiser, conte por que está pedindo a remoção."></textarea>
 
@@ -62,7 +69,10 @@
 
   <h2>O que acontece depois</h2>
   <ul>
-    <li>O contato informado é <strong>apagado imediatamente</strong> da nossa base.</li>
+    <li>Enviamos um <strong>link de confirmação</strong> por e-mail, válido por 24 horas.
+    A confirmação existe para que ninguém possa pedir a remoção de dados de outra
+    pessoa — nem apagar contatos alheios em massa.</li>
+    <li>Ao abrir o link, o contato é <strong>apagado da nossa base</strong> na hora.</li>
     <li>Guardamos apenas um <strong>código irreversível (hash)</strong> do dado — nunca o
     dado em si — para conseguir bloquear futuras reinserções.</li>
     <li>O bloqueio vale para sempre e não depende de novo pedido.</li>
@@ -98,8 +108,11 @@
   var msg=document.getElementById('rd-msg');
   var btn=document.getElementById('rd-submit');
 
+  var contactRow=document.getElementById('rd-contact-row');
+  var contact=document.getElementById('rd-contact');
+
   var PLACEHOLDERS={
-    email:['joao.silva@empresa.com.br','Digite o e-mail exatamente como ele aparece.'],
+    email:['joao.silva@empresa.com.br','Digite o e-mail exatamente como ele aparece. O link de confirmação vai para ele.'],
     phone:['+55 11 91234-5678','Pode digitar com ou sem formatação.'],
     linkedin:['https://www.linkedin.com/in/seu-perfil','Cole o endereço completo do seu perfil.']
   };
@@ -108,6 +121,8 @@
     var p=PLACEHOLDERS[kind.value];
     value.placeholder=p[0];
     hint.textContent=p[1];
+    // Telefone e LinkedIn não têm como receber o link — pedimos um e-mail.
+    contactRow.style.display=kind.value==='email'?'none':'block';
   });
 
   form.addEventListener('submit',function(e){
@@ -118,6 +133,12 @@
       msg.textContent='Preencha o dado que você quer remover.';
       return;
     }
+    var c=kind.value==='email'?v:(contact.value||'').trim();
+    if(c.indexOf('@')<0){
+      msg.className='rd-msg err';
+      msg.textContent='Informe um e-mail válido para receber o link de confirmação.';
+      return;
+    }
     btn.disabled=true;
     msg.className='rd-msg';
     msg.textContent='';
@@ -125,11 +146,11 @@
     fetch('/api/privacidade/opt-out',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({kind:kind.value,value:v,reason:(document.getElementById('rd-reason').value||'').trim()||null})
+      body:JSON.stringify({kind:kind.value,value:v,contact_email:c,reason:(document.getElementById('rd-reason').value||'').trim()||null})
     }).then(function(r){return r.json().catch(function(){return {};});})
       .then(function(data){
         msg.className='rd-msg ok';
-        msg.textContent=data.message||'Pedido registrado. O dado foi removido e ficará bloqueado.';
+        msg.textContent=data.message||'Pedido registrado. Confirme pelo link enviado ao seu e-mail.';
         form.reset();
         kind.dispatchEvent(new Event('change'));
       })

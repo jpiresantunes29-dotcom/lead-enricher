@@ -112,6 +112,18 @@ PAGES: dict[str, Page] = {
         priority="0.4",
         changefreq="yearly",
     ),
+    "/privacidade/confirmar": Page(
+        path="/privacidade/confirmar",
+        template="remover-dados-confirmado.html",
+        title="Confirmação de remoção — LeadEnricher",
+        description=(
+            "Confirmação do pedido de remoção de dados feito em "
+            "/remover-meus-dados."
+        ),
+        # Página de uso único, alcançada por link com token: não há o que
+        # indexar e o buscador não deve tentar abrir o link de ninguém.
+        indexable=False,
+    ),
     "/guias": Page(
         path="/guias",
         template="guias.html",

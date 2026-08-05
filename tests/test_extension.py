@@ -265,16 +265,98 @@ def test_report_remove_e_bloqueia(ext_client):
     assert _resolve(ext_client).json()["blocked"] is True
 
 
-def test_optout_publico_nao_exige_login(client):
-    resp = client.post("/api/privacidade/opt-out", json={
-        "kind": "email", "value": "pessoa@empresa.com", "reason": "não quero",
-    })
+def test_optout_publico_nao_exige_login_mas_exige_confirmacao(client):
+    """
+    O pedido entra sem cadastro (é um direito), mas só bloqueia depois que o
+    titular abre o link enviado por e-mail. Sem essa trava, qualquer pessoa
+    apagaria contatos alheios em massa pelo formulário público.
+    """
+    with patch("routers.privacy.mailer.send", return_value=True) as enviado:
+        resp = client.post("/api/privacidade/opt-out", json={
+            "kind": "email", "value": "pessoa@empresa.com", "reason": "não quero",
+        })
     assert resp.status_code == 200
     assert resp.json()["success"] is True
+    enviado.assert_called_once()
+    destino, _assunto, corpo = enviado.call_args.args[:3]
+    assert destino == "pessoa@empresa.com"
+
+    db = _Session()
+    try:
+        assert not optout.is_blocked(db, "email", "pessoa@empresa.com"), \
+            "pedido pendente não pode bloquear"
+    finally:
+        db.close()
+
+    # O link do e-mail confirma, e só então o bloqueio passa a valer.
+    link = [w for w in corpo.split() if "token=" in w][0]
+    token = link.split("token=", 1)[1]
+    pagina = client.get("/privacidade/confirmar", params={"token": token})
+    assert pagina.status_code == 200
+    assert "Remoção confirmada" in pagina.text
 
     db = _Session()
     try:
         assert optout.is_blocked(db, "email", "pessoa@empresa.com")
+    finally:
+        db.close()
+
+
+def test_optout_com_token_invalido_nao_bloqueia(client):
+    pagina = client.get("/privacidade/confirmar", params={"token": "token-inventado"})
+    assert pagina.status_code == 200
+    assert "Link inválido ou expirado" in pagina.text
+
+
+def test_optout_de_telefone_exige_email_de_contato(client):
+    """Telefone não recebe link: sem e-mail de contato, o pedido não sai do lugar."""
+    with patch("routers.privacy.mailer.send") as enviado:
+        resp = client.post("/api/privacidade/opt-out", json={
+            "kind": "phone", "value": "+55 11 98888-7777",
+        })
+    assert resp.status_code == 200          # resposta genérica, sempre
+    enviado.assert_not_called()
+
+    db = _Session()
+    try:
+        assert not optout.is_blocked(db, "phone", "+5511988887777")
+    finally:
+        db.close()
+
+
+def test_optout_confirmado_apaga_o_contato_da_base(client):
+    """A confirmação não só bloqueia: remove o que já estava gravado."""
+    from models.database import Person, PersonEmail
+
+    db = _Session()
+    try:
+        person = Person(dedupe_key="k-optout", full_name="Alvo Teste",
+                        company_domain="empresa.com")
+        db.add(person)
+        db.flush()
+        db.add(PersonEmail(person_id=person.id, email="apagar@empresa.com",
+                           status="valid", confidence=97))
+        db.commit()
+    finally:
+        db.close()
+
+    with patch("routers.privacy.mailer.send", return_value=True) as enviado:
+        client.post("/api/privacidade/opt-out",
+                    json={"kind": "email", "value": "apagar@empresa.com"})
+    corpo = enviado.call_args.args[2]
+    token = [w for w in corpo.split() if "token=" in w][0].split("token=", 1)[1]
+    client.get("/privacidade/confirmar", params={"token": token})
+
+    db = _Session()
+    try:
+        assert db.query(PersonEmail).filter(
+            PersonEmail.email == "apagar@empresa.com"
+        ).count() == 0
+        # E o valor em claro do pedido não fica guardado depois de cumprido.
+        from models.database import OptOut
+        pedido = db.query(OptOut).filter(OptOut.kind == "email").first()
+        assert pedido.pending_value is None
+        assert pedido.status == "confirmed"
     finally:
         db.close()
 

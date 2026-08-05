@@ -159,7 +159,8 @@ def me(db: Session = Depends(get_db), current_user: dict = Depends(get_ext_user)
 
 # ── Resolve (rápido, sem cobrar) ─────────────────────────────────────────────
 
-def _resolve_domain(db: Session, body, allow_network: bool) -> tuple:
+def _resolve_domain(db: Session, body, allow_network: bool,
+                    user_id: Optional[str] = None) -> tuple:
     """Descobre o domínio da empresa. Devolve (domain, confidence)."""
     if body.company_domain:
         return normalize_domain(body.company_domain), 100
@@ -169,6 +170,7 @@ def _resolve_domain(db: Session, body, allow_network: bool) -> tuple:
         linkedin_slug=body.company_linkedin_slug,
         location=getattr(body, "location", None),
         allow_network=allow_network,
+        user_id=user_id,
     )
     if found:
         return found["domain"], found["confidence"]
@@ -200,7 +202,9 @@ def resolve(
         _, parsed_company = parse_headline(body.headline)
         company_name = parsed_company
 
-    domain, domain_confidence = _resolve_domain(db, body, allow_network=body.deep)
+    domain, domain_confidence = _resolve_domain(
+        db, body, allow_network=body.deep, user_id=user_id,
+    )
 
     company = None
     if domain:
@@ -384,7 +388,7 @@ def company_context(
     if not domain:
         found = company_lookup.resolve(
             db, company_name=body.company_name, linkedin_slug=body.linkedin_slug,
-            allow_network=body.deep,
+            allow_network=body.deep, user_id=user_id,
         )
         domain = found["domain"] if found else None
     if not domain:
@@ -537,7 +541,13 @@ def report(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_ext_user),
 ):
-    """Marca um dado como errado ou registra pedido de remoção."""
+    """
+    Marca um dado como errado ou registra pedido de remoção.
+
+    Diferente do formulário público, aqui o bloqueio vale na hora: quem
+    reporta está autenticado, e o `user_id` fica registrado no motivo — há a
+    quem perguntar se a remoção for indevida.
+    """
     if body.kind not in optout.KINDS:
         raise HTTPException(status_code=422, detail="Tipo inválido.")
 
@@ -549,8 +559,10 @@ def report(
     if not value:
         raise HTTPException(status_code=422, detail="Informe o dado a ser removido.")
 
-    optout.register(db, body.kind, value, reason=body.reason or "reportado pela extensão")
+    user_id = current_user.get("sub")
+    reason = f"{body.reason or 'reportado pela extensão'} [user={user_id}]"
+    optout.register(db, body.kind, value, reason=reason, source="extensao")
     optout.purge(db, body.kind, value)
     db.commit()
-    logger.info("Opt-out registrado kind=%s via=extensao", body.kind)
+    logger.info("Opt-out registrado kind=%s via=extensao user=%s", body.kind, user_id)
     return {"success": True, "message": "Registrado. O dado não será mais exibido."}
