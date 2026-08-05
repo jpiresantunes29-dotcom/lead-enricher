@@ -154,3 +154,61 @@ class ActivityResponse(BaseModel):
 
 class StageUpdate(BaseModel):
     stage: str
+
+
+# ── Importação de planilha ────────────────────────────────────────────────────
+
+class ImportRowOut(BaseModel):
+    """Uma linha da planilha depois do parsing, com diagnóstico."""
+    row_number: int
+    status: str                       # ok | invalid | duplicate_file | duplicate_db
+    reason: Optional[str] = None
+    data: Dict[str, Any] = {}
+
+
+class ImportPreviewResponse(BaseModel):
+    success: bool
+    message: str
+    columns: List[str] = []           # cabeçalho original da planilha
+    mapping: Dict[str, str] = {}      # campo do lead → coluna reconhecida
+    unmapped: List[str] = []          # colunas ignoradas
+    total_rows: int = 0
+    importable: int = 0
+    truncated: bool = False           # planilha maior que o limite
+    rows: List[ImportRowOut] = []
+
+
+class ImportRowIn(BaseModel):
+    """Linha confirmada pelo usuário na tela de preview."""
+    domain: str
+    company_name: Optional[str] = None
+    sector: Optional[str] = None
+    location: Optional[str] = None
+    description: Optional[str] = None
+    corporate_email: Optional[str] = None
+    phone: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    employee_count: Optional[Dict[str, Any]] = None
+
+
+class ImportCommitRequest(BaseModel):
+    rows: List[ImportRowIn]
+    skip_existing: bool = True        # ignora domínios que já estão no histórico
+
+
+class ImportedLeadOut(BaseModel):
+    """Versão enxuta usada pela fila de enriquecimento do front."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    domain: Optional[str] = None
+    company_name: Optional[str] = None
+    status: str
+
+
+class ImportCommitResponse(BaseModel):
+    success: bool
+    message: str
+    created: int = 0
+    skipped: int = 0
+    leads: List[ImportedLeadOut] = []

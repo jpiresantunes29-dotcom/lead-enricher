@@ -11,7 +11,10 @@ from slowapi.errors import RateLimitExceeded
 
 from models.database import init_db
 from middleware.auth import rate_limit_key
-from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
+from routers import (
+    enrichment, leads, auth, billing, export, activities, dashboard,
+    integrations, crm_config, imports,
+)
 
 # ── Logging estruturado ───────────────────────────────────────────────────────
 logging.config.dictConfig({
@@ -75,6 +78,7 @@ app.include_router(activities.router)
 app.include_router(dashboard.router)
 app.include_router(integrations.router)
 app.include_router(crm_config.router)
+app.include_router(imports.router)
 
 
 @app.get("/health", tags=["meta"])

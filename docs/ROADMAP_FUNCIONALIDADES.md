@@ -55,13 +55,31 @@ Parcialmente feito em 2026-07-05 (suíte foi de 68 → 80 testes):
 
 ## Fase 1 — Retenção e uso diário (usuário volta todo dia)
 
-### 1.1 Enriquecimento em lote (re-lançamento)
-O endpoint de lote foi **removido** nesta auditoria: estava quebrado
-(`scalar_all()` inexistente, violação de NOT NULL, nada processava os leads
-"pending") e sem UI. Relançar sobre a fila do item 0.2:
-- Upload CSV → cria jobs → barra de progresso na UI → resultado vira leads
-  no pipeline. Respeitar cota (1 busca por domínio) e cache de 7 dias.
-- Esforço: 2–3 dias. É a feature mais pedida em ferramentas concorrentes.
+### 1.1 Importação de planilha + lote ✅ feito em 2026-08-05
+Relançado sem depender da fila do item 0.2 — a fila roda **no cliente**, um
+lead por requisição, porque cada coleta leva 10–30 s e o `maxDuration` da
+função na Vercel é 60 s.
+
+Como funciona hoje:
+- `services/importer.py` lê .xlsx/.csv, acha a linha de cabeçalho (pula
+  títulos), mapeia colunas por alias PT/EN sem acento (Domínio, Site, Razão
+  Social, Setor, Telefone…), normaliza domínio sujo e deriva domínio do e-mail
+  quando não há coluna de site. Limites: 5 MB e 500 linhas.
+- `POST /api/import/preview` só lê o arquivo (não grava) e devolve o
+  diagnóstico linha a linha: ok, inválida, repetida no arquivo, já no
+  histórico. `POST /api/import` grava os leads confirmados com
+  `status="imported"` — sem consumir cota e sem score (scoring depende de
+  sinais da coleta).
+- `POST /api/leads/{id}/enrich` enriquece **no mesmo lead** (nada de
+  duplicata), consome 1 busca e preserva o que veio da planilha nos campos que
+  a coleta não achou. A busca manual de um domínio já importado cai no mesmo
+  caminho. `GET /api/import/template` baixa o modelo de planilha.
+- UI em `#import`: drop zone → preview com colunas reconhecidas → barra de
+  progresso com "Parar", tratamento de 402 (cota) e 429 (rate limit). No
+  histórico, lead importado ganha a tag "planilha" e um botão "Enriquecer".
+
+Pendente (herda do 0.2): fila server-side para o usuário poder fechar a aba
+durante o enriquecimento em lote.
 
 ### 1.2 Notas e edição manual do lead
 Hoje o lead é 100 % automático. Vendedor precisa corrigir telefone, adicionar

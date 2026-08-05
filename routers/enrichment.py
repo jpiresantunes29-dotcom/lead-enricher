@@ -45,12 +45,42 @@ def _find_cached_lead(db: Session, domain: str, user_id: str) -> Lead | None:
         .filter(
             Lead.user_id == user_id,
             Lead.domain == domain,
-            Lead.status != "failed",
+            # "imported" veio de planilha e ainda não foi coletado — servir isso
+            # como cache devolveria uma ficha vazia
+            Lead.status.notin_(("failed", "imported")),
             Lead.created_at >= cutoff,
         )
         .order_by(Lead.created_at.desc())
         .first()
     )
+
+
+def _find_imported_lead(db: Session, domain: str, user_id: str) -> Lead | None:
+    """Lead vindo de planilha e ainda não enriquecido — é ele que preenchemos."""
+    return (
+        db.query(Lead)
+        .filter(
+            Lead.user_id == user_id,
+            Lead.domain == domain,
+            Lead.status == "imported",
+        )
+        .order_by(Lead.created_at.desc())
+        .first()
+    )
+
+
+def _apply_enrichment(lead: Lead, data: dict) -> None:
+    """
+    Grava o resultado da coleta no lead preservando o que veio da planilha:
+    campo que a coleta não achou mantém o valor informado pelo usuário.
+    """
+    for key, value in data.items():
+        if key in ("raw_input_domain", "status") or not hasattr(Lead, key):
+            continue
+        if value in (None, "", [], {}):
+            continue
+        setattr(lead, key, value)
+    lead.status = data.get("status", "enriched")
 
 
 @router.post("/enrich", response_model=EnrichResponse)
@@ -93,11 +123,16 @@ def enrich(
         logger.exception("Enrichment failed for domain=%s: %s", domain, e)
         raise HTTPException(status_code=500, detail=f"Erro ao enriquecer: {e}")
 
-    lead_kwargs = {k: v for k, v in data.items() if hasattr(Lead, k)}
-    lead_kwargs["user_id"] = user_id
-    lead = Lead(**lead_kwargs)
+    # Domínio já importado de planilha? Preenche aquele lead em vez de duplicar.
+    lead = _find_imported_lead(db, domain, user_id)
+    if lead:
+        _apply_enrichment(lead, data)
+    else:
+        lead_kwargs = {k: v for k, v in data.items() if hasattr(Lead, k)}
+        lead_kwargs["user_id"] = user_id
+        lead = Lead(**lead_kwargs)
+        db.add(lead)
     apply_score(lead)  # score inicial — recalculado quando decisores chegarem
-    db.add(lead)
     db.commit()
     db.refresh(lead)
 
@@ -106,6 +141,62 @@ def enrich(
     return EnrichResponse(
         success=data["status"] != "failed",
         message="Enriquecimento concluído." if data["status"] != "failed" else "Não conseguimos coletar dados deste domínio.",
+        data=LeadOut.model_validate(lead),
+    )
+
+
+@router.post("/leads/{lead_id}/enrich", response_model=EnrichResponse)
+@limiter.limit("30/minute")
+def enrich_existing_lead(
+    request: Request,
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Enriquece um lead que já existe — na prática, os que vieram de planilha.
+
+    É o passo que a fila da tela de importação chama, um lead por requisição:
+    a coleta leva 10–30 s e o maxDuration da função na Vercel é 60 s. Consome
+    1 busca da cota, igual à busca manual.
+    """
+    user_id = current_user.get("sub")
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.user_id == user_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead não encontrado.")
+
+    domain = lead.domain or normalize_domain(lead.raw_input_domain or "")
+    if not domain:
+        raise HTTPException(status_code=422, detail="Lead sem domínio para enriquecer.")
+
+    profile = get_or_create_profile(db, user_id)
+    _check_quota(profile, db)
+
+    # Incrementa antes da operação lenta (mesma proteção de race do /enrich)
+    profile.searches_used += 1
+    db.commit()
+
+    try:
+        data = enrich_company(domain)
+    except Exception as e:
+        profile.searches_used -= 1
+        db.commit()
+        logger.exception("Enrichment failed for lead=%s domain=%s: %s", lead_id, domain, e)
+        raise HTTPException(status_code=500, detail=f"Erro ao enriquecer: {e}")
+
+    _apply_enrichment(lead, data)
+    apply_score(lead, list(lead.decision_makers))
+    db.commit()
+    db.refresh(lead)
+
+    logger.info("Enriched lead=%s domain=%s status=%s user=%s", lead_id, domain, lead.status, user_id)
+
+    return EnrichResponse(
+        success=lead.status != "failed",
+        message=(
+            "Enriquecimento concluído." if lead.status != "failed"
+            else "Não conseguimos coletar dados deste domínio."
+        ),
         data=LeadOut.model_validate(lead),
     )
 
