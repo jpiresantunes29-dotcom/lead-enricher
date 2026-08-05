@@ -13,7 +13,7 @@ from services.activity_rules import add_business_days
 
 
 def _make_lead(client):
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
     return resp.json()["data"]
 
