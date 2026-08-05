@@ -16,7 +16,9 @@ Cargos de decisão reconhecidos e priorizados por TITLE_PRIORITY.
 Sem dependência de APIs pagas.
 """
 import logging
+import os
 import re
+import time
 import requests
 from typing import List, Optional
 from html import unescape
@@ -28,6 +30,17 @@ from ._ddg import search_multi
 from .email_verifier import verify_batch, verify_emails
 
 logger = logging.getLogger(__name__)
+
+# Teto de tempo da busca inteira. Era o único caminho de rede do produto sem
+# orçamento: aba People (12 s) + 3 cargos x 4 motores de busca (12 s cada) +
+# sondagem SMTP passava dos 60 s da função serverless, e aí a requisição morre
+# sem devolver nada — o usuário perde a busca inteira em vez de receber os
+# dois decisores que já tinham sido encontrados.
+DECISORES_BUDGET_SECONDS = int(os.getenv("DECISORES_BUDGET_SECONDS", "30"))
+
+# Reservas: quanto precisa sobrar para a etapa seguinte valer a pena começar.
+_PEOPLE_TAB_RESERVE = 14.0
+_SEARCH_ROLE_RESERVE = 10.0
 
 
 LINKEDIN_PROFILE_RE = re.compile(
@@ -208,6 +221,7 @@ def _fetch_people_tab_decisors(
     domain: str,
     verify_emails_smtp: bool,
     db=None,
+    timeout: int = 12,
 ) -> List[dict]:
     """
     Extrai decisores diretamente da aba People/Pessoas do LinkedIn.
@@ -222,7 +236,7 @@ def _fetch_people_tab_decisors(
     people_url = f"https://www.linkedin.com/company/{company_slug}/people/"
 
     try:
-        resp = requests.get(people_url, headers=HEADERS, timeout=12, allow_redirects=True)
+        resp = requests.get(people_url, headers=HEADERS, timeout=timeout, allow_redirects=True)
         if resp.status_code != 200 or len(resp.text) < 2000:
             return []
         html = resp.text
@@ -332,13 +346,22 @@ def _extract_from_json(data, roles: List[str], company_name: str,
 # Fonte 2 — Fallback: busca em motores de pesquisa
 # ---------------------------------------------------------------------------
 
-def _search_one_role(role: str, company_term: str) -> List[dict]:
-    """Busca multi-engine (SearXNG → DDG → Bing → Google) com fallback."""
+def _search_one_role(role: str, company_term: str, budget: float = 24.0) -> List[dict]:
+    """
+    Busca multi-engine (SearXNG → DDG → Bing → Google) com fallback.
+
+    `budget` é o tempo total permitido para este cargo, dividido entre a
+    consulta exata e a reformulada: sem ele, dois motores lentos consumiriam
+    sozinhos o orçamento da requisição inteira.
+    """
+    pattern = r"linkedin\.com/in/[a-zA-Z0-9\-._%]+"
+    per_query = max(4, int(budget / 2))
+
     query = f'site:linkedin.com/in "{role}" "{company_term}"'
-    results = search_multi(query, pattern=r"linkedin\.com/in/[a-zA-Z0-9\-._%]+")
-    if not results:
+    results = search_multi(query, pattern=pattern, timeout=per_query, budget=budget / 2)
+    if not results and budget > 10:
         query2 = f'site:linkedin.com/in {role} {company_term}'
-        results = search_multi(query2, pattern=r"linkedin\.com/in/[a-zA-Z0-9\-._%]+")
+        results = search_multi(query2, pattern=pattern, timeout=per_query, budget=budget / 2)
     return results
 
 
@@ -439,11 +462,18 @@ def find_decision_makers(
       2. Fallback: busca por motor de pesquisa por cargo
     Sem dependência de APIs pagas.
     """
+    started = time.monotonic()
+    deadline = started + DECISORES_BUDGET_SECONDS
+
+    def remaining() -> float:
+        return deadline - time.monotonic()
+
     domain = normalize_domain(domain)
     company_term = company_name or domain.split(".")[0]
     found: List[dict] = []
     seen_slugs: set = set()
     seen_names: set = set()
+    truncated_by_time = False
 
     # Fonte 0: registro público da Receita — associação oficial
     for r in _qsa_decisors(db, domain, company_term, roles, verify_emails_smtp):
@@ -455,7 +485,7 @@ def find_decision_makers(
             break
 
     # Fonte 1: aba People — acesso direto, confiança alta
-    if linkedin_url and len(found) < limit:
+    if linkedin_url and len(found) < limit and remaining() > _PEOPLE_TAB_RESERVE:
         people_results = _fetch_people_tab_decisors(
             linkedin_url=linkedin_url,
             company_name=company_term,
@@ -463,6 +493,7 @@ def find_decision_makers(
             domain=domain,
             verify_emails_smtp=verify_emails_smtp,
             db=db,
+            timeout=min(12, max(4, int(remaining() - 8))),
         )
         for r in people_results:
             slug = LINKEDIN_PROFILE_RE.search(r.get("linkedin_url") or "")
@@ -480,7 +511,12 @@ def find_decision_makers(
         for role in roles[:3]:
             if len(found) >= limit:
                 break
-            results = _search_one_role(role, company_term)
+            # Entrar num motor de busca sem tempo para ele responder só
+            # garante que a requisição inteira morre no meio.
+            if remaining() < _SEARCH_ROLE_RESERVE:
+                truncated_by_time = True
+                break
+            results = _search_one_role(role, company_term, budget=remaining() - 6)
             for r in results:
                 url = r.get("url", "")
                 m = LINKEDIN_PROFILE_RE.search(url)
@@ -522,7 +558,7 @@ def find_decision_makers(
     _persist_decisors(db, result, domain, company_name)
 
     logger.info(
-        "Decision makers found=%d domain=%s roles=%s",
-        len(result), domain, roles,
+        "Decision makers found=%d domain=%s roles=%s elapsed=%.1fs truncado_por_tempo=%s",
+        len(result), domain, roles, time.monotonic() - started, truncated_by_time,
     )
     return result

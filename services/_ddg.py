@@ -12,10 +12,11 @@ Para cada URL, tenta extrair título do contexto próximo no HTML.
 """
 import re
 import json
+import time
 import requests
 from urllib.parse import quote_plus, unquote, urlparse
 from bs4 import BeautifulSoup
-from typing import List, Dict
+from typing import Dict, List, Optional
 
 
 # Headers mais "humanos" (Firefox 121, completos)
@@ -139,12 +140,22 @@ def _try_engine(name: str, url: str, method: str = "GET", data=None,
 
 
 def _try_searxng(query: str, pattern: str, timeout: int = 12) -> List[Dict]:
-    """Tenta instâncias SearXNG via JSON API."""
+    """
+    Tenta instâncias SearXNG via JSON API.
+
+    O tempo total é o mesmo `timeout` do engine, não `timeout` por instância:
+    cinco instâncias fora do ar em sequência custariam um minuto sozinhas.
+    """
+    deadline = time.monotonic() + timeout
+    per_instance = max(3, timeout // 2)
     for instance in SEARXNG_INSTANCES:
+        if time.monotonic() >= deadline:
+            break
+        instance_timeout = min(per_instance, max(3, int(deadline - time.monotonic())))
         try:
             url = f"{instance}/search"
             resp = requests.get(url, params={"q": query, "format": "json"},
-                                headers=SEARCH_HEADERS, timeout=timeout)
+                                headers=SEARCH_HEADERS, timeout=instance_timeout)
             if resp.status_code != 200:
                 continue
             ct = resp.headers.get("content-type", "")
@@ -198,22 +209,33 @@ def search_google(query: str, timeout: int = 12) -> List[Dict]:
 
 
 def search_multi(query: str, pattern: str = LINKEDIN_SLUG_PATTERN,
-                 timeout: int = 12) -> List[Dict]:
+                 timeout: int = 12, budget: Optional[float] = None) -> List[Dict]:
     """
     Busca em múltiplas engines em sequência. Devolve resultados deduplicados.
     Engines tentadas: SearXNG (mais estável) → DDG → Bing → Google.
+
+    `budget` limita o tempo TOTAL da cascata. Sem ele, quatro motores lentos
+    somam quase um minuto — mais do que a função serverless inteira tem para
+    responder. Quem chama sabe quanto tempo ainda resta; aqui só respeitamos.
     """
+    deadline = time.monotonic() + budget if budget else None
     seen = set()
     deduped = []
 
     for engine_func in (
-        lambda: _try_searxng(query, pattern, timeout=timeout),
-        lambda: search_ddg(query, timeout=timeout),
-        lambda: search_bing(query, timeout=timeout),
-        lambda: search_google(query, timeout=timeout),
+        lambda t: _try_searxng(query, pattern, timeout=t),
+        lambda t: search_ddg(query, timeout=t),
+        lambda t: search_bing(query, timeout=t),
+        lambda t: search_google(query, timeout=t),
     ):
+        engine_timeout = timeout
+        if deadline is not None:
+            left = deadline - time.monotonic()
+            if left < 3:
+                break               # não dá para tentar mais nada com honestidade
+            engine_timeout = int(min(timeout, left))
         try:
-            results = engine_func()
+            results = engine_func(engine_timeout)
         except Exception:
             results = []
         for r in results:
