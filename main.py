@@ -12,45 +12,15 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
 
-from models.database import get_db, init_db
+from models.database import get_db, init_db, schema_status
 from middleware.auth import demo_mode_enabled, jwt_configured, rate_limit_key
-from routers import (
-    enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config,
-    imports, sheet
-)
-
-# Stub para seo enquanto há dependências quebradas
-class _SEO:
-    FAQ = []
-    title = "LeadEnricher — Inteligência Comercial B2B"
-    description = "Descubra empresas em segundos. Enriqueça contatos com dados reais e atualizados."
-    canonical = "https://leadenricher.com"
-    indexable = True
-    theme_color = "#1D4ED8"
-    site_name = "LeadEnricher"
-    locale = "pt_BR"
-    og_title = "LeadEnricher — Inteligência Comercial B2B"
-    image = "https://leadenricher.com/og-image.png"
-    image_alt = "LeadEnricher"
-    json_ld = []
-
-    def context(self, request, path):
-        return {
-            "seo": self,
-            "title": self.title,
-            "description": self.description,
-            "canonical": self.canonical,
-            "indexable": self.indexable,
-            "theme_color": self.theme_color,
-            "site_name": self.site_name,
-            "locale": self.locale,
-            "og_title": self.og_title,
-            "image": self.image,
-            "image_alt": self.image_alt,
-            "json_ld": self.json_ld,
-        }
-
-seo = _SEO()
+from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
+from routers import batch, extension, internal, privacy
+from routers import imports, sheet
+from routers import dns_intel as dns_intel_router
+from routers import seo as seo_router
+from services import guides, seo
+from services.people import optout
 
 # ── Logging estruturado ───────────────────────────────────────────────────────
 logging.config.dictConfig({
@@ -186,6 +156,7 @@ templates = Jinja2Templates(directory="templates")
 
 app.include_router(enrichment.router)
 app.include_router(leads.router)
+app.include_router(dns_intel_router.router)
 app.include_router(auth.router)
 app.include_router(billing.router)
 app.include_router(export.router)
@@ -193,24 +164,39 @@ app.include_router(activities.router)
 app.include_router(dashboard.router)
 app.include_router(integrations.router)
 app.include_router(crm_config.router)
+app.include_router(batch.router)
+app.include_router(extension.router)
+app.include_router(internal.router)
+app.include_router(privacy.router)
+app.include_router(seo_router.router)
+# Importação de planilha e a visão de grade sobre os leads importados.
 app.include_router(imports.router)
 app.include_router(sheet.router)
 
 
 @app.get("/health", tags=["meta"])
 def health():
-    """Sinal de vida do servidor."""
-    return {
-        "status": "ok",
+    """
+    Sinal de vida com verificação de schema: banco incompleto vira "degraded"
+    aqui em vez de 500 no clique do usuário. O detalhe do que falta só sai
+    fora de produção — em produção seria mapa da estrutura interna.
+    """
+    schema = schema_status()
+    payload = {
+        "status": "ok" if schema["ok"] else "degraded",
         "version": app.version,
+        "schema_ok": schema["ok"],
     }
+    if not IS_PRODUCTION:
+        payload["schema"] = schema
+    return payload
 
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     # Landing "Gold Signal" (docs/DESIGN_LANDING_V3.md). O produto vive em /app.
     return templates.TemplateResponse(
-        request, "landing.html", {"seo": seo, "faq": seo.FAQ}
+        request, "landing.html", {**seo.context(request, "/"), "faq": seo.FAQ}
     )
 
 
@@ -221,7 +207,7 @@ def app_page(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        {"seo": seo},
+        seo.context(request, "/app"),
         headers={"X-Robots-Tag": "noindex, nofollow"},
     )
 

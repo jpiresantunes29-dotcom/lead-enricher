@@ -22,6 +22,8 @@ from sqlalchemy.orm import Session
 
 from models.database import Lead, Profile, HIDDEN_LEAD_STATUSES
 from services._utils import normalize_domain
+from services.domain_finder import find_domain
+from services.importer import looks_like_domain
 from services.enricher import enrich_company, ENRICHMENT_VERSION
 from services.people.waterfall import ingest_enrichment
 
@@ -95,16 +97,65 @@ def has_quota(profile: Profile) -> bool:
     return (profile.searches_used or 0) < profile.searches_limit
 
 
-def enrich_for_user(db: Session, profile: Profile, raw_domain: str) -> EnrichOutcome:
+def enrich_existing_lead(db: Session, profile: Profile, lead: Lead) -> EnrichOutcome:
+    """
+    Enriquece uma ficha que já existe — na prática, as que vieram de planilha.
+
+    Planilha de prospecção quase sempre traz nome e LinkedIn, não o site.
+    Quando falta o domínio, ele é descoberto pelo nome antes da coleta; sem
+    isso a linha inteira seria inaproveitável. Depois disso o caminho é o
+    mesmo de qualquer busca: cota, recibo e coleta.
+    """
+    domain = lead.domain or ""
+    if not domain and looks_like_domain(lead.raw_input_domain or ""):
+        domain = normalize_domain(lead.raw_input_domain)
+
+    if not domain and lead.company_name:
+        found = find_domain(lead.company_name, lead.linkedin_url, lead.location)
+        if found.get("domain") and found.get("confidence") in ("high", "medium"):
+            domain = found["domain"]
+            lead.domain = domain
+            lead.website = f"https://{domain}"
+            if not lead.raw_input_domain:
+                lead.raw_input_domain = domain
+            db.commit()
+            logger.info(
+                "Domínio descoberto lead=%s domain=%s conf=%s",
+                lead.id, domain, found.get("confidence"),
+            )
+
+    if not domain:
+        lead.status = "failed"
+        db.commit()
+        return EnrichOutcome(
+            result=RESULT_ERROR,
+            lead=lead,
+            message="Não encontrei o site desta empresa. Preencha a coluna Domínio para enriquecer.",
+            error="dominio_desconhecido",
+        )
+
+    outcome = enrich_for_user(db, profile, domain, existing_lead=lead)
+    return outcome
+
+
+def enrich_for_user(db: Session, profile: Profile, raw_domain: str,
+                    existing_lead: Optional[Lead] = None) -> EnrichOutcome:
     """
     Enriquece um domínio para o dono do `profile`. Commita o que precisa
     commitar (cota e ficha andam juntas) e nunca levanta exceção de coleta.
+
+    `existing_lead` reaproveita uma ficha já criada (linha de planilha) em vez
+    de abrir outra — senão a mesma empresa apareceria duas vezes no histórico,
+    uma com as células originais e outra com os dados coletados.
     """
     domain = normalize_domain(raw_domain)
     if not domain:
         return EnrichOutcome(
             result=RESULT_ERROR, message="Domínio inválido.", error="dominio_vazio",
         )
+
+    if existing_lead is not None:
+        return _run_enrichment(db, profile, domain, raw_domain, existing_lead, charged=True)
 
     cached = find_cached_lead(db, domain, profile.id)
     if cached:
@@ -127,7 +178,19 @@ def enrich_for_user(db: Session, profile: Profile, raw_domain: str) -> EnrichOut
     lead = previous if previous is not None else Lead(
         user_id=profile.id, raw_input_domain=raw_domain, domain=domain, status="pending",
     )
+    return _run_enrichment(db, profile, domain, raw_domain, lead, charged)
+
+
+def _run_enrichment(db: Session, profile: Profile, domain: str, raw_domain: str,
+                    lead: Lead, charged: bool) -> EnrichOutcome:
+    """Debita, coleta e grava. Único ponto que fala com a coleta de verdade."""
     if charged:
+        if not has_quota(profile):
+            return EnrichOutcome(
+                result=RESULT_QUOTA,
+                lead=lead if lead.id else None,
+                message="Cota esgotada. Faça upgrade para continuar.",
+            )
         profile.searches_used = (profile.searches_used or 0) + 1
         db.add(lead)
         db.commit()

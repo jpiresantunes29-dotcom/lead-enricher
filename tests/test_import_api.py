@@ -133,7 +133,6 @@ def test_commit_guarda_todas_as_celulas_originais(client):
     assert lead.status == "imported"
     assert lead.sheet_row == 2
     assert lead.import_batch_id == result["batch_id"]
-    assert lead.score is None          # scoring só depois da coleta
     db.close()
 
 
@@ -281,7 +280,7 @@ def test_edita_coluna_do_sistema_normalizando(client):
 def test_coluna_calculada_nao_e_editavel(client):
     _import(client)
     resp = client.patch("/api/sheet/cell",
-                        json={"lead_id": _first_lead_id(client), "column": "Score", "value": 99})
+                        json={"lead_id": _first_lead_id(client), "column": "Prioridade", "value": "Alta"})
     assert resp.status_code == 422
 
 
@@ -333,7 +332,7 @@ def test_export_traz_colunas_originais_e_do_sistema(client):
     ws = load_workbook(io.BytesIO(resp.content)).active
     header = [c.value for c in ws[1]]
     assert header[:5] == ["🏢 Empresa", "🔗 LinkedIn", "🏆 TIER", "✅ Status", "📩 Email"]
-    assert "Domínio" in header and "Score" in header
+    assert "Domínio" in header and "Prioridade" in header
     assert ws.max_row == 3          # cabeçalho + 2 linhas
     assert ws.cell(row=2, column=3).value == "TIER 1"
 
@@ -366,7 +365,7 @@ def test_enriquecer_nao_toca_nas_celulas_da_planilha(client):
     lead_id, cells_antes = lead.id, dict(lead.cells)
     db.close()
 
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_RESULT):
         resp = client.post(f"/api/leads/{lead_id}/enrich")
     assert resp.status_code == 200
 
@@ -390,9 +389,9 @@ def test_enriquecer_descobre_dominio_pelo_nome(client):
     lead_id = db.query(Lead).filter(Lead.company_name == "Nubank").one().id
     db.close()
 
-    with patch("routers.enrichment.find_domain",
+    with patch("services.enrichment_service.find_domain",
                return_value={"domain": "nubank.com.br", "confidence": "high", "evidence": "x"}) as finder, \
-         patch("routers.enrichment.enrich_company", return_value=MOCK_RESULT) as coleta:
+         patch("services.enrichment_service.enrich_company", return_value=MOCK_RESULT) as coleta:
         resp = client.post(f"/api/leads/{lead_id}/enrich")
 
     assert resp.status_code == 200
@@ -407,7 +406,7 @@ def test_sem_dominio_descoberto_a_linha_falha_com_recado(client):
     lead_id = db.query(Lead).filter(Lead.company_name == "Nubank").one().id
     db.close()
 
-    with patch("routers.enrichment.find_domain",
+    with patch("services.enrichment_service.find_domain",
                return_value={"domain": None, "confidence": "none", "evidence": "nada"}):
         resp = client.post(f"/api/leads/{lead_id}/enrich")
 
@@ -428,7 +427,7 @@ def test_enriquecer_consome_uma_busca_por_linha(client):
     lead_id = db.query(Lead).filter(Lead.company_name == "TOTVS").one().id
     db.close()
 
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_RESULT):
         client.post(f"/api/leads/{lead_id}/enrich")
 
     db = _Session()
