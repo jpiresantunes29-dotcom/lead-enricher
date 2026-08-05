@@ -22,8 +22,33 @@ from routers import (
 # Stub para seo enquanto há dependências quebradas
 class _SEO:
     FAQ = []
+    title = "LeadEnricher — Inteligência Comercial B2B"
+    description = "Descubra empresas em segundos. Enriqueça contatos com dados reais e atualizados."
+    canonical = "https://leadenricher.com"
+    indexable = True
+    theme_color = "#1D4ED8"
+    site_name = "LeadEnricher"
+    locale = "pt_BR"
+    og_title = "LeadEnricher — Inteligência Comercial B2B"
+    image = "https://leadenricher.com/og-image.png"
+    image_alt = "LeadEnricher"
+    json_ld = []
+
     def context(self, request, path):
-        return {}
+        return {
+            "seo": self,
+            "title": self.title,
+            "description": self.description,
+            "canonical": self.canonical,
+            "indexable": self.indexable,
+            "theme_color": self.theme_color,
+            "site_name": self.site_name,
+            "locale": self.locale,
+            "og_title": self.og_title,
+            "image": self.image,
+            "image_alt": self.image_alt,
+            "json_ld": self.json_ld,
+        }
 
 seo = _SEO()
 
@@ -185,7 +210,7 @@ def health():
 def index(request: Request):
     # Landing "Gold Signal" (docs/DESIGN_LANDING_V3.md). O produto vive em /app.
     return templates.TemplateResponse(
-        request, "landing.html", {**seo.context(request, "/"), "faq": seo.FAQ}
+        request, "landing.html", {"seo": seo, "faq": seo.FAQ}
     )
 
 
@@ -196,7 +221,7 @@ def app_page(request: Request):
     return templates.TemplateResponse(
         request,
         "index.html",
-        seo.context(request, "/app"),
+        {"seo": seo},
         headers={"X-Robots-Tag": "noindex, nofollow"},
     )
 
