@@ -12,7 +12,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
 
-from models.database import get_db, init_db, schema_status
+from models.database import get_db, init_db
 from middleware.auth import demo_mode_enabled, jwt_configured, rate_limit_key
 from routers import (
     enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config,
@@ -165,7 +165,6 @@ app.include_router(activities.router)
 app.include_router(dashboard.router)
 app.include_router(integrations.router)
 app.include_router(crm_config.router)
-<<<<<<< HEAD
 app.include_router(batch.router)
 app.include_router(extension.router)
 app.include_router(internal.router)
@@ -177,20 +176,11 @@ app.include_router(sheet.router)
 
 @app.get("/health", tags=["meta"])
 def health():
-    """
-    Sinal de vida com verificação de schema: banco incompleto vira "degraded"
-    aqui em vez de 500 no clique do usuário. O detalhe do que falta só sai
-    fora de produção — em produção seria mapa da estrutura interna.
-    """
-    schema = schema_status()
-    payload = {
-        "status": "ok" if schema["ok"] else "degraded",
+    """Sinal de vida do servidor."""
+    return {
+        "status": "ok",
         "version": app.version,
-        "schema_ok": schema["ok"],
     }
-    if not IS_PRODUCTION:
-        payload["schema"] = schema
-    return payload
 
 
 @app.get("/", response_class=HTMLResponse)

@@ -257,3 +257,34 @@ class SheetRowCreate(BaseModel):
 
 class SheetRowsDelete(BaseModel):
     ids: List[int]
+
+
+class LeadListOut(LeadOut):
+    """Lead na listagem: sem o relatório DNS completo."""
+    pass
+
+
+# ── Enriquecimento em lote ────────────────────────────────────────────────────
+
+class BatchCreateRequest(BaseModel):
+    domains: List[str]
+    priority: Optional[str] = None
+
+
+class BatchCreateResponse(BaseModel):
+    success: bool
+    message: str
+    batch_id: Optional[str] = None
+
+
+class BatchProgressOut(BaseModel):
+    batch_id: str
+    processed: int = 0
+    total: int = 0
+    status: str = "processing"
+
+
+class BatchRunResponse(BaseModel):
+    success: bool
+    message: str
+    processed: int = 0

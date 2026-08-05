@@ -200,6 +200,39 @@ class CRMConnection(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
+class Job(Base):
+    """Fila de processamento de enriquecimento."""
+    __tablename__ = "jobs"
+
+    id = Column(String(36), primary_key=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False)
+    user_id = Column(String(36), nullable=False)
+    status = Column(String(20), default="pending")  # pending | processing | completed | failed
+    tentativa = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class Company(Base):
+    """Empresa (stub para compatibilidade)."""
+    __tablename__ = "companies"
+    id = Column(Integer, primary_key=True)
+
+
+class Person(Base):
+    """Pessoa (stub para compatibilidade)."""
+    __tablename__ = "persons"
+    id = Column(Integer, primary_key=True)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     _ensure_new_columns()
+
+
+HIDDEN_LEAD_STATUSES = ("deleted", "archived")
+
+
+def utcnow():
+    """Retorna a hora atual em UTC."""
+    return datetime.now(UTC)
