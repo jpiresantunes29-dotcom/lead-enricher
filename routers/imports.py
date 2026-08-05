@@ -1,34 +1,33 @@
 """
 Importação de planilhas de empresas.
 
-Fluxo em duas etapas (o upload nunca escreve direto no banco):
-  1. POST /api/import/preview  — envia o arquivo, recebe o mapeamento de
-     colunas e o diagnóstico linha a linha.
-  2. POST /api/import          — envia as linhas confirmadas, que viram leads
-     com status "imported".
+Fluxo em duas etapas, sem trafegar a planilha inteira duas vezes:
+  1. POST /api/import/preview     — sobe o arquivo; o servidor lê, guarda um
+     rascunho (import_batches.draft_rows) e devolve as colunas reconhecidas,
+     a contagem e as primeiras linhas.
+  2. POST /api/import/{id}/commit — confirma; o rascunho vira leads, cada um
+     com TODAS as células originais em Lead.cells.
 
-Os leads importados entram sem consumir cota (não há coleta externa aqui).
-O enriquecimento é opcional e acontece depois, um domínio por requisição, via
-POST /api/leads/{id}/enrich — cada um consome 1 busca da cota, igual à busca
-manual. Um por requisição porque a função da Vercel tem maxDuration de 60 s e
-um enriquecimento leva de 10 a 30 s.
+Importar não consome cota (não há coleta externa aqui). O enriquecimento é o
+passo seguinte e roda um lead por requisição — cada coleta leva 10–30 s e o
+maxDuration da função na Vercel é 60 s.
 """
 import logging
+import uuid
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import Response
 from slowapi import Limiter
 from sqlalchemy.orm import Session
 
 from middleware.auth import get_current_user, rate_limit_key
-from models.database import Lead, get_db
+from models.database import ImportBatch, Lead, get_db
 from models.schemas import (
-    ImportCommitRequest, ImportCommitResponse, ImportedLeadOut,
-    ImportPreviewResponse, ImportRowOut,
+    ImportBatchOut, ImportCommitRequest, ImportCommitResponse, ImportPreviewResponse,
 )
-from services._utils import normalize_domain
 from services.importer import (
-    MAX_FILE_BYTES, MAX_ROWS, SpreadsheetError, TEXT_FIELDS,
+    MAX_FILE_BYTES, MAX_ROWS, SpreadsheetError, identity_keys,
     build_template_csv, build_template_xlsx, parse_spreadsheet,
 )
 
@@ -40,20 +39,33 @@ limiter = Limiter(key_func=rate_limit_key)
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 CSV_MIME = "text/csv; charset=utf-8"
 
+PREVIEW_ROWS = 50   # o resto o usuário vê na planilha, depois de importar
 
-def _existing_domains(db: Session, user_id: str, domains: set[str]) -> set[str]:
-    """Domínios que o usuário já tem no histórico (em lotes, para caber no IN)."""
-    found: set[str] = set()
-    ordered = list(domains)
-    for start in range(0, len(ordered), 200):
-        chunk = ordered[start:start + 200]
-        rows = (
-            db.query(Lead.domain)
-            .filter(Lead.user_id == user_id, Lead.domain.in_(chunk))
-            .all()
-        )
-        found.update(d for (d,) in rows if d)
-    return found
+
+def _existing_keys(db: Session, user_id: str) -> set[str]:
+    """Identidades que o usuário já tem (domínio, LinkedIn ou nome)."""
+    rows = (
+        db.query(Lead.domain, Lead.linkedin_url, Lead.company_name)
+        .filter(Lead.user_id == user_id)
+        .all()
+    )
+    keys = set()
+    for domain, linkedin, name in rows:
+        keys |= identity_keys({
+            "domain": domain, "linkedin_url": linkedin, "company_name": name,
+        })
+    return keys
+
+
+def _get_batch(db: Session, batch_id: str, user_id: str) -> ImportBatch:
+    batch = (
+        db.query(ImportBatch)
+        .filter(ImportBatch.id == batch_id, ImportBatch.user_id == user_id)
+        .first()
+    )
+    if not batch:
+        raise HTTPException(status_code=404, detail="Importação não encontrada.")
+    return batch
 
 
 @router.get("/import/template")
@@ -80,129 +92,203 @@ def download_template(
 async def preview_import(
     request: Request,
     file: UploadFile = File(...),
+    sheet: str | None = Form(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user.get("sub")
-    # Lê no máximo o limite + 1 byte: arquivo maior que isso é rejeitado pelo
-    # parser sem nunca carregar o resto na memória da função.
+    # Lê no máximo o limite + 1 byte: arquivo maior é rejeitado pelo parser sem
+    # nunca carregar o resto na memória da função.
     content = await file.read(MAX_FILE_BYTES + 1)
 
     try:
-        parsed = parse_spreadsheet(file.filename or "", content)
+        parsed = parse_spreadsheet(file.filename or "", content, sheet_name=sheet)
     except SpreadsheetError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.exception("Falha inesperada ao ler planilha: %s", e)
         raise HTTPException(status_code=422, detail="Não consegui ler esta planilha.")
 
-    # Marca o que o usuário já tem no histórico — evita reimportar duplicado
-    candidates = {
-        r["data"]["domain"] for r in parsed["rows"]
-        if r["status"] == "ok" and r["data"].get("domain")
-    }
-    already = _existing_domains(db, user_id, candidates) if candidates else set()
+    # Marca o que o usuário já tem — o commit decide se pula ou não
+    already = _existing_keys(db, user_id)
+    counts = dict(parsed["counts"])
+    counts["duplicate_db"] = 0
     for row in parsed["rows"]:
-        if row["status"] == "ok" and row["data"].get("domain") in already:
+        if row["status"] == "ok" and identity_keys(row["lead"]) & already:
             row["status"] = "duplicate_db"
-            row["reason"] = "Este domínio já está no seu histórico."
+            row["reason"] = "Esta empresa já está no seu histórico."
+            counts["ok"] -= 1
+            counts["duplicate_db"] += 1
 
-    importable = sum(1 for r in parsed["rows"] if r["status"] == "ok")
+    # Um rascunho por vez: o anterior do mesmo usuário já cumpriu seu papel
+    db.query(ImportBatch).filter(
+        ImportBatch.user_id == user_id, ImportBatch.status == "draft"
+    ).delete(synchronize_session=False)
 
+    batch = ImportBatch(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        filename=(file.filename or "planilha")[:500],
+        sheet_name=parsed["sheet"][:255],
+        columns=parsed["columns"],
+        row_count=parsed["total_rows"],
+        status="draft",
+        draft_rows=parsed["rows"],
+    )
+    db.add(batch)
+    db.commit()
+
+    importable = counts["ok"] + counts["duplicate_file"]
     parts = [f"{importable} empresa(s) prontas para importar"]
-    if len(parsed["rows"]) - importable:
-        parts.append(f"{len(parsed['rows']) - importable} ignorada(s)")
+    if counts["duplicate_db"]:
+        parts.append(f"{counts['duplicate_db']} já no histórico")
+    if counts["invalid"]:
+        parts.append(f"{counts['invalid']} sem identificação")
     message = " · ".join(parts) + "."
     if parsed["truncated"]:
-        message += f" A planilha foi cortada nas primeiras {MAX_ROWS} linhas."
+        message += f" O arquivo foi cortado nas primeiras {MAX_ROWS} linhas."
 
     logger.info(
-        "Import preview user=%s file=%s rows=%d importable=%d",
-        user_id, file.filename, parsed["total_rows"], importable,
+        "Import preview user=%s file=%s sheet=%s rows=%d importable=%d",
+        user_id, file.filename, parsed["sheet"], parsed["total_rows"], importable,
     )
 
     return ImportPreviewResponse(
         success=importable > 0,
         message=message,
+        batch_id=batch.id,
+        filename=batch.filename,
+        sheet=parsed["sheet"],
+        sheets=parsed["sheets"],
         columns=parsed["columns"],
-        mapping=parsed["mapping"],
-        unmapped=parsed["unmapped"],
         total_rows=parsed["total_rows"],
         importable=importable,
+        counts=counts,
         truncated=parsed["truncated"],
-        rows=[ImportRowOut(**r) for r in parsed["rows"]],
+        rows=parsed["rows"][:PREVIEW_ROWS],
     )
 
 
-@router.post("/import", response_model=ImportCommitResponse)
+@router.post("/import/{batch_id}/commit", response_model=ImportCommitResponse)
 @limiter.limit("10/minute")
 def commit_import(
     request: Request,
-    body: ImportCommitRequest,
+    batch_id: str,
+    body: ImportCommitRequest = Body(default=ImportCommitRequest()),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    if not body.rows:
-        raise HTTPException(status_code=422, detail="Nenhuma linha para importar.")
-    if len(body.rows) > MAX_ROWS:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Máximo de {MAX_ROWS} empresas por importação.",
-        )
-
     user_id = current_user.get("sub")
+    batch = _get_batch(db, batch_id, user_id)
+    if batch.status != "draft" or not batch.draft_rows:
+        raise HTTPException(status_code=409, detail="Esta importação já foi concluída.")
 
-    # Revalida no servidor — o preview é só uma sugestão, o cliente pode editar
-    normalized: dict[str, dict] = {}
-    for row in body.rows:
-        domain = normalize_domain(row.domain or "")
-        if not domain or "." not in domain:
+    created = 0
+    skipped = 0
+    for row in batch.draft_rows:
+        status = row.get("status")
+        if status == "invalid":
+            skipped += 1
             continue
-        normalized.setdefault(domain, row.model_dump(exclude_none=True))
-
-    if not normalized:
-        raise HTTPException(status_code=422, detail="Nenhum domínio válido nas linhas enviadas.")
-
-    already = _existing_domains(db, user_id, set(normalized)) if body.skip_existing else set()
-
-    created: list[Lead] = []
-    for domain, data in normalized.items():
-        if domain in already:
+        if status == "duplicate_db" and body.skip_existing:
+            skipped += 1
             continue
+        if status == "duplicate_file" and body.skip_duplicates:
+            skipped += 1
+            continue
+
+        lead_data = row.get("lead") or {}
         lead = Lead(
             user_id=user_id,
-            raw_input_domain=domain,
-            domain=domain,
-            website=f"https://{domain}",
+            raw_input_domain=lead_data.get("domain") or lead_data.get("company_name") or "",
+            domain=lead_data.get("domain"),
+            website=lead_data.get("website"),
+            company_name=lead_data.get("company_name"),
+            linkedin_url=lead_data.get("linkedin_url"),
+            corporate_email=lead_data.get("corporate_email"),
+            phone=lead_data.get("phone"),
+            sector=lead_data.get("sector"),
+            location=lead_data.get("location"),
+            description=lead_data.get("description"),
+            mx_provider=lead_data.get("mx_provider"),
+            employee_count=lead_data.get("employee_count"),
             status="imported",
             stage="novo",
+            cells=row.get("cells") or {},
+            import_batch_id=batch.id,
+            sheet_row=row.get("row_number"),
         )
-        for field in TEXT_FIELDS:
-            value = data.get(field)
-            if value:
-                setattr(lead, field, value)
-        if data.get("employee_count"):
-            lead.employee_count = data["employee_count"]
         # Sem score aqui de propósito: o scoring depende de sinais que só a
-        # coleta traz (DNS/MX, LinkedIn, decisores). Pontuar a planilha crua
-        # encheria o dashboard de leads "prioridade baixa" que ninguém avaliou.
+        # coleta traz (DNS/MX, LinkedIn verificado, decisores).
         db.add(lead)
-        created.append(lead)
+        created += 1
 
+    batch.status = "committed"
+    batch.draft_rows = None
+    batch.row_count = created
+    batch.committed_at = datetime.now(UTC)
     db.commit()
-    for lead in created:
-        db.refresh(lead)
 
-    skipped = len(body.rows) - len(created)
-    logger.info("Import commit user=%s created=%d skipped=%d", user_id, len(created), skipped)
+    logger.info("Import commit user=%s batch=%s created=%d skipped=%d",
+                user_id, batch.id, created, skipped)
 
     return ImportCommitResponse(
-        success=bool(created),
-        message=(
-            f"{len(created)} empresa(s) importada(s)."
-            if created else "Nenhuma empresa nova para importar."
-        ),
-        created=len(created),
+        success=created > 0,
+        message=(f"{created} empresa(s) importada(s)." if created
+                 else "Nenhuma empresa nova para importar."),
+        batch_id=batch.id,
+        created=created,
         skipped=skipped,
-        leads=[ImportedLeadOut.model_validate(lead) for lead in created],
     )
+
+
+@router.get("/import/batches", response_model=list[ImportBatchOut])
+def list_batches(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    user_id = current_user.get("sub")
+    batches = (
+        db.query(ImportBatch)
+        .filter(ImportBatch.user_id == user_id, ImportBatch.status == "committed")
+        .order_by(ImportBatch.created_at.desc())
+        .all()
+    )
+    out = []
+    for batch in batches:
+        total = db.query(Lead).filter(
+            Lead.user_id == user_id, Lead.import_batch_id == batch.id
+        ).count()
+        enriched = db.query(Lead).filter(
+            Lead.user_id == user_id, Lead.import_batch_id == batch.id,
+            Lead.status.notin_(("imported", "failed")),
+        ).count()
+        out.append(ImportBatchOut(
+            id=batch.id, filename=batch.filename, sheet_name=batch.sheet_name,
+            row_count=total, enriched_count=enriched, created_at=batch.created_at,
+        ))
+    return out
+
+
+@router.delete("/import/batches/{batch_id}", status_code=204)
+def delete_batch(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Desfaz uma importação: remove o lote e todos os leads que vieram dele."""
+    user_id = current_user.get("sub")
+    batch = _get_batch(db, batch_id, user_id)
+    leads = (
+        db.query(Lead)
+        .filter(Lead.user_id == user_id, Lead.import_batch_id == batch.id)
+        .all()
+    )
+    # Um a um para o cascade do ORM levar junto decisores e atividades —
+    # delete() em massa deixaria essas linhas órfãs.
+    for lead in leads:
+        db.delete(lead)
+    removed = len(leads)
+    db.delete(batch)
+    db.commit()
+    logger.info("Import batch removido user=%s batch=%s leads=%d", user_id, batch_id, removed)

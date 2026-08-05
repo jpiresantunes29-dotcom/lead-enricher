@@ -11,7 +11,9 @@ from models.schemas import (
 )
 from services.enricher import enrich_company
 from services._utils import normalize_domain
+from services.importer import looks_like_domain
 from services.decision_finder import find_decision_makers
+from services.domain_finder import find_domain
 from services.lead_scorer import apply_score
 from middleware.auth import get_current_user, rate_limit_key
 from routers.auth import get_or_create_profile
@@ -146,7 +148,7 @@ def enrich(
 
 
 @router.post("/leads/{lead_id}/enrich", response_model=EnrichResponse)
-@limiter.limit("30/minute")
+@limiter.limit("120/minute")
 def enrich_existing_lead(
     request: Request,
     lead_id: int,
@@ -156,18 +158,42 @@ def enrich_existing_lead(
     """
     Enriquece um lead que já existe — na prática, os que vieram de planilha.
 
-    É o passo que a fila da tela de importação chama, um lead por requisição:
-    a coleta leva 10–30 s e o maxDuration da função na Vercel é 60 s. Consome
-    1 busca da cota, igual à busca manual.
+    É o passo que a fila da planilha chama, um lead por requisição: a coleta
+    leva 10–30 s e o maxDuration da função na Vercel é 60 s. O limite alto por
+    minuto existe para a fila poder rodar várias em paralelo; a cota do plano
+    continua sendo o freio real (1 busca por lead).
+
+    Sem domínio na linha, tenta descobrir pelo nome da empresa antes — é o
+    caso da maioria das planilhas de prospecção, que só têm nome e LinkedIn.
     """
     user_id = current_user.get("sub")
     lead = db.query(Lead).filter(Lead.id == lead_id, Lead.user_id == user_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
 
-    domain = lead.domain or normalize_domain(lead.raw_input_domain or "")
+    # raw_input_domain de linha importada guarda o nome da empresa quando não
+    # havia site — normalizar isso viraria um "domínio" inexistente
+    domain = lead.domain or ""
+    if not domain and looks_like_domain(lead.raw_input_domain or ""):
+        domain = normalize_domain(lead.raw_input_domain)
+    if not domain and lead.company_name:
+        found = find_domain(lead.company_name, lead.linkedin_url, lead.location)
+        if found["domain"] and found["confidence"] in ("high", "medium"):
+            domain = found["domain"]
+            lead.domain = domain
+            lead.website = f"https://{domain}"
+            if not lead.raw_input_domain:
+                lead.raw_input_domain = domain
+            db.commit()
+            logger.info("Domínio descoberto lead=%s domain=%s conf=%s",
+                        lead_id, domain, found["confidence"])
     if not domain:
-        raise HTTPException(status_code=422, detail="Lead sem domínio para enriquecer.")
+        lead.status = "failed"
+        db.commit()
+        raise HTTPException(
+            status_code=422,
+            detail="Não encontrei o site desta empresa. Preencha a coluna Domínio para enriquecer.",
+        )
 
     profile = get_or_create_profile(db, user_id)
     _check_quota(profile, db)

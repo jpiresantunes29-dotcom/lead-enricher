@@ -13,7 +13,7 @@ from models.database import init_db
 from middleware.auth import rate_limit_key
 from routers import (
     enrichment, leads, auth, billing, export, activities, dashboard,
-    integrations, crm_config, imports,
+    integrations, crm_config, imports, sheet,
 )
 
 # ── Logging estruturado ───────────────────────────────────────────────────────
@@ -79,6 +79,7 @@ app.include_router(dashboard.router)
 app.include_router(integrations.router)
 app.include_router(crm_config.router)
 app.include_router(imports.router)
+app.include_router(sheet.router)
 
 
 @app.get("/health", tags=["meta"])

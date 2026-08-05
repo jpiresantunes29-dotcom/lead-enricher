@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=16" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=17" />
 </head>
 <body class="app-body">
 
@@ -29,9 +29,9 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
       <span class="nav-lbl">Buscar</span>
     </button>
-    <button class="app-nav-btn" data-route="import" onclick="nav('import')" title="Importar planilha">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-      <span class="nav-lbl">Importar</span>
+    <button class="app-nav-btn" data-route="sheet" onclick="nav('sheet')" title="Planilha">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
+      <span class="nav-lbl">Planilha</span>
     </button>
     <button class="app-nav-btn" data-route="dashboard" onclick="nav('dashboard')" title="Dashboard">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
@@ -122,6 +122,20 @@
       <div id="error-banner" class="error-msg" style="display:none"></div>
       <div id="results-section"></div>
     </div>
+  </section>
+
+  <!-- ── VIEW: PLANILHA ── -->
+  <section class="view view--full" id="view-sheet">
+    <div class="view-head">
+      <div>
+        <h2>Planilha</h2>
+        <div class="view-head-sub">
+          Suas colunas do jeito que estão, mais as que o sistema descobre. Clique para selecionar,
+          digite para editar, Enter para salvar.
+        </div>
+      </div>
+    </div>
+    <div id="sheet-body"></div>
   </section>
 
   <!-- ── VIEW: IMPORTAR PLANILHA ── -->
@@ -292,6 +306,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="/static/js/app.js?v=16"></script>
+<script src="/static/js/app.js?v=17"></script>
+<script src="/static/js/sheet.js?v=17"></script>
 </body>
 </html>
