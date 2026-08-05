@@ -9,7 +9,7 @@
   <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=20" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=21" />
 </head>
 <body class="app-body">
 
@@ -34,6 +34,13 @@
       <span class="nav-txt">
         <span class="nav-lbl">Nova análise</span>
         <span class="nav-desc">Domínio → ficha completa</span>
+      </span>
+    </button>
+    <button class="app-nav-btn" data-route="lote" onclick="nav('lote')" title="Analisar uma lista inteira de domínios de uma vez">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Análise em lote</span>
+        <span class="nav-desc">Lista ou CSV de domínios</span>
       </span>
     </button>
     <button class="app-nav-btn" data-route="pipeline" onclick="nav('pipeline')" title="Acompanhar os leads por estágio de negociação">
@@ -244,6 +251,53 @@
     </section>
   </section>
 
+  <!-- ── VIEW: ANÁLISE EM LOTE ── -->
+  <section class="view" id="view-lote">
+    <div class="lote-layout">
+      <div class="panel panel-pad">
+        <div class="sp-head">
+          <span class="sp-step">Passo 1</span>
+          <h2 class="sp-title">Cole a lista ou solte um CSV</h2>
+          <p class="sp-sub">
+            Um domínio por linha, ou o CSV exportado do seu CRM — encontramos a coluna
+            do site sozinhos. Cada empresa consome uma análise da sua cota; as que você
+            já pesquisou nos últimos 7 dias saem do cache, de graça.
+          </p>
+        </div>
+
+        <textarea id="lote-input" class="lote-textarea" spellcheck="false"
+          placeholder="nubank.com.br&#10;stone.com.br&#10;rdstation.com"></textarea>
+
+        <div class="lote-actions">
+          <label class="set-btn ghost lote-file">
+            Escolher arquivo CSV
+            <input type="file" id="lote-file" accept=".csv,.txt,text/csv,text/plain" hidden />
+          </label>
+          <span class="lote-count" id="lote-count"></span>
+          <button class="set-btn primary" id="lote-start" onclick="iniciarLote()">
+            Analisar lista
+          </button>
+        </div>
+        <p id="lote-feedback" class="set-feedback"></p>
+      </div>
+
+      <div class="panel panel-pad" id="lote-progress-panel" style="display:none">
+        <div class="block-head">
+          <h3 id="lote-progress-title">Processando</h3>
+          <button class="btn-link" id="lote-stop" onclick="pararLote()">Pausar</button>
+        </div>
+        <div class="usage-track"><div class="usage-fill" id="lote-bar" style="width:0%"></div></div>
+        <p class="set-lbl" id="lote-progress-sub"></p>
+        <div class="lote-items" id="lote-items"></div>
+      </div>
+
+      <div class="panel panel-pad" id="lote-recent-panel" style="display:none">
+        <div class="block-head"><h3>Lotes recentes</h3></div>
+        <div id="lote-recent"></div>
+      </div>
+    </div>
+  </section>
+
   <!-- ── VIEW: DASHBOARD ── -->
   <section class="view" id="view-dashboard">
     <div class="view-note" id="dash-period">Últimos 30 dias</div>
@@ -416,6 +470,6 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=20"></script>
+<script src="/static/js/app.js?v=21"></script>
 </body>
 </html>

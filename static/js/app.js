@@ -205,7 +205,7 @@ function closePaywall(){document.getElementById('paywall-modal').classList.remov
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
-const ROUTES=['','dashboard','pipeline','followups','history','settings'];
+const ROUTES=['','lote','dashboard','pipeline','followups','history','settings'];
 
 function nav(route){
   if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
@@ -218,6 +218,10 @@ const VIEW_META={
   search:{
     title:'Nova análise',
     sub:'Digite o domínio da empresa e receba a ficha completa em segundos.',
+  },
+  lote:{
+    title:'Análise em lote',
+    sub:'Cole uma lista de domínios ou solte um CSV. Processamos em fila, sem você ficar esperando cada empresa.',
   },
   pipeline:{
     title:'Pipeline de prospecção',
@@ -272,7 +276,8 @@ function applyRoute(){
     return;
   }
   showView(h||'search');
-  if(h==='dashboard')loadDashboard();
+  if(h==='lote')loadLote();
+  else if(h==='dashboard')loadDashboard();
   else if(h==='pipeline')loadPipeline();
   else if(h==='followups')loadFollowups();
   else if(h==='history')loadHistory();
@@ -461,6 +466,151 @@ async function completeActivity(id){
     await authFetch(`/api/activities/${id}`,{method:'PATCH',body:JSON.stringify({completed:true})});
     loadFollowups();loadTodayFollowupsCount();
   }catch(_){}
+}
+
+/* ══════ VIEW: ANÁLISE EM LOTE ══════
+   O lote não roda sozinho no servidor: cada chamada de /run processa uma
+   rodada curta e devolve quantos faltam. Quem pede a próxima rodada é esta
+   tela — assim nenhuma requisição chega perto do limite de tempo da função, e
+   o progresso aparece de verdade em vez de um spinner de dois minutos. */
+let _loteId=null;      // lote em andamento
+let _loteRodando=false;
+
+function loadLote(){
+  atualizarContagemLote();
+  carregarLotesRecentes();
+}
+
+/* Conta quantos domínios plausíveis há no texto — feedback antes de enviar. */
+function contarDominios(texto){
+  const vistos=new Set();
+  (texto||'').split(/[\n,;\t|]+/).forEach(p=>{
+    const t=(p||'').trim().replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].toLowerCase();
+    if(t.includes('.')&&!t.includes(' '))vistos.add(t.includes('@')?t.split('@')[1]:t);
+  });
+  return vistos.size;
+}
+
+function atualizarContagemLote(){
+  const el=document.getElementById('lote-count');
+  const input=document.getElementById('lote-input');
+  if(!el||!input)return;
+  const n=contarDominios(input.value);
+  el.textContent=n?`${n} domínio(s) reconhecido(s)`:'';
+}
+
+async function iniciarLote(){
+  const input=document.getElementById('lote-input');
+  const fb=document.getElementById('lote-feedback');
+  const texto=(input.value||'').trim();
+  if(!texto){fb.className='set-feedback err';fb.textContent='Cole a lista ou escolha um arquivo.';return;}
+
+  const btn=document.getElementById('lote-start');
+  btn.disabled=true;fb.className='set-feedback';fb.textContent='Enfileirando…';
+  try{
+    const resp=await authFetch('/api/batches',{method:'POST',body:JSON.stringify({text:texto})});
+    const json=await resp.json();
+    if(!resp.ok){fb.className='set-feedback err';fb.textContent=json.detail||'Não foi possível criar o lote.';return;}
+
+    _loteId=json.batch_id;
+    fb.className='set-feedback ok';
+    fb.textContent=json.message+(json.cabe_na_quota?'':` Atenção: sua cota cobre ${json.quota_restante} análise(s) neste ciclo; o restante fica na fila até a renovação.`);
+    document.getElementById('lote-progress-panel').style.display='block';
+    renderProgressoLote(json.progresso||{total:json.total,concluidos:0,na_fila:json.total,rodando:0,com_erro:0,finalizado:false,itens:[]});
+    processarLote();
+  }catch(e){
+    if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}
+  }finally{btn.disabled=false;}
+}
+
+/* Pede rodadas em sequência até a fila esvaziar (ou o usuário pausar). */
+async function processarLote(){
+  if(!_loteId||_loteRodando)return;
+  _loteRodando=true;
+  document.getElementById('lote-stop').textContent='Pausar';
+  try{
+    while(_loteRodando&&_loteId){
+      const resp=await authFetch(`/api/batches/${_loteId}/run`,{method:'POST'});
+      if(!resp.ok)break;
+      const json=await resp.json();
+      renderProgressoLote(json.progresso);
+      loadProfile();                       // a cota muda a cada rodada
+      if(json.quota_reached){
+        const fb=document.getElementById('lote-feedback');
+        fb.className='set-feedback err';
+        fb.textContent='Sua cota deste ciclo acabou. Os domínios restantes continuam na fila e retomam quando a cota renovar.';
+        break;
+      }
+      if(json.progresso.finalizado||json.remaining===0)break;
+    }
+  }catch(_){ }
+  finally{
+    _loteRodando=false;
+    document.getElementById('lote-stop').textContent='Retomar';
+    carregarLotesRecentes();
+  }
+}
+
+function pararLote(){
+  if(_loteRodando){_loteRodando=false;return;}
+  processarLote();
+}
+
+const LOTE_RESULT_LABEL={
+  enriched:['Enriquecido','ok'],partial:['Parcial','warn'],cached:['Já tínhamos','ok'],
+  failed:['Sem dados','warn'],error:['Erro','err'],quota:['Aguardando cota','warn'],
+};
+
+function renderProgressoLote(p){
+  if(!p)return;
+  const pct=p.total?Math.round((p.concluidos/p.total)*100):0;
+  document.getElementById('lote-bar').style.width=pct+'%';
+  document.getElementById('lote-progress-title').textContent=
+    p.finalizado?'Lote concluído':`Processando — ${p.concluidos} de ${p.total}`;
+  document.getElementById('lote-progress-sub').textContent=
+    `${p.na_fila} na fila · ${p.com_erro} com erro`+(p.finalizado?' · nada mais pendente':'');
+
+  const itens=document.getElementById('lote-items');
+  itens.innerHTML=(p.itens||[]).map(item=>{
+    const [rotulo,classe]=LOTE_RESULT_LABEL[item.result]||
+      (item.status==='running'?['Analisando…','']:['Na fila','']);
+    const link=item.lead_id?`<button class="btn-link" onclick="loadLeadIntoView(${item.lead_id})">ver ficha →</button>`:'';
+    return `<div class="lote-item">
+      <span class="lote-item-dom">${esc(item.domain||'')}</span>
+      <span class="lote-item-st ${classe}">${rotulo}</span>
+      ${link}
+    </div>`;
+  }).join('');
+}
+
+async function carregarLotesRecentes(){
+  const painel=document.getElementById('lote-recent-panel');
+  const alvo=document.getElementById('lote-recent');
+  if(!alvo)return;
+  try{
+    const resp=await authFetch('/api/batches');
+    if(!resp.ok)return;
+    const lotes=await resp.json();
+    if(!lotes.length){painel.style.display='none';return;}
+    painel.style.display='block';
+    alvo.innerHTML=lotes.map(l=>{
+      const retomar=l.finalizado?'':`<button class="btn-link" onclick="retomarLote('${l.batch_id}')">retomar →</button>`;
+      return `<div class="set-row">
+        <span class="set-lbl">${l.total} domínio(s) · ${l.concluidos} concluído(s)${l.com_erro?` · ${l.com_erro} com erro`:''}</span>
+        <span class="set-val">${l.finalizado?'finalizado':`${l.na_fila} na fila`} ${retomar}</span>
+      </div>`;
+    }).join('');
+  }catch(_){ }
+}
+
+async function retomarLote(batchId){
+  _loteId=batchId;
+  document.getElementById('lote-progress-panel').style.display='block';
+  try{
+    const resp=await authFetch(`/api/batches/${batchId}`);
+    if(resp.ok)renderProgressoLote(await resp.json());
+  }catch(_){ }
+  processarLote();
 }
 
 /* ══════ VIEW: DASHBOARD ══════ */
@@ -1580,6 +1730,20 @@ document.addEventListener('keydown',e=>{
 /* ══════ INIT ══════ */
 document.addEventListener('DOMContentLoaded',async()=>{
   document.getElementById('domain-input').addEventListener('keydown',e=>{if(e.key==='Enter')enrich();});
+
+  // Lote: contagem ao digitar e leitura do CSV no próprio navegador (o
+  // servidor recebe texto, não arquivo — uma dependência a menos).
+  document.getElementById('lote-input')?.addEventListener('input',atualizarContagemLote);
+  document.getElementById('lote-file')?.addEventListener('change',ev=>{
+    const arquivo=ev.target.files&&ev.target.files[0];
+    if(!arquivo)return;
+    const leitor=new FileReader();
+    leitor.onload=()=>{
+      document.getElementById('lote-input').value=String(leitor.result||'');
+      atualizarContagemLote();
+    };
+    leitor.readAsText(arquivo);
+  });
 
   // domínio vindo da landing (/app?domain=…) — pré-preenche e foca
   const _qDomain=new URLSearchParams(window.location.search).get('domain');
