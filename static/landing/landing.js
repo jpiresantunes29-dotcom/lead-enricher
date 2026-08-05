@@ -109,18 +109,19 @@ function initCounters() {
 async function initFooterStatus() {
   const el = document.getElementById('footer-status');
   if (!el) return;
+  const label = el.querySelector('.status-label');
   try {
     const r = await fetch('/health');
     const j = await r.json();
     if (j.status === 'ok') {
-      el.textContent = '● all systems operational';
+      if (label) label.textContent = 'all systems operational';
       el.classList.add('ok');
       return;
     }
   } catch {
     /* offline / erro — cai no fallback abaixo */
   }
-  el.textContent = '● status indisponível';
+  if (label) label.textContent = 'status indisponível';
 }
 
 // ── Boot ───────────────────────────────────────────────────────────

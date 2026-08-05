@@ -141,7 +141,6 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 }
 .view-head h2{font-size:22px;font-weight:700;letter-spacing:-.5px}
 .view-head-sub{font-size:12.5px;color:var(--text-3);margin-top:3px}
-.view-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 
 .panel{
   background:var(--bg-2);border:1px solid var(--border);
@@ -160,10 +159,13 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 
 /* Botões utilitários das views */
 .ghost-btn{
+  display:inline-flex;align-items:center;gap:6px;
   font-size:12px;font-weight:600;color:var(--text-2);
   padding:6px 12px;border-radius:7px;border:1px solid var(--border);
+  background:var(--bg-2);
   transition:all .15s;white-space:nowrap;
 }
+.ghost-btn svg{flex-shrink:0;opacity:.75}
 .ghost-btn:hover{border-color:var(--accent-border);color:var(--accent)}
 
 /* ══════════════ VIEW: BUSCAR ══════════════ */
@@ -303,11 +305,13 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 .data-val.link{color:var(--accent)}
 .data-val.link:hover{text-decoration:underline}
 .conf-badge{
-  display:inline-block;font-size:10px;font-weight:700;
-  padding:1px 6px;border-radius:4px;margin-left:4px;
+  display:inline-flex;align-items:center;justify-content:center;
+  font-size:10px;font-weight:700;
+  padding:2px 6px;border-radius:4px;margin-left:4px;
   font-family:'JetBrains Mono',monospace;
   align-self:flex-start;   /* não estica dentro do .data-cell (flex column) */
 }
+.conf-badge svg{display:block}
 .conf-badge.verified{background:var(--ok-bg);color:var(--ok)}
 .conf-badge.probable{background:var(--warn-bg);color:var(--warn)}
 .conf-badge.unverified{background:var(--err-bg);color:var(--err)}
@@ -366,7 +370,7 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 }
 .dns-report summary::-webkit-details-marker{display:none}
 .dns-report summary:hover{color:var(--text)}
-.dns-tog{font-size:16px;line-height:1;transition:transform .2s;color:var(--text-3)}
+.dns-tog{display:inline-flex;transition:transform .2s;color:var(--text-3)}
 .dns-report[open] .dns-tog{transform:rotate(180deg)}
 .dns-body{padding:0 26px 24px;display:flex;flex-direction:column;gap:20px}
 .dns-sec h4{
@@ -388,13 +392,12 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 
 /* ── Decisores ── */
 .dec-section{padding:26px;border-top:1px solid var(--border)}
-.dec-title{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;margin-bottom:6px;letter-spacing:-.02em}
+.dec-title{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;margin-bottom:16px;letter-spacing:-.02em}
 .dec-icon{
   width:24px;height:24px;border-radius:6px;flex-shrink:0;
   background:var(--accent-bg);border:1px solid var(--accent-border);
   display:flex;align-items:center;justify-content:center;color:var(--accent);
 }
-.dec-sub{font-size:13px;color:var(--text-2);margin-bottom:18px;line-height:1.5}
 .role-irow{display:flex;gap:8px;margin-bottom:12px}
 .role-inp{
   flex:1;min-width:0;padding:10px 14px;
@@ -588,9 +591,10 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 .kb-prio.prio-baixa{background:var(--info-bg);color:var(--info)}
 .kb-card-actions{display:flex;justify-content:space-between;margin-top:8px}
 .kb-move{
-  font-size:14px;line-height:1;color:var(--text-3);
+  display:inline-flex;align-items:center;justify-content:center;
+  color:var(--text-3);
   border:1px solid var(--border);border-radius:6px;
-  padding:2px 9px;transition:all .15s;
+  padding:4px 8px;transition:all .15s;
 }
 .kb-move:hover{color:var(--accent);border-color:var(--accent-border)}
 .kb-empty{font-size:12px;color:var(--text-3);text-align:center;padding:14px 0}
@@ -629,23 +633,35 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 }
 .hist-filter:focus{border-color:var(--accent)}
 .hist-filter::placeholder{color:var(--text-3)}
+
+/* Barra de ferramentas do painel (filtro + ações), acoplada ao card */
+.panel-toolbar{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  padding:13px 20px;border-bottom:1px solid var(--border);
+  background:var(--surface);
+}
+.panel-toolbar-meta{font-size:12px;font-weight:600;color:var(--text-3);white-space:nowrap}
+.panel-toolbar-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+
 /* Tabela de leads (padrão SaaS B2B) */
 .tbl-scroll{overflow-x:auto}
 .lead-tbl{width:100%;border-collapse:collapse;font-size:13px}
 .lead-tbl th{
-  text-align:left;padding:10px 14px;white-space:nowrap;
+  text-align:left;padding:9px 14px;white-space:nowrap;
   font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
   color:var(--text-3);background:var(--surface);
   border-bottom:1px solid var(--border);
 }
 .lead-tbl th:first-child{padding-left:20px}
 .th-sort{
+  display:inline-flex;align-items:center;gap:3px;
   font-size:inherit;font-weight:inherit;text-transform:inherit;letter-spacing:inherit;
   color:inherit;padding:0;transition:color .15s;white-space:nowrap;
 }
+.th-sort svg{flex-shrink:0;opacity:.7}
 .th-sort:hover,.th-sort.on{color:var(--accent)}
 .lead-tbl td{
-  padding:10px 14px;border-bottom:1px solid var(--border);
+  padding:8px 14px;border-bottom:1px solid var(--border);
   vertical-align:middle;white-space:nowrap;
 }
 .lead-tbl td:first-child{padding-left:20px}
@@ -668,6 +684,7 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 }
 .td-actions{display:flex;gap:6px;align-items:center}
 .hist-btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:5px;
   font-size:11.5px;font-weight:600;
   padding:5px 11px;border-radius:6px;
   border:1px solid var(--border);color:var(--text-3);
@@ -676,7 +693,8 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
 .hist-btn:hover{border-color:var(--border-2);color:var(--text)}
 .hist-btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700}
 .hist-btn.primary:hover{background:var(--accent-h)}
-.hist-btn.danger:hover{border-color:var(--err-border);color:var(--err)}
+.hist-btn.danger:hover{border-color:var(--err-border);color:var(--err);background:var(--err-bg)}
+.hist-btn.icon{padding:5px;width:26px;height:26px;flex:none}
 
 /* ══════════════ VIEW: CONFIGURAÇÕES ══════════════ */
 .set-grid{display:flex;flex-direction:column;gap:16px}
@@ -917,7 +935,6 @@ button.app-quota-badge:hover{border-color:var(--accent-border);color:var(--accen
   .fn-lbl{width:96px;font-size:11.5px}
   .view-head{align-items:flex-start;flex-direction:column}
   .hist-filter{width:100%}
-  .view-actions{width:100%}
   .modal{padding:28px 22px}
 }
 @media(max-width:480px){
