@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class EnrichRequest(BaseModel):
@@ -10,6 +10,48 @@ class EnrichRequest(BaseModel):
 class DecisoresRequest(BaseModel):
     lead_id: int
     roles: List[str]
+
+
+class MXRecord(BaseModel):
+    """Versão enriquecida do registro MX (estilo DNS Dumpster)."""
+    priority: int
+    host: str
+    ip: Optional[str] = None
+    asn: Optional[str] = None
+    asn_org: Optional[str] = None
+    country: Optional[str] = None
+
+
+class DNSReport(BaseModel):
+    domain: str
+    mx: List[MXRecord] = []
+    a: List[str] = []
+    aaaa: List[str] = []
+    ns: List[str] = []
+    txt: List[str] = []
+    spf: Optional[str] = None
+    dmarc: Optional[str] = None
+    dkim_records: List[str] = []
+    verifications: List[Dict[str, Any]] = []
+    soa: Optional[Dict[str, Any]] = None
+    mx_provider: Optional[str] = None
+    mx_provider_confidence: str = "none"
+    hosting_provider: Optional[str] = None
+    hosting_confidence: str = "none"
+
+
+class EmployeeCount(BaseModel):
+    raw: Optional[str] = None
+    min: Optional[int] = None
+    max: Optional[int] = None
+    band: Optional[str] = None
+    exact: Optional[int] = None
+    source: Optional[str] = None
+
+
+class ProbableEmail(BaseModel):
+    email: str
+    status: str  # valid | catch_all | invalid | unknown
 
 
 class DecisionMakerOut(BaseModel):
@@ -49,29 +91,13 @@ class LeadOut(BaseModel):
     corporate_email: Optional[str] = None
     phone: Optional[str] = None
     status: str
+    score: Optional[int] = None
+    priority: Optional[str] = None
+    score_breakdown: Optional[List[Dict[str, Any]]] = None
+    score_version: Optional[str] = None
     stage: Optional[str] = "novo"
     ai_summary: Optional[str] = None
     created_at: datetime
-
-
-class LeadListOut(LeadOut):
-    """
-    Ficha na listagem: sem o relatório DNS.
-
-    O relatório completo (hosts, TXT, registros) fica guardado dentro de
-    `dns_report` e chega a dezenas de KB por lead — cem deles na tela do
-    Histórico seriam megabytes que nenhuma coluna da tabela usa. A ficha
-    individual (`GET /api/leads/{id}`) continua devolvendo tudo.
-    """
-    dns_report: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
-    mx_records: Optional[List[Any]] = Field(default=None, exclude=True)
-
-
-class DnsReportResponse(BaseModel):
-    success: bool
-    cached: bool = False
-    report: Optional[Dict[str, Any]] = None
-    message: Optional[str] = None
 
 
 class EnrichResponse(BaseModel):
@@ -84,6 +110,9 @@ class DecisoresResponse(BaseModel):
     success: bool
     message: str
     decisores: List[DecisionMakerOut] = []
+    # Score recalculado após a busca (sinais de decisor mudam o score)
+    lead_score: Optional[int] = None
+    lead_priority: Optional[str] = None
 
 
 # ── Execução comercial ────────────────────────────────────────────────────────
@@ -127,200 +156,104 @@ class StageUpdate(BaseModel):
     stage: str
 
 
-# ── Extensão / Contact Intelligence ──────────────────────────────────────────
+# ── Importação de planilha ────────────────────────────────────────────────────
 
-class ExtensionPairRequest(BaseModel):
-    code: str
-    device_label: Optional[str] = None
-
-
-class ResolveRequest(BaseModel):
-    """Contexto capturado do DOM da página que o usuário abriu no LinkedIn."""
-    linkedin_url: Optional[str] = None
-    linkedin_slug: Optional[str] = None
-    full_name: Optional[str] = None
-    headline: Optional[str] = None
-    title: Optional[str] = None
-    company_name: Optional[str] = None
-    company_domain: Optional[str] = None
-    company_linkedin_slug: Optional[str] = None
-    location: Optional[str] = None
-    photo_url: Optional[str] = None
-    # true = pode usar rede para descobrir o domínio da empresa (mais lento)
-    deep: bool = False
+class SheetColumn(BaseModel):
+    """Coluna da planilha, na ordem original do arquivo."""
+    label: str                        # rótulo exato do cabeçalho ("📩 Email")
+    field: Optional[str] = None       # campo do Lead que ela alimenta, se houver
+    kind: str = "text"                # text | number | date | bool
 
 
-class ContactPreview(BaseModel):
-    masked: Optional[str] = None
-    has: bool = False
-    confidence: int = 0
-    status: Optional[str] = None
-    is_company_phone: Optional[bool] = None
+class SheetSummary(BaseModel):
+    name: str
+    rows: int = 0
+    columns: int = 0
+    mapped_fields: List[str] = []
+    score: int = 0
 
 
-class ResolveResponse(BaseModel):
-    person_id: Optional[int] = None
-    full_name: Optional[str] = None
-    title: Optional[str] = None
-    seniority: Optional[str] = None
-    department: Optional[str] = None
-    company_name: Optional[str] = None
-    company_domain: Optional[str] = None
-    domain_confidence: Optional[int] = None
-    linkedin_url: Optional[str] = None
-    email: ContactPreview = ContactPreview()
-    phone: ContactPreview = ContactPreview()
-    known_pattern: bool = False
-    likely_findable: bool = False
-    already_revealed: bool = False
-    credits_cost: int = 1
-    credits_left: Optional[int] = None
-    blocked: bool = False
-    needs_domain: bool = False
+class ImportRowOut(BaseModel):
+    """Linha lida do arquivo, com diagnóstico e todas as células preservadas."""
+    row_number: int
+    status: str                       # ok | invalid | duplicate_file | duplicate_db
+    reason: Optional[str] = None
+    cells: Dict[str, Any] = {}
+    lead: Dict[str, Any] = {}
 
 
-class RevealRequest(BaseModel):
-    person_id: Optional[int] = None
-    linkedin_slug: Optional[str] = None
-    kind: str = "both"        # email | phone | both
-    company_domain: Optional[str] = None
-
-
-class RevealedEmail(BaseModel):
-    email: str
-    status: Optional[str] = None
-    confidence: int = 0
-    source: Optional[str] = None
-    pattern: Optional[str] = None
-
-
-class RevealedPhone(BaseModel):
-    e164: str
-    formatted: Optional[str] = None
-    type: Optional[str] = None
-    confidence: int = 0
-    source: Optional[str] = None
-    is_company_phone: bool = False
-
-
-class RevealResponse(BaseModel):
+class ImportPreviewResponse(BaseModel):
     success: bool
     message: str
-    person_id: Optional[int] = None
-    full_name: Optional[str] = None
-    title: Optional[str] = None
-    company_name: Optional[str] = None
-    company_domain: Optional[str] = None
-    emails: List[RevealedEmail] = []
-    phones: List[RevealedPhone] = []
-    company_phone: Optional[str] = None
-    credits_charged: int = 0
-    credits_left: Optional[int] = None
-    from_cache: bool = False
-    chain: List[str] = []
-
-
-class CompanyContextRequest(BaseModel):
-    domain: Optional[str] = None
-    company_name: Optional[str] = None
-    linkedin_slug: Optional[str] = None
-    deep: bool = False
-
-
-class CompanyPersonOut(BaseModel):
-    person_id: int
-    full_name: Optional[str] = None
-    title: Optional[str] = None
-    seniority: Optional[str] = None
-    linkedin_url: Optional[str] = None
-    source: Optional[str] = None
-    email_preview: Optional[str] = None
-    has_email: bool = False
-    has_phone: bool = False
-
-
-class CompanyContextResponse(BaseModel):
-    domain: Optional[str] = None
-    name: Optional[str] = None
-    sector: Optional[str] = None
-    location: Optional[str] = None
-    cnpj: Optional[str] = None
-    razao_social: Optional[str] = None
-    situacao: Optional[str] = None
-    porte: Optional[str] = None
-    phones: List[Dict[str, Any]] = []
-    main_email: Optional[str] = None
-    email_pattern: Optional[str] = None
-    pattern_confidence: int = 0
-    employee_count: Optional[Any] = None
-    people: List[CompanyPersonOut] = []
-    lead_id: Optional[int] = None
-
-
-class SaveRequest(BaseModel):
-    person_id: int
-    lead_id: Optional[int] = None
-    note: Optional[str] = None
-
-
-class ReportRequest(BaseModel):
-    person_id: Optional[int] = None
-    kind: str                      # email | phone | linkedin
-    value: Optional[str] = None
-    reason: Optional[str] = None
-
-
-# ── Enriquecimento em lote ───────────────────────────────────────────────────
-
-class BatchCreateRequest(BaseModel):
-    """Aceita a lista pronta ou o texto cru (CSV colado, uma coluna, URLs)."""
-    domains: Optional[List[str]] = None
-    text: Optional[str] = None
-
-
-class BatchCreateResponse(BaseModel):
     batch_id: str
-    total: int
-    ignorados: int = 0
-    quota_restante: Optional[int] = None
-    cabe_na_quota: bool = True
+    filename: str
+    sheet: str
+    sheets: List[SheetSummary] = []
+    columns: List[SheetColumn] = []
+    total_rows: int = 0
+    importable: int = 0
+    counts: Dict[str, int] = {}
+    truncated: bool = False
+    rows: List[ImportRowOut] = []     # só as primeiras linhas, para conferência
+
+
+class ImportCommitRequest(BaseModel):
+    skip_existing: bool = True        # pula empresas que já estão no histórico
+    skip_duplicates: bool = False     # pula linhas repetidas dentro do arquivo
+
+
+class ImportCommitResponse(BaseModel):
+    success: bool
     message: str
-
-
-class BatchItemOut(BaseModel):
-    domain: Optional[str] = None
-    status: str
-    result: Optional[str] = None
-    lead_id: Optional[int] = None
-    error: Optional[str] = None
-
-
-class BatchProgressOut(BaseModel):
     batch_id: str
-    total: int
-    concluidos: int
-    na_fila: int
-    rodando: int
-    com_erro: int
-    finalizado: bool
-    itens: List[BatchItemOut] = []
+    created: int = 0
+    skipped: int = 0
 
 
-class BatchRunResponse(BaseModel):
-    processed: int
-    done: int
-    failed: int
-    quota_reached: bool
-    remaining: int
-    elapsed_ms: int
-    progresso: BatchProgressOut
+class ImportBatchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: Optional[str] = None
+    sheet_name: Optional[str] = None
+    row_count: int = 0
+    enriched_count: int = 0
+    created_at: datetime
 
 
-class OptOutRequest(BaseModel):
-    """Pedido público de remoção (LGPD art. 18). Não exige conta."""
-    kind: str                      # email | phone | linkedin
-    value: str
-    # Canal de confirmação. Para kind="email" é o próprio valor; para telefone
-    # e LinkedIn é obrigatório, porque nenhum pedido vale sem confirmação.
-    contact_email: Optional[str] = None
-    reason: Optional[str] = None
+# ── Planilha (grid dentro do sistema) ────────────────────────────────────────
+
+class SheetRowOut(BaseModel):
+    """Uma linha do grid: id do lead + valores por rótulo de coluna."""
+    id: int
+    sheet_row: Optional[int] = None
+    status: str
+    values: Dict[str, Any] = {}
+
+
+class SheetResponse(BaseModel):
+    batch: Optional[ImportBatchOut] = None
+    batches: List[ImportBatchOut] = []
+    columns: List[SheetColumn] = []
+    system_columns: List[SheetColumn] = []
+    rows: List[SheetRowOut] = []
+    total: int = 0
+    page: int = 1
+    per_page: int = 100
+    enrichable: int = 0               # linhas ainda não enriquecidas
+    pending_ids: List[int] = []       # ids da fila, respeitando busca/filtro
+
+
+class CellUpdate(BaseModel):
+    lead_id: int
+    column: str
+    value: Optional[Any] = None
+
+
+class SheetRowCreate(BaseModel):
+    batch_id: Optional[str] = None
+    values: Dict[str, Any] = {}
+
+
+class SheetRowsDelete(BaseModel):
+    ids: List[int]

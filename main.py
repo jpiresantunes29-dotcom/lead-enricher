@@ -14,8 +14,10 @@ from sqlalchemy.orm import Session
 
 from models.database import get_db, init_db, schema_status
 from middleware.auth import demo_mode_enabled, jwt_configured, rate_limit_key
-from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
-from routers import batch, extension, internal, privacy
+from routers import (
+    enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config,
+    imports, sheet, batch, extension, internal, privacy
+)
 from routers import dns_intel as dns_intel_router
 from routers import seo as seo_router
 from services import guides, seo
@@ -163,11 +165,16 @@ app.include_router(activities.router)
 app.include_router(dashboard.router)
 app.include_router(integrations.router)
 app.include_router(crm_config.router)
+<<<<<<< HEAD
 app.include_router(batch.router)
 app.include_router(extension.router)
 app.include_router(internal.router)
 app.include_router(privacy.router)
 app.include_router(seo_router.router)
+=======
+app.include_router(imports.router)
+app.include_router(sheet.router)
+>>>>>>> claude/company-spreadsheet-import-8jpomo
 
 
 @app.get("/health", tags=["meta"])
