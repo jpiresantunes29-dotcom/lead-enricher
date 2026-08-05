@@ -19,6 +19,14 @@ from routers import (
     imports, sheet
 )
 
+# Stub para seo enquanto há dependências quebradas
+class _SEO:
+    FAQ = []
+    def context(self, request, path):
+        return {}
+
+seo = _SEO()
+
 # ── Logging estruturado ───────────────────────────────────────────────────────
 logging.config.dictConfig({
     "version": 1,
