@@ -289,15 +289,6 @@ section > *{max-width:var(--max-w);margin-left:auto;margin-right:auto}
 .jv-ok{color:var(--ok)}
 .jv-brand{color:var(--brand)}
 .jv-dim{color:var(--text-3)}
-.journey-visual--score{text-align:center}
-.jv-score{font-size:54px;color:var(--brand);font-weight:500;line-height:1.1}
-.jv-score small{font-size:18px;color:var(--text-3)}
-.jv-stamp{
-  display:inline-block;margin:10px 0 12px;padding:5px 16px;border-radius:6px;
-  border:2px solid var(--ember);color:var(--ember);
-  font-weight:700;font-size:13px;letter-spacing:.08em;
-  transform:rotate(-3deg);
-}
 @media(max-width:980px){.journey-stage{grid-template-columns:1fr;gap:22px}}
 
 /* Modo pinned (classe adicionada por fx/journey.js no desktop) */

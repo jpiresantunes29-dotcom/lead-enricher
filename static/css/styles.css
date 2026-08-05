@@ -376,6 +376,10 @@ body{
   border-top:1px solid var(--border);padding-top:12px;
 }
 
+/* Volta ao estado inicial — só faz sentido com uma ficha aberta */
+.sp-clear{display:none;align-self:flex-start}
+.has-result .sp-clear{display:inline-flex}
+
 /* Estado com resultado: o formulário encolhe e o apoio sai de cena */
 .has-result .search-aside{display:none}
 .has-result .search-layout{grid-template-columns:1fr}
