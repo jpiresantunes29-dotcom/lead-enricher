@@ -90,6 +90,25 @@ def apply_rules(
     return derived
 
 
+def _ics_escape(value: str) -> str:
+    """
+    Escapa um valor de texto conforme a RFC 5545 §3.3.11.
+
+    Barra invertida, ponto e vírgula e vírgula têm significado no formato, e
+    quebra de linha encerra a propriedade: uma nota com Enter no meio partia o
+    VEVENT e gerava um convite que o Outlook recusa a abrir.
+    """
+    return (
+        (value or "")
+        .replace("\\", "\\\\")
+        .replace(";", "\\;")
+        .replace(",", "\\,")
+        .replace("\r\n", "\\n")
+        .replace("\r", "\\n")
+        .replace("\n", "\\n")
+    )
+
+
 def build_ics(activity: Activity, lead: Lead) -> str:
     """
     Gera um convite .ics (VCALENDAR) para uma atividade com due_at.
@@ -102,12 +121,12 @@ def build_ics(activity: Activity, lead: Lead) -> str:
     stamp = datetime.now(UTC)
 
     def fmt(dt: datetime) -> str:
-        return dt.strftime("%Y%m%dT%H%M%SZ")
+        return dt.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
     company = lead.company_name or lead.domain or "lead"
     kind = "Reunião" if activity.type == "meeting" else "Follow-up"
-    summary = f"{kind} — {company}"
-    description = (activity.notes or "").replace("\n", "\\n")
+    summary = _ics_escape(f"{kind} — {company}")
+    description = _ics_escape(activity.notes or "")
 
     return "\r\n".join([
         "BEGIN:VCALENDAR",

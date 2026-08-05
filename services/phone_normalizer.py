@@ -17,6 +17,19 @@ from phonenumbers import PhoneNumberFormat, PhoneNumberType
 from typing import List, Optional
 
 
+# Faixas brasileiras SEM DDD: 0800 (grátis), 0300/4004 (custo compartilhado),
+# 0900 (tarifado) e números de rede corporativa. Tratá-las como DDD+número é o
+# que transformava "0800 887 0463" em "+55 80 0887 0463" — um DDD 80 que não
+# existe, exibido na ficha como se fosse o telefone da empresa.
+_NON_GEOGRAPHIC_TYPES = {
+    PhoneNumberType.TOLL_FREE,
+    PhoneNumberType.PREMIUM_RATE,
+    PhoneNumberType.SHARED_COST,
+    PhoneNumberType.UAN,
+    PhoneNumberType.VOIP,
+}
+
+
 def _format_pretty(num: phonenumbers.PhoneNumber) -> str:
     """
     Formata como +DDI DDD [9] XXXX XXXX (estilo brasileiro espaçado).
@@ -29,6 +42,12 @@ def _format_pretty(num: phonenumbers.PhoneNumber) -> str:
     pretty = intl.replace("-", " ")
 
     if region == "BR":
+        if phonenumbers.number_type(num) in _NON_GEOGRAPHIC_TYPES:
+            # 0800/0300/4004 se discam como estão, com o prefixo nacional —
+            # é assim que aparecem no site da empresa e é assim que o vendedor
+            # vai digitar no telefone.
+            return phonenumbers.format_number(num, PhoneNumberFormat.NATIONAL).replace("-", " ")
+
         # Garantir agrupamento celular: "+55 11 9 8888 7777"
         digits = re.sub(r"\D", "", phonenumbers.format_number(num, PhoneNumberFormat.E164))
         # E.164 BR: 55 + DDD(2) + número(8 fixo ou 9 móvel)
@@ -51,6 +70,8 @@ def _classify_type(num: phonenumbers.PhoneNumber) -> str:
         PhoneNumberType.FIXED_LINE_OR_MOBILE: "fixed_or_mobile",
         PhoneNumberType.TOLL_FREE: "toll_free",
         PhoneNumberType.PREMIUM_RATE: "premium",
+        PhoneNumberType.SHARED_COST: "shared_cost",
+        PhoneNumberType.UAN: "uan",
         PhoneNumberType.VOIP: "voip",
     }.get(t, "unknown")
 
@@ -115,13 +136,15 @@ def pick_best_phone(text: str, html: Optional[str] = None, default_region: str =
     if not candidates:
         return None
 
-    # Móvel primeiro
-    for c in candidates:
-        if c["type"] == "mobile":
-            return c["formatted"]
-    # Fixo
-    for c in candidates:
-        if c["type"] in ("fixed_line", "fixed_or_mobile"):
-            return c["formatted"]
+    # Ordem de preferência comercial: quem atende uma ligação de vendedor.
+    # Central 0800 fica atrás do telefone direto — atende, mas cai em URA.
+    for wanted in (
+        ("mobile",),
+        ("fixed_line", "fixed_or_mobile"),
+        ("toll_free", "shared_cost", "uan", "voip"),
+    ):
+        for c in candidates:
+            if c["type"] in wanted:
+                return c["formatted"]
     # Qualquer válido
     return candidates[0]["formatted"]
