@@ -1,3 +1,4 @@
+import logging
 import os
 from datetime import datetime, UTC
 
@@ -23,6 +24,22 @@ engine = create_engine(DATABASE_URL, connect_args=_connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
+logger = logging.getLogger(__name__)
+
+
+def utcnow() -> datetime:
+    """
+    Agora, em UTC e com fuso explícito.
+
+    Todo timestamp do sistema nasce daqui e toda coluna de data é
+    `DateTime(timezone=True)`. Misturar datetime com e sem fuso é o tipo de
+    erro que só aparece em produção: no Postgres a data naive é interpretada
+    no fuso da sessão e o follow-up cai na hora errada; no SQLite as duas
+    formas viram strings de formatos diferentes e a comparação passa a
+    ordenar texto, não tempo.
+    """
+    return datetime.now(UTC)
+
 
 class Profile(Base):
     __tablename__ = "profiles"
@@ -35,16 +52,16 @@ class Profile(Base):
     reveals_used = Column(Integer, nullable=False, default=0)
     reveals_limit = Column(Integer, nullable=False, default=5)
     stripe_customer_id = Column(String(255), nullable=True)
-    quota_reset_at = Column(DateTime, nullable=True)  # próximo reset mensal
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    quota_reset_at = Column(DateTime(timezone=True), nullable=True)  # próximo reset mensal
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class StripeEvent(Base):
     __tablename__ = "stripe_events"
 
     id = Column(String(255), primary_key=True)  # Stripe event ID — garante idempotência
-    processed_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    processed_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Lead(Base):
@@ -78,7 +95,7 @@ class Lead(Base):
     stage = Column(String(20), nullable=False, default="novo")
     # Fase 5 — resumo executivo gerado por IA (cacheado)
     ai_summary = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
     decision_makers = relationship("DecisionMaker", back_populates="lead", cascade="all, delete-orphan")
     activities = relationship("Activity", back_populates="lead", cascade="all, delete-orphan")
@@ -97,7 +114,7 @@ class DecisionMaker(Base):
     probable_emails = Column(JSON)  # lista de {email, status}
     match_confidence = Column(String(20))  # high | medium | low
     phone = Column(String(100))
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
     lead = relationship("Lead", back_populates="decision_makers")
 
@@ -115,9 +132,9 @@ class Activity(Base):
     type = Column(String(20), nullable=False)   # call | email | meeting | note | task
     outcome = Column(String(30), nullable=True)  # no_answer | busy | voicemail | talked | meeting_scheduled
     notes = Column(Text, nullable=True)
-    due_at = Column(DateTime, nullable=True)       # follow-ups e reuniões
-    completed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    due_at = Column(DateTime(timezone=True), nullable=True)       # follow-ups e reuniões
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
     lead = relationship("Lead", back_populates="activities")
 
@@ -146,9 +163,9 @@ class Company(Base):
     main_email = Column(String(255))
     emails = Column(JSON)                # e-mails vistos no domínio (alimenta padrão)
     cnpj_data = Column(JSON)             # recorte público da Receita (razão social, QSA...)
-    enriched_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    enriched_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     persons = relationship("Person", back_populates="company")
 
@@ -174,8 +191,8 @@ class Person(Base):
     location = Column(String(255))
     photo_url = Column(String(1000))
     source = Column(String(40))          # linkedin_dom|search|cnpj_qsa|site|manual
-    last_seen_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    last_seen_at = Column(DateTime(timezone=True), default=utcnow)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
     company = relationship("Company", back_populates="persons")
     emails = relationship("PersonEmail", back_populates="person", cascade="all, delete-orphan")
@@ -194,8 +211,8 @@ class PersonEmail(Base):
     confidence = Column(Integer, default=0)         # 0-100
     source = Column(String(40))                     # pattern|site|smtp|hunter|cnpj
     pattern = Column(String(50), nullable=True)     # padrão que gerou o palpite
-    verified_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
     person = relationship("Person", back_populates="emails")
 
@@ -211,8 +228,8 @@ class PersonPhone(Base):
     type = Column(String(20))            # mobile|fixed_line|company|unknown
     confidence = Column(Integer, default=0)
     source = Column(String(40))          # site|cnpj|places|apollo...
-    verified_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
     person = relationship("Person", back_populates="phones")
 
@@ -232,9 +249,9 @@ class EmailPattern(Base):
     evidence = Column(JSON)                       # [{email, name, source}] (máx. 5)
     catch_all = Column(Boolean, nullable=True)    # domínio aceita qualquer destinatário
     mx_ok = Column(Boolean, nullable=True)
-    last_confirmed_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    last_confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Reveal(Base):
@@ -251,7 +268,7 @@ class Reveal(Base):
     found_phone = Column(Boolean, default=False)
     provider_chain = Column(JSON)                 # ["cache", "pattern+smtp", "cnpj"]
     cost_usd = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ProviderCall(Base):
@@ -264,13 +281,18 @@ class ProviderCall(Base):
     hit = Column(Boolean, default=False)
     cost_usd = Column(Float, default=0.0)
     latency_ms = Column(Integer, default=0)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class OptOut(Base):
     """
     LGPD: bloqueio permanente. Guardamos apenas o HASH do valor — o pedido de
     remoção não pode virar mais uma base de dados pessoais.
+
+    Pedido feito pelo formulário público nasce `pending` e só vira `confirmed`
+    quando o link enviado por e-mail é aberto. Sem essa etapa, qualquer pessoa
+    apagaria contatos alheios em massa — o direito do titular viraria uma
+    ferramenta de sabotagem da base.
     """
     __tablename__ = "opt_outs"
 
@@ -278,7 +300,20 @@ class OptOut(Base):
     kind = Column(String(20), nullable=False)      # email|phone|linkedin
     value_hash = Column(String(64), nullable=False, unique=True, index=True)
     reason = Column(String(500), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    status = Column(String(20), nullable=False, default="confirmed")  # pending|confirmed
+    # Só o hash do token de confirmação — o link vale uma vez e expira.
+    token_hash = Column(String(64), nullable=True, index=True)
+    token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    # Hash do e-mail que pediu a remoção: auditoria sem guardar o e-mail.
+    requested_by_hash = Column(String(64), nullable=True)
+    # Valor a remover, em claro, APENAS enquanto o pedido está pendente: a
+    # exclusão em `persons`/`person_emails` casa por valor, não por hash, e
+    # não dá para reconstruí-lo do digest. Apagado no instante da confirmação
+    # — depois disso resta só o hash.
+    pending_value = Column(String(320), nullable=True)
+    source = Column(String(30), nullable=True)     # form_publico|extensao|interno
+    confirmed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class ExtensionToken(Base):
@@ -288,12 +323,20 @@ class ExtensionToken(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(String(36), nullable=False, index=True)
     code = Column(String(16), nullable=True, index=True)      # código de pareamento
-    code_expires_at = Column(DateTime, nullable=True)
+    code_expires_at = Column(DateTime(timezone=True), nullable=True)
     token_hash = Column(String(64), nullable=True, index=True)
     device_label = Column(String(120), nullable=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    last_used_at = Column(DateTime, nullable=True)
-    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+
+# Fichas que não devem aparecer para o usuário:
+#   failed  — a coleta rodou e não achou nada aproveitável
+#   pending — a busca foi cobrada e a coleta não chegou a terminar (timeout da
+#             função serverless, por exemplo). Serve de recibo: a próxima
+#             tentativa do mesmo domínio não cobra de novo.
+HIDDEN_LEAD_STATUSES = ("failed", "pending")
 
 
 def get_db():
@@ -304,40 +347,90 @@ def get_db():
         db.close()
 
 
-_JSON_DDL = "TEXT" if _is_sqlite else "JSON"
-
-# Colunas adicionadas depois que a tabela já existia em produção.
-_ADDITIVE_COLUMNS = {
-    "leads": {
-        "stage": "VARCHAR(20) DEFAULT 'novo'",
-        "ai_summary": "TEXT",
-        "enrichment_version": "INTEGER",
-    },
-    "profiles": {
-        "reveals_used": "INTEGER DEFAULT 0",
-        "reveals_limit": "INTEGER DEFAULT 5",
-    },
-}
-
-
-def _ensure_new_columns():
+def _missing_columns() -> dict:
     """
-    Migração aditiva leve: create_all não altera tabelas existentes, então
-    colunas novas em bancos já criados precisam de ALTER TABLE explícito.
-    Cobre apenas ADD COLUMN (suficiente até a adoção de Alembic).
+    Colunas que existem no modelo e faltam no banco, por tabela.
+
+    Comparação automática contra os modelos — antes isto era uma lista escrita
+    à mão, que só protegia as colunas de que alguém lembrou de escrever nela.
     """
-    from sqlalchemy import inspect, text
+    from sqlalchemy import inspect
 
     inspector = inspect(engine)
-    tables = set(inspector.get_table_names())
+    existing_tables = set(inspector.get_table_names())
+
+    missing: dict = {}
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        present = {c["name"] for c in inspector.get_columns(table.name)}
+        absent = [c for c in table.columns if c.name not in present]
+        if absent:
+            missing[table.name] = absent
+    return missing
+
+
+def _column_ddl(column) -> str:
+    """
+    DDL de um ADD COLUMN, sempre nullable.
+
+    Coluna nova NOT NULL em tabela com linhas é rejeitada pelo banco; o
+    DEFAULT do modelo preenche as próximas gravações e o backfill de linhas
+    antigas, quando necessário, é decisão de migração — não de boot.
+    """
+    ddl_type = column.type.compile(dialect=engine.dialect)
+    default = getattr(column, "default", None)
+    if default is not None and getattr(default, "is_scalar", False):
+        value = default.arg
+        literal = f"'{value}'" if isinstance(value, str) else str(int(value) if isinstance(value, bool) else value)
+        return f"{column.name} {ddl_type} DEFAULT {literal}"
+    return f"{column.name} {ddl_type}"
+
+
+def _sync_schema() -> None:
+    """
+    Migração aditiva: `create_all` cria tabelas novas mas nunca altera as que
+    já existem, então coluna nova em banco antigo precisa de ALTER TABLE.
+    Cobre só ADD COLUMN — mudança de tipo ou remoção continua sendo trabalho
+    manual (e sinal de que está na hora do Alembic).
+    """
+    from sqlalchemy import text
+
+    missing = _missing_columns()
+    if not missing:
+        return
+
     with engine.begin() as conn:
-        for table, additions in _ADDITIVE_COLUMNS.items():
-            if table not in tables:
-                continue
-            existing = {c["name"] for c in inspector.get_columns(table)}
-            for name, ddl in additions.items():
-                if name not in existing:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+        for table, columns in missing.items():
+            for column in columns:
+                ddl = _column_ddl(column)
+                logger.info("Schema: ALTER TABLE %s ADD COLUMN %s", table, ddl)
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
+
+
+def schema_status() -> dict:
+    """
+    O banco atende ao que o código espera? Serve ao /health: sem isto, um
+    schema incompleto só aparece como 500 no clique do usuário.
+    """
+    from sqlalchemy import inspect
+
+    try:
+        inspector = inspect(engine)
+        existing = set(inspector.get_table_names())
+        expected = {t.name for t in Base.metadata.sorted_tables}
+        missing_tables = sorted(expected - existing)
+        missing_columns = {
+            table: [c.name for c in columns]
+            for table, columns in _missing_columns().items()
+        }
+        return {
+            "ok": not missing_tables and not missing_columns,
+            "missing_tables": missing_tables,
+            "missing_columns": missing_columns,
+        }
+    except Exception as e:  # banco fora do ar
+        return {"ok": False, "error": str(e), "missing_tables": [], "missing_columns": {}}
 
 
 class CRMConnection(Base):
@@ -352,10 +445,10 @@ class CRMConnection(Base):
     refresh_token = Column(String, nullable=True)
     account_id = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    _ensure_new_columns()
+    _sync_schema()

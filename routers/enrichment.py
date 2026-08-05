@@ -4,7 +4,7 @@ from datetime import datetime, UTC, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
 from sqlalchemy.orm import Session
-from models.database import get_db, Lead, DecisionMaker, Profile
+from models.database import get_db, Lead, DecisionMaker, Profile, HIDDEN_LEAD_STATUSES
 from models.schemas import (
     EnrichRequest, EnrichResponse, LeadOut,
     DecisoresRequest, DecisoresResponse, DecisionMakerOut,
@@ -37,19 +37,17 @@ def _check_quota(profile: Profile, db: Session):
         )
 
 
-def _recent_leads(db: Session, domain: str, user_id: str):
+def _recent_leads(db: Session, domain: str, user_id: str, include_hidden: bool = False):
     """Fichas do domínio dentro da janela de cache, mais recente primeiro."""
     cutoff = datetime.now(UTC) - timedelta(days=_CACHE_TTL_DAYS)
-    return (
-        db.query(Lead)
-        .filter(
-            Lead.user_id == user_id,
-            Lead.domain == domain,
-            Lead.status != "failed",
-            Lead.created_at >= cutoff,
-        )
-        .order_by(Lead.created_at.desc())
+    query = db.query(Lead).filter(
+        Lead.user_id == user_id,
+        Lead.domain == domain,
+        Lead.created_at >= cutoff,
     )
+    if not include_hidden:
+        query = query.filter(Lead.status.notin_(HIDDEN_LEAD_STATUSES))
+    return query.order_by(Lead.created_at.desc())
 
 
 def _find_cached_lead(db: Session, domain: str, user_id: str) -> Lead | None:
@@ -73,6 +71,16 @@ def _find_stale_lead(db: Session, domain: str, user_id: str) -> Lead | None:
     aí qualquer ficha na janela é, por definição, de outra versão.
     """
     return _recent_leads(db, domain, user_id).first()
+
+
+def _find_paid_attempt(db: Session, domain: str, user_id: str) -> Lead | None:
+    """
+    Tentativa recente que já consumiu cota deste domínio — inclusive as que
+    não terminaram (status "pending", tipicamente uma função serverless morta
+    no meio da coleta). É o recibo que impede cobrar duas vezes pela mesma
+    busca quando o usuário tenta de novo.
+    """
+    return _recent_leads(db, domain, user_id, include_hidden=True).first()
 
 
 @router.post("/enrich", response_model=EnrichResponse)
@@ -103,28 +111,39 @@ def enrich(
             data=LeadOut.model_validate(cached),
         )
 
-    # Recoleta por ficha desatualizada é correção nossa, não busca nova: o
-    # usuário já pagou por este domínio e não pode pagar de novo.
-    stale = _find_stale_lead(db, domain, user_id)
-    charged = stale is None
-    if charged:
-        # Incrementa cota antes da operação lenta para evitar race condition
+    # Recoleta por ficha desatualizada (ou tentativa interrompida que já
+    # cobrou) é correção nossa, não busca nova: o usuário já pagou por este
+    # domínio e não pode pagar de novo.
+    previous = _find_paid_attempt(db, domain, user_id)
+    charged = previous is None
+
+    # A ficha nasce ANTES da coleta, como recibo da cota debitada. Se a função
+    # morrer no meio (o teto da Vercel é 60 s), a cota fica gasta mas o
+    # registro existe — e a próxima tentativa deste domínio sai de graça. Sem
+    # isso, uma busca lenta cobrava e não deixava rastro nenhum.
+    lead = previous if previous is not None else Lead(
+        user_id=user_id, raw_input_domain=body.domain, domain=domain, status="pending",
+    )
+    if previous is None:
         profile.searches_used += 1
+        db.add(lead)
         db.commit()
+        db.refresh(lead)
 
     try:
         data = enrich_company(body.domain)
     except Exception as e:
+        lead.status = "failed"
         if charged:
             profile.searches_used -= 1
-            db.commit()
+        db.commit()
         logger.exception("Enrichment failed for domain=%s: %s", domain, e)
         raise HTTPException(status_code=500, detail=f"Erro ao enriquecer: {e}")
 
-    lead_kwargs = {k: v for k, v in data.items() if hasattr(Lead, k)}
-    lead_kwargs["user_id"] = user_id
-    lead = Lead(**lead_kwargs)
-    db.add(lead)
+    for key, value in data.items():
+        if hasattr(Lead, key):
+            setattr(lead, key, value)
+    lead.user_id = user_id
     db.commit()
     db.refresh(lead)
 

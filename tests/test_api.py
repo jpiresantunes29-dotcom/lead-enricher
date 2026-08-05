@@ -38,7 +38,11 @@ app.dependency_overrides[get_db] = override_get_db
 # Desliga o rate limiter nos testes — o storage em memória persiste entre
 # testes e estoura o limite de 10/min com a suíte completa.
 from routers.enrichment import limiter as _enrich_limiter  # noqa: E402
+from routers.privacy import limiter as _privacy_limiter  # noqa: E402
+from routers.extension import limiter as _extension_limiter  # noqa: E402
 _enrich_limiter.enabled = False
+_privacy_limiter.enabled = False
+_extension_limiter.enabled = False
 
 # ── token JWT falso (a lógica de decode é mockada) ────────────────────────────
 FAKE_USER = {"sub": "test-user-123", "email": "test@example.com"}
@@ -272,3 +276,43 @@ def test_institutional_pages(client, path, marker):
     assert marker in resp.text
     # o CSS compartilhado é incluído via Jinja — se o include falhar, some
     assert "lg-wrap" in resp.text
+
+
+# ── cota: o usuário não pode pagar por uma busca que não recebeu ──────────────
+
+def test_busca_interrompida_deixa_recibo_e_nao_cobra_de_novo(client):
+    """
+    Quando a coleta morre no meio (timeout da função serverless, por exemplo),
+    a cota já foi debitada. A ficha "pending" gravada antes da coleta é o
+    recibo: a próxima tentativa do mesmo domínio não cobra outra vez.
+    """
+    with patch("routers.enrichment.enrich_company", side_effect=TimeoutError("estourou")):
+        resp = client.post("/api/enrich", json={"domain": "acme.com.br"})
+    assert resp.status_code == 500
+
+    db = _Session()
+    try:
+        perfil = db.query(Profile).filter(Profile.id == "test-user-123").first()
+        usado_apos_falha = perfil.searches_used
+    finally:
+        db.close()
+
+    # A retentativa do mesmo domínio sai de graça.
+    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        ok = client.post("/api/enrich", json={"domain": "acme.com.br"})
+    assert ok.status_code == 200
+
+    db = _Session()
+    try:
+        perfil = db.query(Profile).filter(Profile.id == "test-user-123").first()
+        assert perfil.searches_used == usado_apos_falha, "cobrou duas vezes pelo mesmo domínio"
+    finally:
+        db.close()
+
+
+def test_ficha_pendente_nao_aparece_no_historico(client):
+    """Ficha sem dados é recibo interno, não conteúdo para o usuário ver."""
+    with patch("routers.enrichment.enrich_company", side_effect=TimeoutError):
+        client.post("/api/enrich", json={"domain": "acme.com.br"})
+
+    assert client.get("/api/leads").json() == []

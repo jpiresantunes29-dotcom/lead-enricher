@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
-from models.database import get_db, Lead
+from models.database import get_db, Lead, HIDDEN_LEAD_STATUSES
 from services.exporter import build_excel, build_csv
 from middleware.auth import get_current_user
 
@@ -58,7 +58,9 @@ def export_all(
     user_id = current_user.get("sub")
     start, end = _date_range(preset, date_start, date_end)
 
-    q = db.query(Lead).filter(Lead.user_id == user_id, Lead.status != "failed")
+    q = db.query(Lead).filter(
+        Lead.user_id == user_id, Lead.status.notin_(HIDDEN_LEAD_STATUSES)
+    )
     if start is not None:
         q = q.filter(Lead.created_at >= start, Lead.created_at < end)
     leads = q.order_by(Lead.created_at.desc()).all()

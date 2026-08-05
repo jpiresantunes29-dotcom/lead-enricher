@@ -1,13 +1,13 @@
 """
 Métricas comerciais agregadas (proposta v3 §6) — o "Power BI interno".
 """
-from datetime import datetime, timedelta, UTC
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from models.database import get_db, Lead, Activity
+from models.database import get_db, utcnow, Lead, Activity, HIDDEN_LEAD_STATUSES
 from middleware.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
@@ -22,8 +22,11 @@ def dashboard_metrics(
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user.get("sub")
-    cutoff = datetime.now(UTC) - timedelta(days=days)
-    now = datetime.now(UTC).replace(tzinfo=None)  # comparações com DateTime naive do banco
+    # Tudo em UTC com fuso explícito: as colunas de data são timezone-aware
+    # (models.database.utcnow) e misturar naive com aware aqui trocava o
+    # "atrasado" pelo "em dia" conforme o fuso do servidor.
+    now = utcnow()
+    cutoff = now - timedelta(days=days)
 
     leads_q = db.query(Lead).filter(Lead.user_id == user_id, Lead.created_at >= cutoff)
     leads_pesquisados = leads_q.count()
@@ -39,7 +42,7 @@ def dashboard_metrics(
 
     funil = dict(
         db.query(Lead.stage, func.count(Lead.id))
-        .filter(Lead.user_id == user_id, Lead.status != "failed")
+        .filter(Lead.user_id == user_id, Lead.status.notin_(HIDDEN_LEAD_STATUSES))
         .group_by(Lead.stage)
         .all()
     )

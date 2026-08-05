@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from models.database import get_db, Lead
+from models.database import get_db, Lead, HIDDEN_LEAD_STATUSES
 from models.schemas import LeadOut, LeadListOut, StageUpdate
 from services.activity_rules import PIPELINE_STAGES
 from middleware.auth import get_current_user
@@ -25,7 +25,9 @@ def list_leads(
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user.get("sub")
-    q = db.query(Lead).filter(Lead.user_id == user_id, Lead.status != "failed")
+    q = db.query(Lead).filter(
+        Lead.user_id == user_id, Lead.status.notin_(HIDDEN_LEAD_STATUSES)
+    )
     if stage:
         if stage not in PIPELINE_STAGES:
             raise HTTPException(status_code=422, detail="Estágio inválido.")
