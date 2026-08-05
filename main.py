@@ -23,7 +23,7 @@ from routers import (
 class _SEO:
     FAQ = []
     def context(self, request, path):
-        return {}
+        return {"seo": {"title": "LeadEnricher", "description": "", "image": ""}}
 
 seo = _SEO()
 
