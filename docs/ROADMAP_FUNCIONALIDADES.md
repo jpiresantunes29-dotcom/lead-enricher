@@ -8,6 +8,13 @@
 > foi implementado — ver [CONTACT_INTELLIGENCE.md](CONTACT_INTELLIGENCE.md).
 > O item 0.2 (fila assíncrona) ganhou urgência: `/api/extension/reveal` é
 > síncrono com teto de 12 s e o enriquecimento tem teto de 35 s.
+>
+> **Atualização 2026-08-04:** auditoria de segurança e bugs concluída — ver
+> [AUDITORIA_2026-08.md](AUDITORIA_2026-08.md). Fecharam-se as falhas de
+> autenticação (JWT sem segredo), SSRF do webhook, opt-out sem confirmação,
+> injeção de fórmula no export e o webhook do Stripe, que quebrava em todo
+> pagamento. Os itens 0.3 e 0.5 abaixo foram atendidos; 0.2 e 0.4 seguem
+> abertos e agora são o topo da fila.
 
 ---
 
@@ -31,12 +38,14 @@ função é 60 s (já configurado em vercel.json) — buscas lentas estouram o l
   (`GET /api/leads/{id}` já devolve status).
 - Esforço: 1–2 dias. Pré-requisito para o 1.1 (lote).
 
-### 0.3 Alembic como fonte única de migração
-`models/database.py::_ensure_new_columns()` e `alembic/` coexistem.
-- Ação: gerar migração Alembic do estado atual, apagar `_ensure_new_columns`,
-  rodar `alembic upgrade head` no build da Vercel (ou manualmente contra o
-  Postgres do Supabase a cada mudança de schema).
-- Esforço: meio dia.
+### 0.3 Fonte única de migração ✅ resolvido em 2026-08-04 (parcial)
+`alembic/` estava parado e a migração aditiva dependia de uma lista de colunas
+escrita à mão — coluna nova esquecida ali só aparecia como erro em produção.
+- Feito: `_sync_schema()` compara o banco com os modelos e aplica os
+  `ADD COLUMN` que faltam; `/health` responde `schema_ok`; em produção o boot
+  falha se o schema não subir.
+- Pendente: adotar Alembic quando existir Postgres com dados reais — mudança
+  de tipo e remoção de coluna continuam sendo trabalho manual.
 
 ### 0.4 Limpeza LGPD de verdade
 O serviço antigo (`services/lgpd.py`) foi removido nesta auditoria porque estava
@@ -54,8 +63,15 @@ Parcialmente feito em 2026-07-05 (suíte foi de 68 → 80 testes):
 - ✅ `/api/followups/today` (`tests/test_activities.py`): o filtro por tipo
   inexistente que zerava a fila do dia.
 - ✅ páginas institucionais (`tests/test_api.py`).
-- Pendente: `billing` (webhook Stripe — idempotência, upgrade/downgrade) e
-  `crm_config`. Esforço: ~1 dia.
+- ✅ `billing` (`tests/test_billing.py`, 2026-08-04): assinatura HMAC real,
+  idempotência, upgrade, downgrade, reset de ciclo e criação de perfil quando
+  o webhook chega antes do primeiro login. Foi este teste que revelou o
+  webhook quebrado em `session.get(...)`.
+- ✅ `crm_config` (`tests/test_integrations.py`): validação anti-SSRF do
+  destino e exigência de https.
+- ✅ segurança de autenticação (`tests/test_seguranca.py`): token forjado,
+  segredo ausente, sessões demo isoladas e cabeçalhos de navegador.
+- Suíte: 282 testes.
 
 ---
 

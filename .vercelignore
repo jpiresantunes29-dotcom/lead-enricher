@@ -1,10 +1,25 @@
+# Segredos e dados locais
 .env
 *.db
+
+# Artefatos de execução
 __pycache__
 *.pyc
 *.pyo
+.pytest_cache
+
+# Controle de versão e ambientes
 .git
 venv
 .venv
 env
 node_modules
+
+# Fora do runtime: nada aqui é importado pela aplicação em produção, e cada
+# arquivo a menos é bundle menor e cold start mais rápido.
+tests
+docs
+scripts
+extension
+.claude
+requirements-dev.txt
