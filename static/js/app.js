@@ -28,6 +28,12 @@ const _AUTH_REDIRECT=window.location.origin+'/app';
 
 // Demo mode: token local que o backend reconhece (DEMO_MODE=1)
 const _DEMO_KEY='le_demo_token';
+
+// Auto-create demo token on first load
+if(!localStorage.getItem(_DEMO_KEY)){
+  const t='demo-session-'+Math.random().toString(36).slice(2,12);
+  localStorage.setItem(_DEMO_KEY,t);
+}
 function _getDemoToken(){return localStorage.getItem(_DEMO_KEY);}
 function _setDemoToken(){
   const t='demo-session-'+Math.random().toString(36).slice(2,12);
