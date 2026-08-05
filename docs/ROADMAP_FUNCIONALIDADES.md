@@ -22,12 +22,24 @@
 
 Itens que destravam as fases seguintes e fecham riscos conhecidos.
 
-### 0.1 Modo demo seguro ✅ feito em 2026-07-05
+### 0.1 Modo demo seguro ✅ feito em 2026-07-05, completado em 2026-08-05
 O user demo compartilhado (`demo-user-2026`) foi substituído por users demo
 **efêmeros por navegador** (`demo-<sufixo do token>`) em `middleware/auth.py` —
 sessões demo não veem mais os dados umas das outras.
-- Pendente: rotina de limpeza de perfis/leads demo antigos (TTL ~7 dias);
-  e `DEMO_MODE=0` nas env vars da Vercel se quiser desligar o demo em produção.
+- ✅ Limpeza automática: `services/demo_cleanup.py` + cron diário apagam
+  perfis parados há mais de `DEMO_TTL_DAYS` (7), sem tocar no banco global de
+  contatos. Quem voltou a usar não é apagado.
+- ✅ Checkout bloqueado em sessão demo (assinatura precisa de conta real).
+- Pendente por decisão de produto: `DEMO_MODE=0` na Vercel quando houver
+  clientes pagantes — hoje fica ligado de propósito.
+
+### 0.2 Enriquecimento assíncrono (fila) ✅ feito em 2026-08-05
+Tabela `jobs`, `services/jobs.py` e rodadas com orçamento de tempo. A tela do
+usuário empurra a fila enquanto está aberta; o cron cobre quem fechou a aba.
+Detalhes e trade-offs em [FILA_E_LOTE.md](FILA_E_LOTE.md).
+
+<details>
+<summary>Descrição original do item</summary>
 
 ### 0.2 Enriquecimento assíncrono (fila)
 Hoje `/api/enrich` é síncrono: a função fica presa ~10–30 s por busca
@@ -38,14 +50,16 @@ função é 60 s (já configurado em vercel.json) — buscas lentas estouram o l
   (`GET /api/leads/{id}` já devolve status).
 - Esforço: 1–2 dias. Pré-requisito para o 1.1 (lote).
 
-### 0.3 Fonte única de migração ✅ resolvido em 2026-08-04 (parcial)
+</details>
+
+### 0.3 Fonte única de migração ✅ resolvido em 2026-08-05
 `alembic/` estava parado e a migração aditiva dependia de uma lista de colunas
 escrita à mão — coluna nova esquecida ali só aparecia como erro em produção.
-- Feito: `_sync_schema()` compara o banco com os modelos e aplica os
-  `ADD COLUMN` que faltam; `/health` responde `schema_ok`; em produção o boot
-  falha se o schema não subir.
-- Pendente: adotar Alembic quando existir Postgres com dados reais — mudança
-  de tipo e remoção de coluna continuam sendo trabalho manual.
+- Feito: Alembic reintroduzido com migração inicial do schema atual; banco
+  criado por `create_all` nasce carimbado; `tests/test_migracoes.py` falha se
+  modelos e migrações divergirem. Fluxo em [MIGRACOES.md](MIGRACOES.md).
+- `_sync_schema()` continua como rede de segurança, agora logando WARNING —
+  chegar lá significa migração faltando.
 
 ### 0.4 Limpeza LGPD de verdade
 O serviço antigo (`services/lgpd.py`) foi removido nesta auditoria porque estava
@@ -77,13 +91,13 @@ Parcialmente feito em 2026-07-05 (suíte foi de 68 → 80 testes):
 
 ## Fase 1 — Retenção e uso diário (usuário volta todo dia)
 
-### 1.1 Enriquecimento em lote (re-lançamento)
-O endpoint de lote foi **removido** nesta auditoria: estava quebrado
-(`scalar_all()` inexistente, violação de NOT NULL, nada processava os leads
-"pending") e sem UI. Relançar sobre a fila do item 0.2:
-- Upload CSV → cria jobs → barra de progresso na UI → resultado vira leads
-  no pipeline. Respeitar cota (1 busca por domínio) e cache de 7 dias.
-- Esforço: 2–3 dias. É a feature mais pedida em ferramentas concorrentes.
+### 1.1 Enriquecimento em lote ✅ feito em 2026-08-05
+Relançado sobre a fila: view "Análise em lote" no app, com colagem de lista ou
+CSV (a coluna do site é encontrada sozinha), barra de progresso por rodada,
+retomada de lote inacabado e link direto para cada ficha. Cota e cache de 7
+dias respeitados pelo mesmo código da busca avulsa.
+- Pendente (pequeno): exportar o resultado do lote em um clique — hoje sai
+  pelo Histórico, junto com o restante dos leads.
 
 ### 1.2 Notas e edição manual do lead
 Hoje o lead é 100 % automático. Vendedor precisa corrigir telefone, adicionar
