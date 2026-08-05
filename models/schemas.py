@@ -270,6 +270,52 @@ class ReportRequest(BaseModel):
     reason: Optional[str] = None
 
 
+# ── Enriquecimento em lote ───────────────────────────────────────────────────
+
+class BatchCreateRequest(BaseModel):
+    """Aceita a lista pronta ou o texto cru (CSV colado, uma coluna, URLs)."""
+    domains: Optional[List[str]] = None
+    text: Optional[str] = None
+
+
+class BatchCreateResponse(BaseModel):
+    batch_id: str
+    total: int
+    ignorados: int = 0
+    quota_restante: Optional[int] = None
+    cabe_na_quota: bool = True
+    message: str
+
+
+class BatchItemOut(BaseModel):
+    domain: Optional[str] = None
+    status: str
+    result: Optional[str] = None
+    lead_id: Optional[int] = None
+    error: Optional[str] = None
+
+
+class BatchProgressOut(BaseModel):
+    batch_id: str
+    total: int
+    concluidos: int
+    na_fila: int
+    rodando: int
+    com_erro: int
+    finalizado: bool
+    itens: List[BatchItemOut] = []
+
+
+class BatchRunResponse(BaseModel):
+    processed: int
+    done: int
+    failed: int
+    quota_reached: bool
+    remaining: int
+    elapsed_ms: int
+    progresso: BatchProgressOut
+
+
 class OptOutRequest(BaseModel):
     """Pedido público de remoção (LGPD art. 18). Não exige conta."""
     kind: str                      # email | phone | linkedin

@@ -316,6 +316,38 @@ class OptOut(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
+class Job(Base):
+    """
+    Fila de trabalho. Hoje só enriquecimento de domínio, que é a operação lenta
+    do produto (~15-30 s por empresa).
+
+    Existe porque a função serverless morre em 60 s: pedir 200 domínios de uma
+    vez em requisição síncrona não é lento, é impossível. Com a fila, o pedido
+    responde na hora e o processamento acontece em rodadas curtas.
+    """
+    __tablename__ = "jobs"
+    __table_args__ = (
+        # A varredura do worker é sempre "próximos da fila": sem este índice
+        # ela vira scan da tabela inteira à medida que o histórico cresce.
+        Index("ix_jobs_status_id", "status", "id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    batch_id = Column(String(36), nullable=True, index=True)
+    kind = Column(String(20), nullable=False, default="enrich")
+    payload = Column(JSON)                       # {"domain": "acme.com.br"}
+    status = Column(String(20), nullable=False, default="queued", index=True)
+    # queued | running | done | failed | skipped (cache/cota)
+    attempts = Column(Integer, nullable=False, default=0)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
+    result = Column(String(40), nullable=True)   # enriched | partial | cached | quota | failed
+    error = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class ExtensionToken(Base):
     """Pareamento navegador ↔ conta, via código curto exibido no /app."""
     __tablename__ = "extension_tokens"
@@ -389,10 +421,12 @@ def _column_ddl(column) -> str:
 
 def _sync_schema() -> None:
     """
-    Migração aditiva: `create_all` cria tabelas novas mas nunca altera as que
-    já existem, então coluna nova em banco antigo precisa de ALTER TABLE.
-    Cobre só ADD COLUMN — mudança de tipo ou remoção continua sendo trabalho
-    manual (e sinal de que está na hora do Alembic).
+    Rede de segurança: aplica os ADD COLUMN que faltarem.
+
+    Com o Alembic adotado, chegar aqui com colunas faltando significa que
+    alguém mudou o modelo sem gerar a migração — por isso o log é WARNING, não
+    INFO. Continua existindo porque um schema incompleto quebra o produto
+    inteiro, e preferimos consertar e avisar a recusar o boot.
     """
     from sqlalchemy import text
 
@@ -404,7 +438,11 @@ def _sync_schema() -> None:
         for table, columns in missing.items():
             for column in columns:
                 ddl = _column_ddl(column)
-                logger.info("Schema: ALTER TABLE %s ADD COLUMN %s", table, ddl)
+                logger.warning(
+                    "Coluna ausente no banco — aplicando ALTER TABLE %s ADD COLUMN %s. "
+                    "Gere a migração correspondente (alembic revision --autogenerate).",
+                    table, ddl,
+                )
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
 
 
@@ -449,6 +487,54 @@ class CRMConnection(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+#: Revisão mais recente em alembic/versions. Precisa acompanhar a última
+#: migração criada — o teste tests/test_migracoes.py falha se divergir.
+ALEMBIC_HEAD = "528805047d04"
+
+
+def _stamp_alembic_head() -> None:
+    """
+    Marca o banco como já estando na revisão mais recente.
+
+    Schema criado por `create_all` (desenvolvimento e testes) é idêntico ao que
+    as migrações produzem, mas o Alembic não sabe disso: sem o carimbo, um
+    `alembic upgrade head` tentaria criar tudo de novo e falharia com "tabela
+    já existe". Feito por SQL direto de propósito — o Alembic é ferramenta de
+    desenvolvimento e não precisa estar instalado em produção.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    tabelas = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        if "alembic_version" not in tabelas:
+            conn.execute(text(
+                "CREATE TABLE alembic_version ("
+                "version_num VARCHAR(32) NOT NULL, "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            ))
+        atual = conn.execute(text("SELECT version_num FROM alembic_version")).fetchone()
+        if atual is None:
+            conn.execute(
+                text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
+                {"v": ALEMBIC_HEAD},
+            )
+
+
 def init_db():
+    """
+    Garante o schema no ambiente local.
+
+    Em produção a fonte da verdade é o Alembic (`alembic upgrade head`, ver
+    docs/MIGRACOES.md). Aqui o create_all continua servindo desenvolvimento e
+    testes — onde criar do zero é mais rápido do que aplicar o histórico — e o
+    carimbo mantém os dois mundos compatíveis.
+    """
     Base.metadata.create_all(bind=engine)
     _sync_schema()
+    try:
+        _stamp_alembic_head()
+    except Exception:
+        # Carimbo é conveniência: banco sem permissão de DDL não pode impedir
+        # a aplicação de subir por causa disso.
+        logger.warning("Não foi possível carimbar a revisão do Alembic.", exc_info=True)
