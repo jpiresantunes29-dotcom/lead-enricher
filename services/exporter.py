@@ -26,6 +26,23 @@ PRIMARY = "6C63FF"
 HEADER_FONT_COLOR = "FFFFFF"
 ALT_ROW = "F4F3FF"
 
+# Caracteres que fazem Excel/Sheets tratarem o texto como fórmula.
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _sanitize(value: str) -> str:
+    """
+    Neutraliza injeção de fórmula na planilha.
+
+    Nome de empresa, descrição e cargo vêm de sites de terceiros. Um valor
+    começando com "=" é executado como fórmula ao abrir o arquivo — o campo
+    coletado de um site qualquer viraria comando rodando na máquina de quem
+    abre o export. O apóstrofo à frente força o Excel a tratar como texto.
+    """
+    if value and value[0] in _FORMULA_PREFIXES:
+        return "'" + value
+    return value
+
 
 def _format_employee_count(value) -> str:
     """Converte o JSON consolidado {raw,min,max,band,exact} em texto legível."""
@@ -86,7 +103,8 @@ def build_excel(leads: List) -> bytes:
                 value = ""
             elif hasattr(value, "strftime"):
                 value = value.strftime("%d/%m/%Y %H:%M")
-            cell = ws.cell(row=row_idx, column=col_idx, value=str(value) if value else "")
+            text = _sanitize(str(value)) if value or value == 0 else ""
+            cell = ws.cell(row=row_idx, column=col_idx, value=text)
             cell.alignment = Alignment(vertical="center", wrap_text=True)
             cell.border = _thin_border()
             if fill:
@@ -118,6 +136,6 @@ def build_csv(leads: List) -> bytes:
             elif hasattr(value, "strftime"):
                 row.append(value.strftime("%d/%m/%Y %H:%M"))
             else:
-                row.append(str(value))
+                row.append(_sanitize(str(value)))
         writer.writerow(row)
     return buf.getvalue().encode("utf-8-sig")  # BOM para Excel abrir corretamente
