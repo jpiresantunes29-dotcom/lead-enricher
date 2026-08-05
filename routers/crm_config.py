@@ -8,8 +8,11 @@ from sqlalchemy.orm import Session
 
 from models.database import get_db, CRMConnection
 from middleware.auth import get_current_user
+from services.crm.webhook import is_valid_target
 
 router = APIRouter(prefix="/api", tags=["crm-config"])
+
+VALID_PROVIDERS = {"webhook", "dynamics", "hubspot", "pipedrive"}
 
 
 class CRMConnectionCreate(BaseModel):
@@ -50,13 +53,27 @@ def create_connection(
     if not body.provider:
         raise HTTPException(status_code=422, detail="provider é obrigatório")
 
-    # Valida provider
-    valid_providers = {"webhook", "dynamics", "hubspot", "pipedrive"}
-    if body.provider not in valid_providers:
+    if body.provider not in VALID_PROVIDERS:
         raise HTTPException(
             status_code=422,
-            detail=f"provider deve ser um de: {', '.join(valid_providers)}",
+            detail=f"provider deve ser um de: {', '.join(sorted(VALID_PROVIDERS))}",
         )
+
+    # O destino do webhook é o único campo em que o usuário escolhe para onde
+    # o NOSSO servidor faz requisição — endereço interno aqui vira SSRF.
+    if body.webhook_url is not None:
+        url = body.webhook_url.strip()
+        if not url.lower().startswith("https://"):
+            raise HTTPException(
+                status_code=422,
+                detail="A URL do webhook precisa começar com https:// (o lead viaja nela).",
+            )
+        if not is_valid_target(url):
+            raise HTTPException(
+                status_code=422,
+                detail="Endereço inválido: informe um endpoint público, acessível pela internet.",
+            )
+        body.webhook_url = url
 
     # Upsert
     existing = db.query(CRMConnection).filter(

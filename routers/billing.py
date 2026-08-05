@@ -1,3 +1,4 @@
+import json
 import os
 import logging
 from datetime import datetime, UTC, timedelta
@@ -6,7 +7,7 @@ import stripe
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from models.database import get_db, Profile, StripeEvent
-from middleware.auth import get_current_user
+from middleware.auth import get_current_user, is_demo_user
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,14 @@ PLAN_LIMITS = {
     "enterprise": -1,  # -1 = ilimitado
 }
 
+# Créditos de revelação de contato (extensão) — medidor separado das buscas.
+# 1 crédito = 1 pessoa (e-mail + telefone). Sem cobrança quando não achamos nada.
+REVEAL_LIMITS = {
+    "free": 5,
+    "pro": 300,
+    "enterprise": -1,
+}
+
 
 def _next_reset() -> datetime:
     """Retorna a data de reset 30 dias a partir de agora."""
@@ -32,9 +41,11 @@ def _next_reset() -> datetime:
 
 
 def _maybe_reset_quota(profile: Profile) -> bool:
-    """Reseta searches_used se o prazo mensal passou. Retorna True se resetou."""
+    """Reseta as cotas do ciclo se o prazo mensal passou. True se resetou."""
     if profile.quota_reset_at and datetime.now(UTC) >= profile.quota_reset_at.replace(tzinfo=UTC):
         profile.searches_used = 0
+        # Créditos de revelação (extensão) seguem o mesmo ciclo das buscas
+        profile.reveals_used = 0
         profile.quota_reset_at = _next_reset()
         return True
     return False
@@ -53,6 +64,18 @@ def create_checkout(
 
     user_id = current_user.get("sub")
     email = current_user.get("email")
+
+    # Sessão de demonstração vive no localStorage do navegador: uma assinatura
+    # amarrada a ela sumiria com o cache, e o Stripe registraria todos os
+    # clientes demo sob o mesmo e-mail. Pagar exige conta de verdade.
+    if is_demo_user(user_id):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Você está no modo demonstração. Crie uma conta gratuita para "
+                "assinar — assim seus leads e sua assinatura ficam guardados."
+            ),
+        )
     profile = db.query(Profile).filter(Profile.id == user_id).first()
 
     customer_id = profile.stripe_customer_id if profile else None
@@ -107,54 +130,93 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     sig = request.headers.get("stripe-signature", "")
     webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
+    if not webhook_secret:
+        # Sem segredo não há como distinguir o Stripe de qualquer um postando
+        # "invoice.paid" no endpoint. Recusar é a única resposta segura.
+        logger.error("STRIPE_WEBHOOK_SECRET ausente: webhook recusado.")
+        raise HTTPException(status_code=503, detail="Webhook não configurado.")
+
     try:
-        event = stripe.Webhook.construct_event(payload, sig, webhook_secret)
+        # O SDK serve para UMA coisa aqui: conferir a assinatura HMAC.
+        stripe.Webhook.construct_event(payload, sig, webhook_secret)
     except stripe.error.SignatureVerificationError:
         raise HTTPException(status_code=400, detail="Assinatura inválida.")
+    except ValueError:
+        # Corpo que não é JSON do Stripe — pedido malformado, não erro nosso.
+        raise HTTPException(status_code=400, detail="Payload inválido.")
 
-    event_id = event["id"]
+    # Os dados são lidos do JSON puro, não do objeto do SDK. O `StripeObject`
+    # devolvido por construct_event não expõe `.get()` (stripe>=15), então
+    # `session.get("metadata")` levantava AttributeError — 500 no webhook,
+    # pagamento confirmado no Stripe e cliente parado no plano free.
+    event = json.loads(payload.decode("utf-8"))
+    event_id = event.get("id")
+    event_type = event.get("type")
+    obj = (event.get("data") or {}).get("object") or {}
+
+    if not event_id:
+        raise HTTPException(status_code=400, detail="Evento sem id.")
 
     # Idempotência: ignora eventos já processados
     if db.query(StripeEvent).filter(StripeEvent.id == event_id).first():
         logger.info("Stripe event %s already processed, skipping.", event_id)
         return {"received": True}
 
-    if event["type"] == "checkout.session.completed":
-        session = event["data"]["object"]
-        user_id = session.get("metadata", {}).get("user_id")
-        plan = session.get("metadata", {}).get("plan", "pro")
-        customer_id = session.get("customer")
+    if event_type == "checkout.session.completed":
+        metadata = obj.get("metadata") or {}
+        user_id = metadata.get("user_id")
+        plan = metadata.get("plan", "pro")
+        customer_id = obj.get("customer")
 
-        if user_id:
+        if not user_id:
+            # Pagamento sem dono identificável: registrar alto, porque alguém
+            # pagou e ninguém foi promovido.
+            logger.error(
+                "checkout.session.completed sem user_id nos metadados (event=%s customer=%s).",
+                event_id, customer_id,
+            )
+        else:
             profile = db.query(Profile).filter(Profile.id == user_id).first()
-            if profile and profile.plan != plan:
+            if not profile:
+                # O perfil nasce no primeiro /api/me. Se o webhook chegar antes
+                # disso, criá-lo aqui é o que impede o cliente de pagar e
+                # continuar no plano free.
+                profile = Profile(id=user_id)
+                db.add(profile)
+                logger.info("Perfil %s criado pelo webhook de pagamento.", user_id)
+
+            if profile.plan != plan:
                 profile.plan = plan
                 profile.searches_limit = PLAN_LIMITS.get(plan, 500)
                 profile.searches_used = 0
+                profile.reveals_limit = REVEAL_LIMITS.get(plan, 300)
+                profile.reveals_used = 0
                 profile.quota_reset_at = _next_reset()
-                if customer_id:
-                    profile.stripe_customer_id = customer_id
                 logger.info("User %s upgraded to plan %s.", user_id, plan)
+            # O customer_id é gravado mesmo quando o plano já estava correto:
+            # sem ele, o downgrade e o reset mensal não acham o perfil.
+            if customer_id:
+                profile.stripe_customer_id = customer_id
 
-    elif event["type"] in ("customer.subscription.deleted", "customer.subscription.paused"):
-        subscription = event["data"]["object"]
-        customer_id = subscription.get("customer")
+    elif event_type in ("customer.subscription.deleted", "customer.subscription.paused"):
+        customer_id = obj.get("customer")
         if customer_id:
             profile = db.query(Profile).filter(Profile.stripe_customer_id == customer_id).first()
             if profile and profile.plan != "free":
                 profile.plan = "free"
                 profile.searches_limit = PLAN_LIMITS["free"]
+                profile.reveals_limit = REVEAL_LIMITS["free"]
                 profile.quota_reset_at = _next_reset()  # free também renova por ciclo
                 logger.info("Customer %s downgraded to free.", customer_id)
 
-    elif event["type"] == "invoice.paid":
+    elif event_type == "invoice.paid":
         # Reset mensal automático quando a fatura do ciclo é paga
-        subscription = event["data"]["object"]
-        customer_id = subscription.get("customer")
+        customer_id = obj.get("customer")
         if customer_id:
             profile = db.query(Profile).filter(Profile.stripe_customer_id == customer_id).first()
             if profile and profile.plan != "free":
                 profile.searches_used = 0
+                profile.reveals_used = 0
                 profile.quota_reset_at = _next_reset()
                 logger.info("Monthly quota reset for customer %s.", customer_id)
 

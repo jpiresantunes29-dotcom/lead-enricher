@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from models.database import Base, get_db, Profile, Lead
+from services.enricher import ENRICHMENT_VERSION
 from main import app
 
 # ── banco em memória para os testes ──────────────────────────────────────────
@@ -37,7 +38,13 @@ app.dependency_overrides[get_db] = override_get_db
 # Desliga o rate limiter nos testes — o storage em memória persiste entre
 # testes e estoura o limite de 10/min com a suíte completa.
 from routers.enrichment import limiter as _enrich_limiter  # noqa: E402
+from routers.privacy import limiter as _privacy_limiter  # noqa: E402
+from routers.extension import limiter as _extension_limiter  # noqa: E402
+from routers.batch import limiter as _batch_limiter  # noqa: E402
 _enrich_limiter.enabled = False
+_privacy_limiter.enabled = False
+_extension_limiter.enabled = False
+_batch_limiter.enabled = False
 
 # ── token JWT falso (a lógica de decode é mockada) ────────────────────────────
 FAKE_USER = {"sub": "test-user-123", "email": "test@example.com"}
@@ -109,11 +116,12 @@ MOCK_ENRICH_RESULT = {
     "employee_count": None,
     "employee_count_linkedin": None,
     "status": "enriched",
+    "enrichment_version": ENRICHMENT_VERSION,
 }
 
 
 def test_enrich_creates_profile_and_lead(client):
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
     assert resp.status_code == 200
     data = resp.json()
@@ -123,7 +131,7 @@ def test_enrich_creates_profile_and_lead(client):
 
 
 def test_enrich_increments_searches_used(client):
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
 
     resp = client.get("/api/me")
@@ -136,7 +144,7 @@ def test_enrich_quota_exceeded(client):
     db.commit()
     db.close()
 
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
     assert resp.status_code == 402
 
@@ -159,7 +167,7 @@ def test_export_all_empty(client):
 
 # ── testes cache de domínio ───────────────────────────────────────────────────
 def test_enrich_cache_hit_skips_external_call(client):
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT) as mock_enrich:
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT) as mock_enrich:
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
 
@@ -168,7 +176,7 @@ def test_enrich_cache_hit_skips_external_call(client):
 
 
 def test_enrich_cache_returns_cached_data(client):
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         r1 = client.post("/api/enrich", json={"domain": "nubank.com.br"})
         r2 = client.post("/api/enrich", json={"domain": "nubank.com.br"})
 
@@ -178,12 +186,57 @@ def test_enrich_cache_returns_cached_data(client):
 
 
 def test_enrich_cache_does_not_increment_quota_twice(client):
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
 
     # Apenas 1 pesquisa deve ter sido contabilizada
     assert client.get("/api/me").json()["searches_used"] == 1
+
+
+def test_ficha_de_versao_antiga_nao_e_servida_do_cache(client):
+    """
+    Uma correção na coleta precisa alcançar o usuário na busca seguinte. Sem
+    isto, a ficha errada continuaria sendo servida por até 7 dias.
+    """
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    db = _Session()
+    db.query(Lead).update({Lead.enrichment_version: ENRICHMENT_VERSION - 1})
+    db.commit()
+    db.close()
+
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT) as mock:
+        resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    assert mock.call_count == 1
+    assert resp.json()["message"] == "Enriquecimento concluído."
+
+
+def test_recoleta_por_versao_antiga_nao_cobra_cota_de_novo(client):
+    """A ficha ficou obsoleta por correção nossa — a cota é do usuário."""
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    db = _Session()
+    db.query(Lead).update({Lead.enrichment_version: ENRICHMENT_VERSION - 1})
+    db.commit()
+    db.close()
+
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+
+    assert client.get("/api/me").json()["searches_used"] == 1
+
+
+def test_dominio_novo_continua_cobrando_cota(client):
+    """A gratuidade vale só para recoleta — não pode virar brecha de cota."""
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        client.post("/api/enrich", json={"domain": "nubank.com.br"})
+        client.post("/api/enrich", json={"domain": "outra.com.br"})
+
+    assert client.get("/api/me").json()["searches_used"] == 2
 
 
 # ── testes /health ────────────────────────────────────────────────────────────
@@ -209,12 +262,6 @@ def test_app_route_serves_product(client):
     assert "domain-input" in resp.text  # input principal do produto
 
 
-def test_landing_alias_redirects_home(client):
-    resp = client.get("/landing", follow_redirects=False)
-    assert resp.status_code == 308
-    assert resp.headers["location"] == "/"
-
-
 # ── páginas institucionais (confiança/LGPD) ──────────────────────────────────
 @pytest.mark.parametrize(
     "path,marker",
@@ -231,3 +278,43 @@ def test_institutional_pages(client, path, marker):
     assert marker in resp.text
     # o CSS compartilhado é incluído via Jinja — se o include falhar, some
     assert "lg-wrap" in resp.text
+
+
+# ── cota: o usuário não pode pagar por uma busca que não recebeu ──────────────
+
+def test_busca_interrompida_deixa_recibo_e_nao_cobra_de_novo(client):
+    """
+    Quando a coleta morre no meio (timeout da função serverless, por exemplo),
+    a cota já foi debitada. A ficha "pending" gravada antes da coleta é o
+    recibo: a próxima tentativa do mesmo domínio não cobra outra vez.
+    """
+    with patch("services.enrichment_service.enrich_company", side_effect=TimeoutError("estourou")):
+        resp = client.post("/api/enrich", json={"domain": "acme.com.br"})
+    assert resp.status_code == 500
+
+    db = _Session()
+    try:
+        perfil = db.query(Profile).filter(Profile.id == "test-user-123").first()
+        usado_apos_falha = perfil.searches_used
+    finally:
+        db.close()
+
+    # A retentativa do mesmo domínio sai de graça.
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        ok = client.post("/api/enrich", json={"domain": "acme.com.br"})
+    assert ok.status_code == 200
+
+    db = _Session()
+    try:
+        perfil = db.query(Profile).filter(Profile.id == "test-user-123").first()
+        assert perfil.searches_used == usado_apos_falha, "cobrou duas vezes pelo mesmo domínio"
+    finally:
+        db.close()
+
+
+def test_ficha_pendente_nao_aparece_no_historico(client):
+    """Ficha sem dados é recibo interno, não conteúdo para o usuário ver."""
+    with patch("services.enrichment_service.enrich_company", side_effect=TimeoutError):
+        client.post("/api/enrich", json={"domain": "acme.com.br"})
+
+    assert client.get("/api/leads").json() == []

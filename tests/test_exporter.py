@@ -105,3 +105,28 @@ def test_excel_is_valid_and_has_data(monkeypatch):
     assert "320" in values
     assert "Marina Alves" in values
     assert ws.freeze_panes == "A2"
+
+
+# ── injeção de fórmula ────────────────────────────────────────────────────────
+# Nome e descrição vêm de sites de terceiros. Sem tratamento, um valor
+# começando com "=" é executado como fórmula na máquina de quem abre o export.
+
+def test_csv_neutraliza_formula_em_campo_coletado():
+    lead = _lead(company_name='=cmd|\'/c calc\'!A1')
+    rows = _csv_rows([lead])
+    valor = rows[1][0]
+    assert valor.startswith("'="), f"fórmula não neutralizada: {valor!r}"
+
+
+def test_excel_neutraliza_formula_em_campo_coletado():
+    lead = _lead(company_name="=1+1", description="+SOMA(A1:A9)")
+    ws = load_workbook(io.BytesIO(build_excel([lead]))).active
+    linha = [c.value for c in ws[2]]
+    assert "=1+1" not in linha
+    assert "'=1+1" in linha
+    assert any(str(v).startswith("'+SOMA") for v in linha if v)
+
+
+def test_texto_normal_nao_e_alterado():
+    lead = _lead(company_name="Acme Tecnologia")
+    assert _csv_rows([lead])[1][0] == "Acme Tecnologia"

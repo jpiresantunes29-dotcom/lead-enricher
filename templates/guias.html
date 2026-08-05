@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+{% include '_seo_head.html' %}
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>'/>
+  <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin/>
+  <link rel="stylesheet" href="/static/fonts/fonts.css?v=1"/>
+  <style>{% include 'legal_base.css' %}{% include 'guides_base.css' %}</style>
+</head>
+<body>
+<header class="lg-header">
+  <a class="lg-logo" href="/">LeadEnricher</a>
+  <a class="lg-back" href="/app">Ir para o app →</a>
+</header>
+<main class="lg-wrap">
+  <div class="lg-kicker">Guias</div>
+  <h1>{{ index_title }}</h1>
+  <p class="gd-lede">Material prático sobre prospecção e enriquecimento de leads B2B —
+  o mesmo método que automatizamos no produto, explicado passo a passo.</p>
+
+  <ul class="gd-list">
+    {%- for guide in guides %}
+    <li>
+      <a class="gd-card" href="{{ guide.path }}">
+        <h2>{{ guide.title }}</h2>
+        <p>{{ guide.description }}</p>
+        <span class="gd-min">{{ guide.minutes }} min de leitura</span>
+      </a>
+    </li>
+    {%- endfor %}
+  </ul>
+</main>
+<footer class="lg-footer">
+  LeadEnricher © 2026 ·
+  <a href="/">Início</a>·
+  <a href="/guias">Guias</a>·
+  <a href="/termos">Termos de Uso</a>·
+  <a href="/privacidade">Privacidade</a>·
+  <a href="/seguranca">Segurança</a>
+</footer>
+</body>
+</html>

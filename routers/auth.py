@@ -18,6 +18,8 @@ def get_or_create_profile(db: Session, user_id: str) -> Profile:
             id=user_id,
             plan="pro" if is_demo else "free",
             searches_limit=500 if is_demo else 5,
+            # Créditos de revelação da extensão (medidor separado das buscas)
+            reveals_limit=300 if is_demo else 5,
             # Sem esta data o _maybe_reset_quota nunca renova o plano free —
             # a UI promete "buscas neste ciclo", então o ciclo precisa existir.
             quota_reset_at=_next_reset(),
@@ -41,5 +43,7 @@ def get_me(
         "plan": profile.plan,
         "searches_used": profile.searches_used,
         "searches_limit": profile.searches_limit,
+        "reveals_used": profile.reveals_used or 0,
+        "reveals_limit": profile.reveals_limit if profile.reveals_limit is not None else 0,
         "quota_reset_at": profile.quota_reset_at.isoformat() if profile.quota_reset_at else None,
     }

@@ -48,7 +48,7 @@ export function initJourney(env) {
   stages.forEach((stage, i) => {
     tl.to(stage, { autoAlpha: 1, y: 0, duration: 1, ease: 'power3.out' });
 
-    // Contador do score acompanha a entrada da última estação
+    // Contador numérico opcional acompanha a entrada da última estação
     if (i === stages.length - 1) {
       const counter = stage.querySelector('[data-jcount]');
       if (counter) {

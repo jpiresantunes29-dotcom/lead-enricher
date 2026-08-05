@@ -13,7 +13,7 @@ from models.database import Profile
 
 
 def _make_lead(client):
-    with patch("routers.enrichment.enrich_company", return_value=MOCK_ENRICH_RESULT):
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
     return resp.json()["data"]
 
@@ -44,6 +44,48 @@ def test_push_unconfigured_returns_503(client, monkeypatch):
     assert resp.status_code == 503
 
 
+# ── anti-SSRF: o destino do webhook é escolhido pelo usuário ──────────────────
+
+def test_conexao_com_endereco_interno_e_recusada(client):
+    """
+    Salvar http://169.254.169.254 faria o servidor buscar os metadados da
+    nuvem por conta do usuário. Tem que morrer na porta de entrada.
+    """
+    for url in (
+        "http://169.254.169.254/latest/meta-data/",
+        "https://localhost/hook",
+        "https://127.0.0.1:8000/hook",
+        "http://10.0.0.5/internal",
+    ):
+        resp = client.post(
+            "/api/crm/connections", json={"provider": "webhook", "webhook_url": url}
+        )
+        assert resp.status_code == 422, f"aceitou destino interno: {url}"
+
+
+def test_conexao_exige_https(client):
+    with patch("routers.crm_config.is_valid_target", return_value=True):
+        resp = client.post(
+            "/api/crm/connections",
+            json={"provider": "webhook", "webhook_url": "http://hooks.exemplo.com/in"},
+        )
+    assert resp.status_code == 422
+    assert "https" in resp.json()["detail"].lower()
+
+
+def test_push_nao_envia_para_destino_nao_publico(client, monkeypatch):
+    """Mesmo com a URL já gravada (ou vinda do env), o envio revalida."""
+    monkeypatch.setenv("CRM_WEBHOOK_URL", "http://127.0.0.1:9000/hook")
+    monkeypatch.delenv("CRM_WEBHOOK_SECRET", raising=False)
+    lead = _make_lead(client)
+
+    with patch("services.crm.webhook.requests.post") as post:
+        resp = client.post(f"/api/leads/{lead['id']}/push")
+
+    post.assert_not_called()
+    assert resp.status_code == 502
+
+
 def test_push_sends_signed_payload(client, monkeypatch):
     monkeypatch.setenv("CRM_WEBHOOK_URL", "https://hooks.example.com/in")
     monkeypatch.setenv("CRM_WEBHOOK_SECRET", "s3gr3do")
@@ -51,13 +93,16 @@ def test_push_sends_signed_payload(client, monkeypatch):
 
     captured = {}
 
-    def fake_post(url, data=None, headers=None, timeout=None):
-        captured.update(url=url, data=data, headers=headers)
+    def fake_post(url, data=None, headers=None, timeout=None, allow_redirects=None):
+        captured.update(url=url, data=data, headers=headers, allow_redirects=allow_redirects)
         m = MagicMock()
         m.status_code = 200
         return m
 
-    with patch("services.crm.webhook.requests.post", side_effect=fake_post):
+    # A resolução de DNS do destino é parte da defesa anti-SSRF; aqui ela é
+    # mockada para o teste não depender de rede.
+    with patch("services.crm.webhook.is_public_url", return_value=True), \
+         patch("services.crm.webhook.requests.post", side_effect=fake_post):
         resp = client.post(f"/api/leads/{lead['id']}/push")
 
     assert resp.status_code == 200
@@ -68,11 +113,10 @@ def test_push_sends_signed_payload(client, monkeypatch):
     expected = hmac.new(b"s3gr3do", captured["data"], hashlib.sha256).hexdigest()
     assert captured["headers"]["X-LeadEnricher-Signature"] == f"sha256={expected}"
 
-    # Payload contém o lead com score
+    # Payload contém o lead
     payload = json.loads(captured["data"])
     assert payload["event"] == "lead.push"
     assert payload["lead"]["company_name"] == "Nubank"
-    assert "score" in payload["lead"]
 
     # Auditoria: nota criada na timeline
     timeline = client.get(f"/api/leads/{lead['id']}/activities").json()
@@ -122,16 +166,6 @@ def test_ai_summary_generates_and_caches(client, monkeypatch):
     # O resumo cacheado aparece no LeadOut
     lead_out = client.get(f"/api/leads/{lead['id']}").json()
     assert lead_out["ai_summary"] == "Resumo executivo da Nubank."
-
-
-def test_call_script(client, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    lead = _make_lead(client)
-    _make_pro_profile()
-    with patch("services.ai_insights._call_claude", return_value="Roteiro: abertura..."):
-        resp = client.post(f"/api/leads/{lead['id']}/call-script", json={"product": "ERP"})
-    assert resp.status_code == 200
-    assert "Roteiro" in resp.json()["script"]
 
 
 # ── provedor Hunter ───────────────────────────────────────────────────────────

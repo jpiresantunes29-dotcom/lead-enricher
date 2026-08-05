@@ -4,5 +4,15 @@
     "main.py": {
       "maxDuration": 60
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/internal/jobs/run",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/internal/demo/cleanup",
+      "schedule": "30 4 * * *"
+    }
+  ]
 }

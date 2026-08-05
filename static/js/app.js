@@ -1,7 +1,7 @@
 /* ════════════════════════════════════════════════════════════════
    LeadEnricher — app (/app)
-   Views roteadas por hash: '' (buscar) · #dashboard · #pipeline ·
-   #followups · #history · #settings · #lead-<id>
+   Views roteadas por hash: '' (buscar) · #sheet · #import · #dashboard ·
+   #pipeline · #followups · #history · #settings · #lead-<id>
    ════════════════════════════════════════════════════════════════ */
 
 /* ══════ LOADING MESSAGES ══════ */
@@ -28,6 +28,12 @@ const _AUTH_REDIRECT=window.location.origin+'/app';
 
 // Demo mode: token local que o backend reconhece (DEMO_MODE=1)
 const _DEMO_KEY='le_demo_token';
+
+// Auto-create demo token on first load
+if(!localStorage.getItem(_DEMO_KEY)){
+  const t='demo-session-'+Math.random().toString(36).slice(2,12);
+  localStorage.setItem(_DEMO_KEY,t);
+}
 function _getDemoToken(){return localStorage.getItem(_DEMO_KEY);}
 function _setDemoToken(){
   const t='demo-session-'+Math.random().toString(36).slice(2,12);
@@ -161,7 +167,7 @@ function closePaywall(){document.getElementById('paywall-modal').classList.remov
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
-const ROUTES=['','dashboard','pipeline','followups','history','settings'];
+const ROUTES=['','sheet','import','dashboard','pipeline','followups','history','settings'];
 
 function nav(route){
   if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
@@ -193,7 +199,9 @@ function applyRoute(){
     return;
   }
   showView(h||'search');
-  if(h==='dashboard')loadDashboard();
+  if(h==='sheet')loadSheet({page:1});
+  else if(h==='import')loadImport();
+  else if(h==='dashboard')loadDashboard();
   else if(h==='pipeline')loadPipeline();
   else if(h==='followups')loadFollowups();
   else if(h==='history')loadHistory();
@@ -751,14 +759,19 @@ function renderHistory(q){
     const emp=e?(typeof e==='object'?(e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'—')):e):'—';
     const score=l.score!=null?`<span class="kb-prio prio-${l.priority||'baixa'}" title="prioridade ${l.priority||''}">${l.score}</span>`:'—';
     return `<tr id="row-${l.id}">
-      <td class="td-co"><button class="td-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
+      <td class="td-co">
+        <button class="td-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button>
+        ${l.status==='imported'?'<span class="imp-tag" title="Veio de planilha e ainda não foi enriquecido">planilha</span>':''}
+      </td>
       <td class="td-mono">${esc(l.domain||'—')}</td>
       <td>${score}</td>
       <td><span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
       <td class="td-mono">${esc(String(emp))}</td>
       <td class="td-mono td-date">${date}</td>
       <td class="td-actions">
-        <button class="hist-btn primary" onclick="loadLeadIntoView(${l.id})">Ver</button>
+        ${l.status==='imported'
+          ? `<button class="hist-btn primary" onclick="enrichImportedLead(${l.id},this)" title="Coletar dados deste domínio (usa 1 busca)">Enriquecer</button>`
+          : `<button class="hist-btn primary" onclick="loadLeadIntoView(${l.id})">Ver</button>`}
         <button class="hist-btn" onclick="exportLead(${l.id},'csv')" title="Exportar CSV">CSV</button>
         <button class="hist-btn danger icon" onclick="deleteLead(${l.id})" title="Remover">${IC_TRASH}</button>
       </td>
@@ -809,6 +822,218 @@ async function exportAll(fmt){
   a.href=url;a.download=`leads_enriquecidos.${fmt}`;
   document.body.appendChild(a);a.click();
   setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+}
+
+/* ══════ VIEW: IMPORTAR PLANILHA ══════
+   Sobe o arquivo, confere o que foi reconhecido e manda para a planilha.
+   O servidor guarda um rascunho do que leu, então o navegador nunca precisa
+   mandar 1.000 linhas de volta no commit.                                   */
+let _imp={preview:null,file:null,busy:false};
+
+const IMP_STATUS={
+  ok:{label:'Pronto',cls:'ok'},
+  duplicate_db:{label:'Já no histórico',cls:'warn'},
+  duplicate_file:{label:'Repetida no arquivo',cls:'warn'},
+  invalid:{label:'Sem identificação',cls:'err'},
+};
+const IMP_FIELDS={domain:'Domínio',company_name:'Empresa',sector:'Setor',location:'Localização',
+  corporate_email:'Email',phone:'Telefone',linkedin_url:'LinkedIn',mx_provider:'Provedor de e-mail',
+  employee_count:'Funcionários',description:'Descrição'};
+const IMP_PREVIEW_COLS=7;
+
+function loadImport(){
+  _imp={preview:null,file:null,busy:false};
+  renderImportDrop();
+}
+
+function renderImportDrop(errorMsg){
+  document.getElementById('import-body').innerHTML=`
+    <div class="panel panel-pad">
+      ${errorMsg?`<div class="imp-error">${esc(errorMsg)}</div>`:''}
+      <div class="imp-drop" id="imp-drop"
+           ondragover="impDragOver(event)" ondragleave="impDragLeave(event)" ondrop="impDrop(event)"
+           onclick="document.getElementById('imp-file').click()">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <strong>Arraste a planilha aqui ou clique para escolher</strong>
+        <span>.xlsx ou .csv · até 5.000 linhas · todas as colunas são preservadas</span>
+      </div>
+      <input type="file" id="imp-file" accept=".xlsx,.xlsm,.csv,.tsv" style="display:none"
+             onchange="impFileChange(this)" />
+      <div class="imp-hint">
+        Nada é descartado: cada coluna do seu arquivo vira uma coluna da planilha, com o mesmo
+        nome e na mesma ordem. As que o sistema entende — <em>Empresa, Domínio, Site, LinkedIn,
+        E-mail, Telefone, Funcionários</em> — também alimentam o enriquecimento, que acrescenta
+        colunas novas sem mexer nas suas.
+      </div>
+    </div>`;
+}
+
+function impDragOver(e){e.preventDefault();document.getElementById('imp-drop').classList.add('over');}
+function impDragLeave(e){
+  const drop=document.getElementById('imp-drop');
+  if(!drop.contains(e.relatedTarget))drop.classList.remove('over');
+}
+function impDrop(e){
+  e.preventDefault();
+  document.getElementById('imp-drop')?.classList.remove('over');
+  const file=e.dataTransfer?.files?.[0];
+  if(file)uploadImportFile(file);
+}
+function impFileChange(input){if(input.files&&input.files[0])uploadImportFile(input.files[0]);}
+
+async function uploadImportFile(file,sheet){
+  const token=await getToken();
+  if(!token){openAuthModal();return;}
+  _imp.file=file;
+  document.getElementById('import-body').innerHTML=
+    `<div class="panel"><div class="muted-box">Lendo <strong>${esc(file.name)}</strong>…</div></div>`;
+  const form=new FormData();
+  form.append('file',file,file.name);
+  if(sheet)form.append('sheet',sheet);
+  try{
+    // FormData define o próprio Content-Type (com boundary) — por isso o fetch
+    // aqui é manual, sem o header JSON do authFetch.
+    const resp=await fetch('/api/import/preview',{method:'POST',
+      headers:{Authorization:`Bearer ${token}`},body:form});
+    const json=await resp.json().catch(()=>({}));
+    if(!resp.ok){renderImportDrop(json.detail||'Não consegui ler esta planilha.');return;}
+    _imp.preview=json;
+    renderImportPreview();
+  }catch(e){renderImportDrop('Erro de conexão ao enviar o arquivo.');}
+}
+
+function renderImportPreview(){
+  const p=_imp.preview;
+  const mapped=p.columns.filter(c=>c.field);
+  const chips=mapped.map(c=>
+    `<span class="imp-chip"><span class="imp-chip-f">${IMP_FIELDS[c.field]||c.field}</span>${esc(c.label)}</span>`).join('');
+  const extras=p.columns.length-mapped.length;
+
+  const sheetPicker=p.sheets.length>1?`
+    <div class="imp-sheets">
+      <span class="imp-map-lbl">Aba</span>
+      ${p.sheets.map(s=>`<button class="sh-chip${s.name===p.sheet?' on':''}"
+        onclick="uploadImportFile(_imp.file,${JSON.stringify(s.name).replace(/"/g,'&quot;')})">
+        ${esc(s.name)} <span class="imp-sheet-n">${s.rows}</span></button>`).join('')}
+    </div>`:'';
+
+  // Mostra as primeiras colunas do arquivo, do jeito que estão
+  const cols=p.columns.slice(0,IMP_PREVIEW_COLS);
+  const head=cols.map(c=>`<th>${esc(c.label)}</th>`).join('');
+  const rows=p.rows.map(r=>{
+    const st=IMP_STATUS[r.status]||{label:r.status,cls:''};
+    const tds=cols.map(c=>{
+      const v=r.cells[c.label];
+      return `<td>${v==null?'':esc(String(v)).slice(0,80).replace(/\n/g,' ⏎ ')}</td>`;
+    }).join('');
+    return `<tr class="${r.status==='invalid'?'imp-row-off':''}">
+      <td class="td-mono">${r.row_number}</td>${tds}
+      <td><span class="imp-badge ${st.cls}">${st.label}</span></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('import-body').innerHTML=`
+    <div class="panel">
+      <div class="imp-head">
+        <div>
+          <div class="imp-file">${esc(p.filename)} <span class="imp-sheet-tag">${esc(p.sheet)}</span></div>
+          <div class="imp-sum">${esc(p.message)}</div>
+        </div>
+        <button class="ghost-btn" onclick="loadImport()">Trocar arquivo</button>
+      </div>
+      ${sheetPicker}
+      <div class="imp-map">
+        <div class="imp-map-lbl">${p.columns.length} colunas — ${mapped.length} reconhecidas pelo sistema</div>
+        <div class="imp-chips">${chips||'<span class="imp-unmapped">nenhuma</span>'}</div>
+        ${extras?`<div class="imp-unmapped">As outras ${extras} coluna(s) entram na planilha do mesmo jeito, sem interpretação.</div>`:''}
+      </div>
+      ${p.truncated?'<div class="imp-warn">O arquivo passa de 5.000 linhas — só as primeiras 5.000 foram lidas.</div>':''}
+      <div class="tbl-scroll"><table class="lead-tbl imp-tbl">
+        <thead><tr><th>Linha</th>${head}<th>Situação</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div class="imp-more">Mostrando ${p.rows.length} de ${p.total_rows} linhas e ${cols.length} de ${p.columns.length} colunas — a planilha completa aparece depois de importar.</div>
+      <div class="imp-foot">
+        <label class="imp-check">
+          <input type="checkbox" id="imp-skip-dup" ${p.counts.duplicate_db?'checked':''} />
+          Pular ${p.counts.duplicate_db||0} empresa(s) que já estão no histórico
+        </label>
+        <button class="app-btn-primary" id="imp-commit-btn" onclick="commitImport()"
+                ${p.importable?'':'disabled'}>
+          Importar ${p.importable} empresa(s)
+        </button>
+      </div>
+    </div>`;
+}
+
+async function commitImport(){
+  const p=_imp.preview;
+  if(!p)return;
+  const btn=document.getElementById('imp-commit-btn');
+  if(btn){btn.disabled=true;btn.textContent='Importando…';}
+  const skipExisting=document.getElementById('imp-skip-dup')?.checked!==false;
+  try{
+    const resp=await authFetch(`/api/import/${p.batch_id}/commit`,{method:'POST',
+      body:JSON.stringify({skip_existing:skipExisting,skip_duplicates:false})});
+    const json=await resp.json().catch(()=>({}));
+    if(!resp.ok){renderImportPreview();alert(json.detail||'Erro ao importar a planilha.');return;}
+    renderImportDone(json);
+  }catch(e){
+    if(e.message!=='not_authenticated'){renderImportPreview();alert('Erro de conexão.');}
+  }
+}
+
+function renderImportDone(result){
+  const quota=_profile&&_profile.searches_limit>0
+    ? Math.max(_profile.searches_limit-_profile.searches_used,0) : null;
+  document.getElementById('import-body').innerHTML=`
+    <div class="panel panel-pad imp-done">
+      <div class="imp-done-ico">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <h3>${result.created} empresa(s) importada(s)</h3>
+      <p class="imp-done-sub">
+        ${result.skipped?`${result.skipped} linha(s) ignorada(s) por já existirem ou por não terem identificação.<br/>`:''}
+        A planilha completa já está no sistema, com todas as colunas do seu arquivo.
+        O enriquecimento roda de lá e acrescenta site, LinkedIn, DNS/MX, telefone e score.
+      </p>
+      <p class="imp-quota">${quota!==null?`Você tem ${quota} busca(s) na cota — cada empresa enriquecida consome 1.`:'Cada empresa enriquecida consome 1 busca da cota.'}</p>
+      <div class="imp-done-actions">
+        <button class="app-btn-primary" onclick="nav('sheet')">Abrir a planilha</button>
+        <button class="ghost-btn" onclick="loadImport()">Importar outra</button>
+      </div>
+    </div>`;
+}
+
+async function downloadImportTemplate(fmt){
+  const token=await getToken();
+  if(!token){openAuthModal();return;}
+  const resp=await fetch(`/api/import/template?format=${fmt}`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!resp.ok){alert('Erro ao baixar o modelo.');return;}
+  const url=URL.createObjectURL(await resp.blob());
+  const a=document.createElement('a');
+  a.href=url;a.download=`modelo_importacao.${fmt}`;
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+}
+
+/* Enriquecimento avulso de um lead importado (botão do histórico) */
+async function enrichImportedLead(leadId,btn){
+  if(btn){btn.disabled=true;btn.textContent='…';}
+  try{
+    const resp=await authFetch(`/api/leads/${leadId}/enrich`,{method:'POST'});
+    if(resp.status===402){openPaywall();return;}
+    const json=await resp.json().catch(()=>({}));
+    if(!resp.ok){alert(json.detail||'Erro ao enriquecer.');return;}
+    loadProfile();
+    loadHistory();
+  }catch(e){
+    if(e.message!=='not_authenticated')alert('Erro de conexão.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Enriquecer';}
+  }
 }
 
 /* ══════ VIEW: CONFIGURAÇÕES ══════ */

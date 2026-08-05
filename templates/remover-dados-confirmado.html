@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+{% include '_seo_head.html' %}
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>'/>
+  <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin/>
+  <link rel="stylesheet" href="/static/fonts/fonts.css?v=1"/>
+  <style>{% include 'legal_base.css' %}</style>
+  <style>
+    .rd-card{margin:28px 0;padding:24px;border-radius:14px;border:1px solid rgba(148,163,184,.35)}
+    .rd-card.ok{background:#ecfdf5;border-color:#6ee7b7}
+    .rd-card.err{background:#fef2f2;border-color:#fca5a5}
+    .rd-card h2{margin-top:0}
+    .rd-cta{display:inline-block;margin-top:14px;padding:12px 20px;border-radius:9px;
+      background:#1D4ED8;color:#fff;font-weight:600;text-decoration:none}
+  </style>
+</head>
+<body>
+<header class="lg-header">
+  <a class="lg-logo" href="/">LeadEnricher</a>
+  <a class="lg-back" href="/">Voltar ao site →</a>
+</header>
+<main class="lg-wrap">
+  <div class="lg-kicker">Seus direitos</div>
+
+  {% if confirmado %}
+  <h1>Remoção confirmada</h1>
+  <div class="rd-card ok">
+    <h2>Pronto — o dado saiu da nossa base.</h2>
+    <p>O contato foi apagado e o identificador ficou <strong>permanentemente
+    bloqueado</strong>: ele não volta nem que apareça de novo em outra fonte pública.</p>
+    <p>Guardamos apenas um código irreversível (hash) do dado, que serve só para
+    reconhecer e barrar futuras reinserções. O valor original não fica em lugar nenhum.</p>
+  </div>
+  {% else %}
+  <h1>Link inválido ou expirado</h1>
+  <div class="rd-card err">
+    <h2>Não conseguimos confirmar este pedido.</h2>
+    <p>O link vale por 24 horas e só pode ser usado uma vez. Se ele expirou — ou se
+    a remoção já tinha sido confirmada antes — faça um novo pedido.</p>
+    <a class="rd-cta" href="/remover-meus-dados">Fazer um novo pedido</a>
+  </div>
+  {% endif %}
+
+  <h2>Dúvidas</h2>
+  <p>Para confirmar se tratamos algum outro dado seu, corrigir uma informação errada ou
+  pedir esclarecimentos, escreva para
+  <a href="mailto:privacidade@leadenricher.app">privacidade@leadenricher.app</a>.
+  Respondemos em até 15 dias, conforme a LGPD.</p>
+</main>
+<footer class="lg-footer">
+  LeadEnricher © 2026 ·
+  <a href="/guias">Guias</a>·
+  <a href="/termos">Termos de Uso</a>·
+  <a href="/privacidade">Privacidade</a>·
+  <a href="/seguranca">Segurança</a>
+</footer>
+</body>
+</html>

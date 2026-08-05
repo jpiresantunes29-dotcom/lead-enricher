@@ -74,6 +74,13 @@ class Lead(Base):
     stage = Column(String(20), nullable=False, default="novo")
     # Fase 5 — resumo executivo gerado por IA (cacheado)
     ai_summary = Column(Text, nullable=True)
+    # ── Planilha importada ────────────────────────────────────────────────
+    # cells guarda TODAS as células da linha original, na chave do cabeçalho
+    # original ("📩 Email", "🏆 TIER"…). O enriquecimento nunca escreve aqui:
+    # as colunas do sistema vivem nos campos acima, as do usuário vivem aqui.
+    cells = Column(JSON, nullable=True)
+    import_batch_id = Column(String(36), nullable=True, index=True)
+    sheet_row = Column(Integer, nullable=True)   # linha original no arquivo
     created_at = Column(DateTime, default=lambda: datetime.now(UTC))
 
     decision_makers = relationship("DecisionMaker", back_populates="lead", cascade="all, delete-orphan")
@@ -138,18 +145,43 @@ def _ensure_new_columns():
     if "leads" not in inspector.get_table_names():
         return
     existing = {c["name"] for c in inspector.get_columns("leads")}
+    json_type = "TEXT" if _is_sqlite else "JSON"
     additions = {
         "score": "INTEGER",
         "priority": "VARCHAR(10)",
-        "score_breakdown": "JSON" if not _is_sqlite else "TEXT",
+        "score_breakdown": json_type,
         "score_version": "VARCHAR(10)",
         "stage": "VARCHAR(20) DEFAULT 'novo'",
         "ai_summary": "TEXT",
+        "cells": json_type,
+        "import_batch_id": "VARCHAR(36)",
+        "sheet_row": "INTEGER",
     }
     with engine.begin() as conn:
         for name, ddl in additions.items():
             if name not in existing:
                 conn.execute(text(f"ALTER TABLE leads ADD COLUMN {name} {ddl}"))
+
+
+class ImportBatch(Base):
+    """
+    Uma planilha importada. Guarda a ordem e os rótulos originais das colunas
+    (é isso que faz a view de planilha reproduzir o arquivo do usuário) e,
+    enquanto está em rascunho, as linhas lidas — assim o preview não precisa
+    devolver 1.000 linhas para o navegador e recebê-las de volta no commit.
+    """
+    __tablename__ = "import_batches"
+
+    id = Column(String(36), primary_key=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    filename = Column(String(500))
+    sheet_name = Column(String(255))
+    columns = Column(JSON)          # [{label, field, kind}] na ordem do arquivo
+    row_count = Column(Integer, default=0)
+    status = Column(String(20), default="draft")   # draft | committed
+    draft_rows = Column(JSON)       # linhas lidas; limpo após o commit
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    committed_at = Column(DateTime, nullable=True)
 
 
 class CRMConnection(Base):
@@ -168,6 +200,39 @@ class CRMConnection(Base):
     updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
 
 
+class Job(Base):
+    """Fila de processamento de enriquecimento."""
+    __tablename__ = "jobs"
+
+    id = Column(String(36), primary_key=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False)
+    user_id = Column(String(36), nullable=False)
+    status = Column(String(20), default="pending")  # pending | processing | completed | failed
+    tentativa = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at = Column(DateTime, default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class Company(Base):
+    """Empresa (stub para compatibilidade)."""
+    __tablename__ = "companies"
+    id = Column(Integer, primary_key=True)
+
+
+class Person(Base):
+    """Pessoa (stub para compatibilidade)."""
+    __tablename__ = "persons"
+    id = Column(Integer, primary_key=True)
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
     _ensure_new_columns()
+
+
+HIDDEN_LEAD_STATUSES = ("deleted", "archived")
+
+
+def utcnow():
+    """Retorna a hora atual em UTC."""
+    return datetime.now(UTC)

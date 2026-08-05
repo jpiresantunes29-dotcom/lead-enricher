@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Política de Privacidade — LeadEnricher</title>
+{% include '_seo_head.html' %}
   <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>'/>
-  <link rel="preconnect" href="https://fonts.googleapis.com"/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin/>
+  <link rel="stylesheet" href="/static/fonts/fonts.css?v=1"/>
   <style>{% include 'legal_base.css' %}</style>
 </head>
 <body>
@@ -55,8 +55,10 @@
   <ul>
     <li>Leads e contatos podem ser excluídos pelo usuário a qualquer momento na
     plataforma (Histórico → remover).</li>
-    <li>Dados de contatos profissionais vinculados a leads sem atividade são
-    anonimizados periodicamente conforme nossa política de retenção.</li>
+    <li>Qualquer titular pode pedir a remoção do próprio e-mail, telefone ou perfil
+    em <a href="/remover-meus-dados">Remover meus dados</a>, sem cadastro. O bloqueio
+    é permanente: o dado deixa de ser entregue e também de ser gravado em coletas
+    futuras.</li>
     <li>Com o encerramento da conta, os dados associados são excluídos em até 30 dias,
     exceto registros exigidos por obrigação legal.</li>
   </ul>
@@ -81,6 +83,7 @@
 </main>
 <footer class="lg-footer">
   LeadEnricher © 2026 ·
+  <a href="/guias">Guias</a>·
   <a href="/termos">Termos de Uso</a>·
   <a href="/privacidade">Privacidade</a>·
   <a href="/seguranca">Segurança</a>

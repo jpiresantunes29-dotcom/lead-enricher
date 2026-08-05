@@ -55,13 +55,61 @@ Parcialmente feito em 2026-07-05 (suíte foi de 68 → 80 testes):
 
 ## Fase 1 — Retenção e uso diário (usuário volta todo dia)
 
-### 1.1 Enriquecimento em lote (re-lançamento)
-O endpoint de lote foi **removido** nesta auditoria: estava quebrado
-(`scalar_all()` inexistente, violação de NOT NULL, nada processava os leads
-"pending") e sem UI. Relançar sobre a fila do item 0.2:
-- Upload CSV → cria jobs → barra de progresso na UI → resultado vira leads
-  no pipeline. Respeitar cota (1 busca por domínio) e cache de 7 dias.
-- Esforço: 2–3 dias. É a feature mais pedida em ferramentas concorrentes.
+### 1.1b Planilha dentro do sistema ✅ feito em 2026-08-05
+Validado contra uma base real de prospecção (968 empresas, 19 colunas,
+janeiro a julho). O objetivo é substituir o Excel, não conversar com ele:
+
+- **Fidelidade total.** `Lead.cells` guarda todas as células da linha com o
+  rótulo original (emoji incluso) e `import_batches.columns` guarda a ordem
+  das colunas. Data vira ISO, número continua número, texto multi-linha fica
+  intacto. Teste de ida e volta na base real: 18.392 células comparadas entre
+  o arquivo do usuário e o exportado, 0 divergências.
+- **Duas famílias de colunas.** As do arquivo (do usuário) e as do sistema
+  (Domínio, Setor, Score…). O enriquecimento só escreve nas do sistema — é o
+  que garante que a planilha original continue valendo depois da coleta.
+- **Grid em `#sheet`**: cabeçalho e coluna de linha fixos, edição inline com
+  teclado (Enter, Tab, setas, digitar substitui), busca em todas as colunas,
+  ordenação que entende "1000 a 5000" como número, filtro por situação,
+  nova linha, exclusão em lote e exportação do que está na tela.
+- **Fila paralela**: N requisições simultâneas (2 a 12, padrão 6) contra
+  `POST /api/leads/{id}/enrich`. Concorrência medida em teste de navegador.
+  Cada lead consome 1 busca da cota; 402 para a fila com recado.
+- **Descoberta de domínio** (`services/domain_finder.py`): a base real tinha
+  968 empresas e só 67 domínios confiáveis. Sem isso, 93% das linhas não
+  teriam como ser enriquecidas. Busca pelo nome, descarta rede social e
+  agregador, confirma abrindo o site e recusa quando não dá para ter certeza.
+- **E-mail da linha errada**: planilhas antigas acumulam isso. O domínio só
+  é herdado do e-mail quando combina com o nome da empresa (8 casos na base
+  real teriam enriquecido a empresa errada).
+
+Pendente: fila server-side (item 0.2) para o usuário poder fechar a aba;
+hoje o enriquecimento em lote depende da aba aberta.
+
+### 1.1 Importação de planilha + lote ✅ feito em 2026-08-05
+Relançado sem depender da fila do item 0.2 — a fila roda **no cliente**, um
+lead por requisição, porque cada coleta leva 10–30 s e o `maxDuration` da
+função na Vercel é 60 s.
+
+Como funciona hoje:
+- `services/importer.py` lê .xlsx/.csv, acha a linha de cabeçalho (pula
+  títulos), mapeia colunas por alias PT/EN sem acento (Domínio, Site, Razão
+  Social, Setor, Telefone…), normaliza domínio sujo e deriva domínio do e-mail
+  quando não há coluna de site. Limites: 5 MB e 500 linhas.
+- `POST /api/import/preview` só lê o arquivo (não grava) e devolve o
+  diagnóstico linha a linha: ok, inválida, repetida no arquivo, já no
+  histórico. `POST /api/import` grava os leads confirmados com
+  `status="imported"` — sem consumir cota e sem score (scoring depende de
+  sinais da coleta).
+- `POST /api/leads/{id}/enrich` enriquece **no mesmo lead** (nada de
+  duplicata), consome 1 busca e preserva o que veio da planilha nos campos que
+  a coleta não achou. A busca manual de um domínio já importado cai no mesmo
+  caminho. `GET /api/import/template` baixa o modelo de planilha.
+- UI em `#import`: drop zone → preview com colunas reconhecidas → barra de
+  progresso com "Parar", tratamento de 402 (cota) e 429 (rate limit). No
+  histórico, lead importado ganha a tag "planilha" e um botão "Enriquecer".
+
+Pendente (herda do 0.2): fila server-side para o usuário poder fechar a aba
+durante o enriquecimento em lote.
 
 ### 1.2 Notas e edição manual do lead
 Hoje o lead é 100 % automático. Vendedor precisa corrigir telefone, adicionar

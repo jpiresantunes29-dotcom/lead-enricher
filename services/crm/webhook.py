@@ -21,9 +21,27 @@ from typing import Any, List, Optional
 
 import requests
 
+from services._utils import is_public_url
+
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10
+
+# Erro devolvido quando a URL não passa na checagem de destino.
+INVALID_TARGET = "invalid_target"
+
+
+def is_valid_target(url: str) -> bool:
+    """
+    O destino é um endereço público de verdade?
+
+    Sem esta checagem o webhook vira SSRF: o usuário aponta para
+    http://169.254.169.254 (metadados da nuvem) ou para um serviço interno e
+    faz o NOSSO servidor bater lá, de dentro da rede, com o lead no corpo.
+    `is_public_url` resolve o host e recusa qualquer IP privado, loopback,
+    link-local ou reservado.
+    """
+    return bool(url) and is_public_url(url)
 
 
 def is_configured() -> bool:
@@ -45,8 +63,6 @@ def _serialize_lead(lead: Any, decision_makers: List[Any], activities: List[Any]
             "employee_count": lead.employee_count,
             "sector": lead.sector,
             "location": lead.location,
-            "score": lead.score,
-            "priority": lead.priority,
             "stage": lead.stage,
         },
         "decision_makers": [
@@ -91,6 +107,13 @@ def push_lead(
     if not url:
         return {"ok": False, "status_code": None, "error": "not_configured"}
 
+    # Revalidado no envio, não só na gravação: um domínio válido ontem pode
+    # apontar para 127.0.0.1 hoje (DNS rebinding), e a URL do env nunca passou
+    # pela validação do formulário.
+    if not is_valid_target(url):
+        logger.warning("CRM webhook bloqueado: destino não público (lead=%s)", lead.id)
+        return {"ok": False, "status_code": None, "error": INVALID_TARGET}
+
     payload = _serialize_lead(lead, decision_makers, activities)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
@@ -100,7 +123,11 @@ def push_lead(
         headers["X-LeadEnricher-Signature"] = f"sha256={sig}"
 
     try:
-        resp = requests.post(url, data=body, headers=headers, timeout=_TIMEOUT)
+        # Sem seguir redirect: um destino público que responde 302 para
+        # http://127.0.0.1 contornaria a validação acima.
+        resp = requests.post(
+            url, data=body, headers=headers, timeout=_TIMEOUT, allow_redirects=False,
+        )
         ok = 200 <= resp.status_code < 300
         if not ok:
             logger.warning("CRM webhook returned %s for lead=%s", resp.status_code, lead.id)

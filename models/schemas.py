@@ -154,3 +154,137 @@ class ActivityResponse(BaseModel):
 
 class StageUpdate(BaseModel):
     stage: str
+
+
+# ── Importação de planilha ────────────────────────────────────────────────────
+
+class SheetColumn(BaseModel):
+    """Coluna da planilha, na ordem original do arquivo."""
+    label: str                        # rótulo exato do cabeçalho ("📩 Email")
+    field: Optional[str] = None       # campo do Lead que ela alimenta, se houver
+    kind: str = "text"                # text | number | date | bool
+
+
+class SheetSummary(BaseModel):
+    name: str
+    rows: int = 0
+    columns: int = 0
+    mapped_fields: List[str] = []
+    score: int = 0
+
+
+class ImportRowOut(BaseModel):
+    """Linha lida do arquivo, com diagnóstico e todas as células preservadas."""
+    row_number: int
+    status: str                       # ok | invalid | duplicate_file | duplicate_db
+    reason: Optional[str] = None
+    cells: Dict[str, Any] = {}
+    lead: Dict[str, Any] = {}
+
+
+class ImportPreviewResponse(BaseModel):
+    success: bool
+    message: str
+    batch_id: str
+    filename: str
+    sheet: str
+    sheets: List[SheetSummary] = []
+    columns: List[SheetColumn] = []
+    total_rows: int = 0
+    importable: int = 0
+    counts: Dict[str, int] = {}
+    truncated: bool = False
+    rows: List[ImportRowOut] = []     # só as primeiras linhas, para conferência
+
+
+class ImportCommitRequest(BaseModel):
+    skip_existing: bool = True        # pula empresas que já estão no histórico
+    skip_duplicates: bool = False     # pula linhas repetidas dentro do arquivo
+
+
+class ImportCommitResponse(BaseModel):
+    success: bool
+    message: str
+    batch_id: str
+    created: int = 0
+    skipped: int = 0
+
+
+class ImportBatchOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    filename: Optional[str] = None
+    sheet_name: Optional[str] = None
+    row_count: int = 0
+    enriched_count: int = 0
+    created_at: datetime
+
+
+# ── Planilha (grid dentro do sistema) ────────────────────────────────────────
+
+class SheetRowOut(BaseModel):
+    """Uma linha do grid: id do lead + valores por rótulo de coluna."""
+    id: int
+    sheet_row: Optional[int] = None
+    status: str
+    values: Dict[str, Any] = {}
+
+
+class SheetResponse(BaseModel):
+    batch: Optional[ImportBatchOut] = None
+    batches: List[ImportBatchOut] = []
+    columns: List[SheetColumn] = []
+    system_columns: List[SheetColumn] = []
+    rows: List[SheetRowOut] = []
+    total: int = 0
+    page: int = 1
+    per_page: int = 100
+    enrichable: int = 0               # linhas ainda não enriquecidas
+    pending_ids: List[int] = []       # ids da fila, respeitando busca/filtro
+
+
+class CellUpdate(BaseModel):
+    lead_id: int
+    column: str
+    value: Optional[Any] = None
+
+
+class SheetRowCreate(BaseModel):
+    batch_id: Optional[str] = None
+    values: Dict[str, Any] = {}
+
+
+class SheetRowsDelete(BaseModel):
+    ids: List[int]
+
+
+class LeadListOut(LeadOut):
+    """Lead na listagem: sem o relatório DNS completo."""
+    pass
+
+
+# ── Enriquecimento em lote ────────────────────────────────────────────────────
+
+class BatchCreateRequest(BaseModel):
+    domains: List[str]
+    priority: Optional[str] = None
+
+
+class BatchCreateResponse(BaseModel):
+    success: bool
+    message: str
+    batch_id: Optional[str] = None
+
+
+class BatchProgressOut(BaseModel):
+    batch_id: str
+    processed: int = 0
+    total: int = 0
+    status: str = "processing"
+
+
+class BatchRunResponse(BaseModel):
+    success: bool
+    message: str
+    processed: int = 0

@@ -4,7 +4,11 @@
     {
       "name": "LeadEnricher API (FastAPI)",
       "runtimeExecutable": "C:/Users/User/AppData/Local/Programs/Python/Python314/python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "main:app", "--port", "8000"],
+      "runtimeArgs": [
+        "-c",
+        "import os, uvicorn; uvicorn.run('main:app', host='127.0.0.1', port=int(os.environ.get('PORT', '8000')))"
+      ],
+      "autoPort": true,
       "port": 8000
     }
   ]
