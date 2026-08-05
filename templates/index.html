@@ -186,6 +186,8 @@
           </button>
         </div>
 
+        <button class="btn-link sp-clear" onclick="clearResult()">← Limpar e analisar outra empresa</button>
+
         <div class="sp-examples">
           <span class="sp-ex-lbl">Testar com:</span>
           <button class="hero-ex-btn" onclick="useExample('nubank.com.br')">nubank.com.br</button>
@@ -298,8 +300,10 @@
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
     </div>
     <h3 class="modal-title">Sua cota deste ciclo acabou</h3>
-    <p class="modal-text">O plano Pro libera 500 análises por mês, 300 revelações de contato na extensão, exportação em Excel e envio ao CRM.</p>
-    <button class="modal-cta" onclick="closePaywall();startCheckout('pro')">Assinar Pro — R$ 97/mês →</button>
+    {# Texto e ação são reescritos por openPaywall(): em sessão demo o caminho
+       é criar conta, não pagar por uma conta que vive só neste navegador. #}
+    <p class="modal-text" id="paywall-text">O plano Pro libera 500 análises por mês, 300 revelações de contato na extensão, exportação em Excel e envio ao CRM.</p>
+    <button class="modal-cta" id="paywall-cta" onclick="closePaywall();startCheckout('pro')">Assinar Pro — R$ 97/mês →</button>
     <button class="modal-dismiss" onclick="closePaywall()">Agora não</button>
   </div>
 </div>
@@ -408,7 +412,10 @@
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+{# Supabase self-hosted (static/vendor/README.md): a área logada não pode
+   depender de um CDN de terceiros — quem serve este arquivo controla o token
+   de sessão de todo mundo que abre o app. #}
+<script src="/static/vendor/supabase.js?v=2.112.0"></script>
 <script src="/static/js/app.js?v=20"></script>
 </body>
 </html>

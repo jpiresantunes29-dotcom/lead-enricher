@@ -1,22 +1,25 @@
 import logging
 import logging.config
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from sqlalchemy.orm import Session
 
-from models.database import init_db
-from middleware.auth import rate_limit_key
+from models.database import get_db, init_db, schema_status
+from middleware.auth import demo_mode_enabled, jwt_configured, rate_limit_key
 from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
 from routers import extension, privacy
 from routers import dns_intel as dns_intel_router
 from routers import seo as seo_router
 from services import guides, seo
+from services.people import optout
 
 # ── Logging estruturado ───────────────────────────────────────────────────────
 logging.config.dictConfig({
@@ -39,21 +42,52 @@ logging.config.dictConfig({
 
 logger = logging.getLogger(__name__)
 
+# Ambiente: "production" fecha a documentação interativa e faz o app gritar
+# quando o schema não sobe. Em dev tudo fica aberto para inspeção.
+APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = APP_ENV == "production"
+
 # ── Rate limiter (por usuário JWT; fallback IP) ───────────────────────────────
 limiter = Limiter(key_func=rate_limit_key, default_limits=["60/minute"])
 
 
+def _check_configuration() -> None:
+    """
+    Confere no boot o que, faltando, quebra o app de forma silenciosa e cara.
+    Em produção é falha dura: subir sem poder autenticar ninguém é pior do que
+    não subir.
+    """
+    if not jwt_configured():
+        message = (
+            "SUPABASE_JWT_SECRET ausente ou curto demais: nenhum login real "
+            "será aceito (as rotas respondem 503)."
+        )
+        if IS_PRODUCTION and not demo_mode_enabled():
+            raise RuntimeError(message)
+        logger.warning("%s Modo demo=%s.", message, demo_mode_enabled())
+
+    if IS_PRODUCTION and demo_mode_enabled():
+        # Não é erro — é decisão consciente que precisa aparecer no log.
+        logger.warning(
+            "DEMO_MODE ligado em produção: qualquer visitante recebe uma conta "
+            "de demonstração. Defina DEMO_MODE=0 quando houver clientes reais."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("LeadEnricher starting up.")
+    logger.info("LeadEnricher starting up (env=%s).", APP_ENV)
+    _check_configuration()
     try:
         init_db()
     except Exception:
-        # Não deixa uma falha de init_db (conectividade, permissão de DDL no
-        # pooler etc.) derrubar o processo inteiro a cada cold start — o
-        # runtime Python da Vercel engole exceções de lifespan sem traceback,
-        # então logamos explicitamente para conseguir diagnosticar.
-        logger.exception("init_db() falhou; app segue no ar sem garantir o schema.")
+        # Em produção, schema quebrado significa app inútil: melhor falhar no
+        # boot (a Vercel mostra o erro no deploy) do que responder 500 em cada
+        # clique do usuário. Em dev, seguimos com o aviso para não travar quem
+        # está sem banco configurado.
+        logger.exception("init_db() falhou.")
+        if IS_PRODUCTION:
+            raise
     yield
     logger.info("LeadEnricher shutting down.")
 
@@ -63,16 +97,53 @@ app = FastAPI(
     description="Inteligência comercial automatizada — descubra empresas em segundos.",
     version="2.1.0",
     lifespan=lifespan,
+    # Documentação interativa é mapa da API para quem quiser sondá-la; em
+    # produção ela não agrega nada ao usuário final.
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
 
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# ── Cabeçalhos de segurança ───────────────────────────────────────────────────
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """
+    Defesas de navegador que valem para toda resposta. Sem elas, um único
+    upload/HTML refletido vira execução de script no domínio da aplicação.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault(
+        "Permissions-Policy", "geolocation=(), microphone=(), camera=(), payment=()"
+    )
+    if request.url.scheme == "https" or IS_PRODUCTION:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
 # CORS restrito à extensão de navegador. O site é servido pela mesma origem e
 # não precisa disso; liberar geral aqui exporia a API a qualquer página web.
+#
+# O ID de uma extensão Chrome é sempre 32 letras de 'a' a 'p'. Com
+# EXTENSION_IDS definido (lista separada por vírgula), só as nossas passam —
+# é o que se deve usar depois de publicar na Web Store.
+_extension_ids = [i.strip() for i in os.getenv("EXTENSION_IDS", "").split(",") if i.strip()]
+if _extension_ids:
+    _origin_regex = "^chrome-extension://(" + "|".join(_extension_ids) + ")$"
+else:
+    _origin_regex = r"^chrome-extension://[a-p]{32}$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^chrome-extension://[a-z]+$",
+    allow_origin_regex=_origin_regex,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
@@ -99,7 +170,20 @@ app.include_router(seo_router.router)
 
 @app.get("/health", tags=["meta"])
 def health():
-    return {"status": "ok", "version": app.version}
+    """
+    Sinal de vida com verificação de schema: banco incompleto vira "degraded"
+    aqui em vez de 500 no clique do usuário. O detalhe do que falta só sai
+    fora de produção — em produção seria mapa da estrutura interna.
+    """
+    schema = schema_status()
+    payload = {
+        "status": "ok" if schema["ok"] else "degraded",
+        "version": app.version,
+        "schema_ok": schema["ok"],
+    }
+    if not IS_PRODUCTION:
+        payload["schema"] = schema
+    return payload
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -178,4 +262,26 @@ def remover_meus_dados(request: Request):
     # exigir conta para exercer um direito seria barreira indevida.
     return templates.TemplateResponse(
         request, "remover-dados.html", seo.context(request, "/remover-meus-dados")
+    )
+
+
+@app.get("/privacidade/confirmar", response_class=HTMLResponse, include_in_schema=False)
+def confirmar_remocao(request: Request, token: str = "", db: Session = Depends(get_db)):
+    """
+    Confirma o pedido de remoção pelo link enviado por e-mail e executa a
+    exclusão. É aqui — e só aqui — que o pedido público passa a valer.
+    """
+    result = optout.confirm_request(db, token)
+    db.commit()
+
+    if result:
+        kind, removed = result
+        logger.info("Opt-out confirmado kind=%s registros_removidos=%d", kind, removed)
+
+    return templates.TemplateResponse(
+        request,
+        "remover-dados-confirmado.html",
+        {**seo.context(request, "/privacidade/confirmar"), "confirmado": bool(result)},
+        # Página de uso único atrás de token: fora do índice, sempre.
+        headers={"X-Robots-Tag": "noindex, nofollow"},
     )

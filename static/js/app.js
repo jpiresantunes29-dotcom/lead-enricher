@@ -21,6 +21,7 @@ const _sb = supabase.createClient(
 );
 let _profile=null;
 let currentLeadId=null;
+let currentLeadData=null;   // ficha aberta — usada pela prévia do relatório DNS
 let _pendingRoute=null;   // rota que o usuário tentou abrir antes de logar
 
 // Rota canônica do produto — precisa estar na allowlist de Redirect URLs do Supabase
@@ -61,7 +62,10 @@ async function authFetch(url,opts={}){
 async function loadProfile(){
   try{
     const resp=await authFetch('/api/me');
-    if(resp.ok){_profile=await resp.json();updateQuotaUI();updateNavUser();loadTodayFollowupsCount();}
+    if(resp.ok){
+      _profile=await resp.json();
+      updateQuotaUI();updateNavUser();loadTodayFollowupsCount();loadRecent();
+    }
   }catch(_){}
 }
 
@@ -86,28 +90,49 @@ function updateQuotaUI(){
   const rem=searches_limit-searches_used;
   el.style.display='block';
   if(rem>0){
-    el.innerHTML='<strong></strong> análises disponíveis neste ciclo.';
+    el.innerHTML='Restam <strong></strong> análises neste ciclo. Reabrir uma empresa dos últimos 7 dias não consome cota.';
     el.querySelector('strong').textContent=`${rem} de ${searches_limit}`;
   }
-  else el.innerHTML=`<strong>Seu crédito foi esgotado.</strong> <button onclick="startCheckout('pro')">Contratar mais análises</button>`;
+  else el.innerHTML=`<strong>Sua cota deste ciclo acabou.</strong> <button onclick="startCheckout('pro')">Ver o plano Pro</button>`;
 }
 
+/* Rodapé da sidebar: quem está logado, em que plano e quanto da cota já foi. */
 function updateNavUser(){
   const preauth=document.getElementById('header-preauth');
   const postauth=document.getElementById('header-postauth');
   if(!preauth)return;
-  document.body.classList.toggle('is-demo',isDemoSession()&&!!_profile);
-  if(_profile){
-    preauth.style.display='none';
-    if(postauth)postauth.style.display='flex';
-    const{searches_used,searches_limit,plan}=_profile;
-    const quota=plan==='enterprise'?'∞':`${searches_used}/${searches_limit}`;
-    const el=document.getElementById('nav-quota');
-    if(el)el.textContent=`${quota} análises`;
-  }else{
+  const demo=isDemoSession();
+  document.body.classList.toggle('is-demo',demo&&!!_profile);
+  if(!_profile){
     preauth.style.display='flex';
     if(postauth)postauth.style.display='none';
+    return;
   }
+  preauth.style.display='none';
+  if(postauth)postauth.style.display='flex';
+
+  const{searches_used=0,searches_limit=0,plan='free',email,quota_reset_at}=_profile;
+  const unlimited=plan==='enterprise'||searches_limit<0;
+  const mail=email||(demo?'Sessão de demonstração':'—');
+  const set=(id,txt)=>{const el=document.getElementById(id);if(el)el.textContent=txt;};
+  set('sb-avatar',(mail[0]||'•').toUpperCase());
+  set('sb-user-mail',mail);
+  set('sb-user-plan',`Plano ${plan}`);
+  set('nav-quota',unlimited
+    ? 'Análises ilimitadas'
+    : `${searches_used} de ${searches_limit} análises`);
+  const reset=quota_reset_at?new Date(quota_reset_at):null;
+  set('sb-quota-reset',reset&&!unlimited
+    ? 'renova '+reset.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})
+    : '');
+  const fill=document.getElementById('sb-quota-fill');
+  if(fill){
+    const pct=unlimited?0:Math.min(100,Math.round((searches_used/Math.max(1,searches_limit))*100));
+    fill.style.width=pct+'%';
+    fill.classList.toggle('full',pct>=100);
+  }
+  const quotaBox=document.getElementById('sb-quota');
+  if(quotaBox)quotaBox.style.display=unlimited?'none':'block';
 }
 
 function openAuthModal(){document.getElementById('auth-modal').classList.add('open');}
@@ -141,6 +166,8 @@ async function signOut(){
   _profile=null;_integr=null;currentLeadId=null;
   hideResults();hideError();
   const tc=document.getElementById('trial-counter');if(tc)tc.style.display='none';
+  const rg=document.getElementById('recent-grid');if(rg)rg.innerHTML='';
+  const rb=document.getElementById('recent-block');if(rb)rb.style.display='none';
   updateNavUser();
   if(location.hash)history.replaceState(null,'',location.pathname);
   showView('search');
@@ -149,14 +176,31 @@ async function signOut(){
 async function startCheckout(plan){
   const token=await getToken();
   if(!token){openAuthModal();return;}
+  // Sessão demo mora no localStorage deste navegador: assinar por ela
+  // significaria pagar por uma conta que some ao limpar o histórico.
+  if(isDemoSession()){closePaywall();openAuthModal();return;}
   try{
     const resp=await authFetch('/api/billing/checkout',{method:'POST',body:JSON.stringify({plan})});
     const json=await resp.json();
-    if(json.url)window.location.href=json.url;
+    if(resp.ok&&json.url){window.location.href=json.url;return;}
+    alert(json.detail||'Não foi possível iniciar a assinatura agora.');
   }catch(e){if(e.message!=='not_authenticated')alert('Erro ao iniciar checkout.');}
 }
 
-function openPaywall(){document.getElementById('paywall-modal').classList.add('open');}
+function openPaywall(){
+  // Em demo o caminho não é o cartão: é criar a conta para não perder o que
+  // já foi pesquisado. O texto do modal muda junto com a ação.
+  const demo=isDemoSession();
+  const cta=document.getElementById('paywall-cta');
+  const text=document.getElementById('paywall-text');
+  if(cta){
+    cta.textContent=demo?'Criar conta gratuita →':'Assinar Pro — R$ 97/mês →';
+    cta.onclick=demo?function(){closePaywall();openAuthModal();}
+                    :function(){closePaywall();startCheckout('pro');};
+  }
+  if(text&&demo)text.textContent='Você está na demonstração — os dados ficam só neste navegador. Crie uma conta gratuita para guardar seus leads e liberar uma nova cota.';
+  document.getElementById('paywall-modal').classList.add('open');
+}
 function closePaywall(){document.getElementById('paywall-modal').classList.remove('open');}
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
@@ -241,6 +285,54 @@ function focusSearch(){
   document.getElementById('domain-input')?.focus();
 }
 
+/* Fecha a ficha aberta e devolve a tela de busca ao estado inicial. */
+function clearResult(){
+  currentLeadId=null;currentLeadData=null;
+  hideResults();hideError();
+  if(location.hash.startsWith('#lead-'))history.replaceState(null,'',location.pathname);
+  const input=document.getElementById('domain-input');
+  if(input)input.value='';
+  focusSearch();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+/* Exemplo clicável: preenche e já analisa — o usuário vê o resultado antes de
+   ter que pensar num domínio. */
+function useExample(domain){
+  const input=document.getElementById('domain-input');
+  if(!input)return;
+  input.value=domain;
+  enrich();
+}
+
+/* ══════ ÚLTIMAS ANÁLISES (preenche a tela antes da primeira busca) ══════ */
+async function loadRecent(){
+  const block=document.getElementById('recent-block');
+  const grid=document.getElementById('recent-grid');
+  if(!block||!grid||!_profile)return;
+  try{
+    const resp=await authFetch('/api/leads?per_page=6');
+    if(!resp.ok)return;
+    const leads=await resp.json();
+    if(!leads.length){block.style.display='none';return;}
+    grid.innerHTML=leads.slice(0,6).map(l=>{
+      const name=l.company_name||l.domain||'—';
+      const when=l.created_at?new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):'';
+      const stage=STAGE_LABELS[l.stage||'novo']||'';
+      return `<button class="recent-card" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${esc(name)}">
+        <span class="recent-ava">${esc((name.trim()[0]||'?').toUpperCase())}</span>
+        <span class="recent-txt">
+          <span class="recent-name">${esc(name)}</span>
+          <span class="recent-meta">${esc(stage)}${when?' · '+when:''}</span>
+        </span>
+      </button>`;
+    }).join('');
+    // Só aparece quando não há uma ficha aberta ocupando a tela
+    const hasResult=document.getElementById('view-search')?.classList.contains('has-result');
+    block.style.display=hasResult?'none':'block';
+  }catch(_){}
+}
+
 /* ══════ ENRICH ══════ */
 async function enrich(){
   const input=document.getElementById('domain-input');
@@ -310,36 +402,58 @@ async function downloadIcs(activityId){
 /* ══════ VIEW: FOLLOW-UPS ══════ */
 async function loadFollowups(){
   const body=document.getElementById('followups-body');
-  body.innerHTML='<div class="muted-box">Carregando…</div>';
+  const summary=document.getElementById('fu-summary');
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   try{
     const resp=await authFetch('/api/activities/pending');
     const list=await resp.json();
-    if(!resp.ok){body.innerHTML='<div class="muted-box">Erro ao carregar.</div>';return;}
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
     if(!list.length){
-      body.innerHTML=`<div class="muted-box">Tudo em dia — nenhum follow-up pendente.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a></div>`;
+      if(summary)summary.textContent='';
+      body.innerHTML=`<div class="panel"><div class="muted-box">
+        Tudo em dia — nenhum follow-up pendente.<br/>
+        Quando você registrar uma ligação sem resposta, a tarefa de retorno aparece aqui.
+        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a>
+      </div></div>`;
       return;
     }
     const now=Date.now();
-    body.innerHTML=list.map(a=>{
+    const endOfDay=new Date();endOfDay.setHours(23,59,59,999);
+    let late=0,today=0;
+    const rows=list.map(a=>{
       const due=a.due_at?new Date(a.due_at):null;
-      const late=due&&due.getTime()<now;
-      const when=due?due.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
-      const kind=a.type==='meeting'?'Reunião':'Follow-up';
-      const ics=a.type==='meeting'?`<button class="fu-btn" onclick="downloadIcs(${a.id})" title="Convite .ics">.ics</button>`:'';
-      return `<div class="fu-row${late?' late':''}">
+      const isLate=due&&due.getTime()<now;
+      const isToday=due&&!isLate&&due.getTime()<=endOfDay.getTime();
+      if(isLate)late++;else if(isToday)today++;
+      const when=due?due.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'sem data';
+      const kind=a.type==='meeting'?'Reunião':'Retornar contato';
+      const ics=a.type==='meeting'
+        ? `<button class="fu-btn" onclick="downloadIcs(${a.id})" title="Baixar convite de calendário (.ics)">Convite .ics</button>`
+        : '';
+      return `<div class="fu-row${isLate?' late':''}">
         <div class="fu-info">
           <span class="fu-kind">${kind}</span>
           <span class="fu-notes">${esc(a.notes||'')}</span>
-          <span class="fu-when${late?' late':''}">${late?'atrasado · ':''}${when}</span>
+          <span class="fu-when${isLate?' late':''}">${isLate?'atrasado · ':(isToday?'hoje · ':'')}${when}</span>
         </div>
         <div class="fu-actions">
-          <button class="fu-btn" onclick="loadLeadIntoView(${a.lead_id})">Abrir lead</button>
+          <button class="fu-btn" onclick="loadLeadIntoView(${a.lead_id})" title="Abrir a ficha da empresa">Abrir lead</button>
           ${ics}
-          <button class="fu-btn done" onclick="completeActivity(${a.id})">Concluir</button>
+          <button class="fu-btn done" onclick="completeActivity(${a.id})" title="Marcar como resolvido e tirar da fila">Concluir</button>
         </div>
       </div>`;
     }).join('');
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
+    const tags=[
+      late?`<span class="fu-tag late">${late} atrasado${late>1?'s':''}</span>`:'',
+      today?`<span class="fu-tag today">${today} para hoje</span>`:'',
+      `<span class="fu-tag">${list.length} no total</span>`,
+    ].filter(Boolean).join('');
+    if(summary)summary.textContent=late?`${late} tarefa(s) em atraso`:'Fila em dia';
+    body.innerHTML=`<div class="panel">
+      <div class="fu-head">${tags}<span>Concluir tira a tarefa da fila; abrir o lead leva à ficha completa.</span></div>
+      ${rows}
+    </div>`;
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
 }
 
 async function completeActivity(id){
@@ -353,45 +467,88 @@ async function completeActivity(id){
 const STAGE_LABELS={novo:'Novo',contatado:'Contatado',reuniao_agendada:'Reunião agendada',oportunidade:'Oportunidade',ganho:'Ganho',perdido:'Perdido'};
 const STAGE_ORDER=['novo','contatado','reuniao_agendada','oportunidade','ganho','perdido'];
 
+let _dashDays=30;
+
+function setDashPeriod(days){
+  _dashDays=days;
+  document.querySelectorAll('.seg-btn[data-days]').forEach(b=>b.classList.toggle('active',+b.dataset.days===days));
+  loadDashboard();
+}
+
 async function loadDashboard(){
   const body=document.getElementById('dashboard-body');
   body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   try{
-    const resp=await authFetch('/api/dashboard/metrics?days=30');
+    const resp=await authFetch(`/api/dashboard/metrics?days=${_dashDays}`);
     const m=await resp.json();
     if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
-    document.getElementById('dash-period').textContent=`Últimos ${m.period_days} dias`;
+    document.getElementById('dash-period').textContent=
+      `Números dos últimos ${m.period_days} dias. O funil considera todos os leads da conta.`;
     if(!m.leads_pesquisados){
       body.innerHTML=`<div class="panel"><div class="muted-box">
-        Seu dashboard ganha vida com a primeira busca.<br/>
+        Ainda não há dados neste período.<br/>
+        Analise uma empresa e registre a ligação: as taxas aparecem aqui.<br/>
         <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar meu primeiro domínio</a>
       </div></div>`;
       return;
     }
     const pct=v=>Math.round(v*100)+'%';
-    const kpi=(val,lbl,warn)=>`<div class="kpi${warn?' warn':''}"><span class="kpi-val">${val}</span><span class="kpi-lbl">${lbl}</span></div>`;
+    // Cada número explica o que mede — o vendedor não precisa adivinhar a conta.
+    const kpi=(val,lbl,desc,warn)=>`<div class="kpi${warn?' warn':''}">
+      <span class="kpi-val">${val}</span>
+      <span class="kpi-lbl">${lbl}</span>
+      <span class="kpi-desc">${desc}</span>
+    </div>`;
     const funilMax=Math.max(1,...STAGE_ORDER.map(s=>m.funil_por_estagio[s]||0));
     const funil=STAGE_ORDER.map(s=>{
       const v=m.funil_por_estagio[s]||0;
       return `<div class="fn-row"><span class="fn-lbl">${STAGE_LABELS[s]}</span><div class="fn-track"><div class="fn-bar" style="width:${Math.max(2,(v/funilMax)*100)}%"></div></div><span class="fn-val">${v}</span></div>`;
     }).join('');
+
+    const dicas=[];
+    if(m.followups_atrasados)dicas.push(`<b>${m.followups_atrasados} follow-up(s) atrasado(s).</b> Comece por eles — <a class="btn-link" href="#followups">abrir a fila</a>.`);
+    if(!m.ligacoes_realizadas)dicas.push('Nenhuma ligação registrada no período. Registre o resultado na ficha do lead para as taxas passarem a fazer sentido.');
+    if(m.ligacoes_realizadas&&m.taxa_contato<0.2)dicas.push('Taxa de contato abaixo de 20%: vale testar outro horário de ligação ou buscar um cargo diferente na empresa.');
+    if((m.funil_por_estagio.novo||0)>5)dicas.push(`<b>${m.funil_por_estagio.novo} leads parados em "Novo".</b> Eles ainda não receberam nenhuma tentativa de contato.`);
+    if(!dicas.length)dicas.push('Nada travado por aqui: follow-ups em dia e leads circulando no funil.');
+
     body.innerHTML=`
       <div class="kpi-grid">
-        ${kpi(m.leads_pesquisados,'leads pesquisados')}
-        ${kpi(m.ligacoes_realizadas,'ligações realizadas')}
-        ${kpi(pct(m.taxa_contato),'taxa de contato')}
-        ${kpi(pct(m.taxa_reuniao),'taxa de reunião')}
-        ${kpi(pct(m.conversao_oportunidade),'conversão p/ oportunidade')}
-        ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} atrasados)</small>`:''),'follow-ups pendentes',m.followups_atrasados>0)}
+        ${kpi(m.leads_pesquisados,'Leads pesquisados','Empresas analisadas no período')}
+        ${kpi(m.ligacoes_realizadas,'Ligações registradas','Tentativas anotadas na ficha do lead')}
+        ${kpi(pct(m.taxa_contato),'Taxa de contato','Ligações em que você falou com alguém')}
+        ${kpi(pct(m.taxa_reuniao),'Taxa de reunião','Ligações que terminaram em reunião marcada')}
+        ${kpi(pct(m.conversao_oportunidade),'Conversão em oportunidade','Leads que chegaram a oportunidade ou ganho')}
+        ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} atrasados)</small>`:''),'Follow-ups pendentes','Tarefas em aberto na sua fila',m.followups_atrasados>0)}
       </div>
-      <div class="panel panel-pad">
-        <div class="dash-sec-title" style="margin-top:0">Funil por estágio</div>
-        <div class="funnel">${funil}</div>
+      <div class="dash-cols">
+        <div class="panel panel-pad">
+          <div class="dash-sec-title">Funil por estágio</div>
+          <div class="dash-sec-sub">Quantos leads estão parados em cada etapa da negociação.</div>
+          <div class="funnel">${funil}</div>
+        </div>
+        <div class="panel panel-pad">
+          <div class="dash-sec-title">O que fazer agora</div>
+          <div class="dash-sec-sub">Leitura automática dos números acima.</div>
+          <div class="next-list">
+            ${dicas.map(d=>`<div class="next-item"><span class="next-dot"></span><span>${d}</span></div>`).join('')}
+          </div>
+        </div>
       </div>`;
   }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
 }
 
 /* ══════ VIEW: PIPELINE (KANBAN) ══════ */
+/* O que cada coluna significa — o vendedor não deveria ter que deduzir. */
+const STAGE_DESC={
+  novo:'Analisado, ainda sem contato',
+  contatado:'Já houve tentativa de contato',
+  reuniao_agendada:'Reunião marcada com data',
+  oportunidade:'Proposta ou negociação em andamento',
+  ganho:'Fechou negócio',
+  perdido:'Sem interesse ou fora do perfil',
+};
+
 async function loadPipeline(){
   const body=document.getElementById('pipeline-body');
   body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
@@ -400,23 +557,36 @@ async function loadPipeline(){
     const leads=await resp.json();
     if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
     if(!leads.length){
-      body.innerHTML=`<div class="panel"><div class="muted-box">Nenhum lead ainda.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a></div></div>`;
+      body.innerHTML=`<div class="panel"><div class="muted-box">
+        Nenhum lead no pipeline ainda.<br/>
+        Toda empresa analisada entra automaticamente na coluna "Novo".
+        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a>
+      </div></div>`;
       return;
     }
     const byStage={};STAGE_ORDER.forEach(s=>byStage[s]=[]);
     leads.forEach(l=>{(byStage[l.stage||'novo']||byStage.novo).push(l)});
     body.innerHTML=`<div class="kanban-wrap"><div class="kanban">${STAGE_ORDER.map(stage=>{
+      const i=STAGE_ORDER.indexOf(stage);
       const cards=byStage[stage].map(l=>{
-        const i=STAGE_ORDER.indexOf(stage);
-        const left=i>0?`<button class="kb-move" title="Voltar" onclick="moveLead(${l.id},'${STAGE_ORDER[i-1]}')">‹</button>`:'<span></span>';
-        const right=i<STAGE_ORDER.length-1?`<button class="kb-move" title="Avançar" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">›</button>`:'<span></span>';
-        return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)">
-          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})">${esc(l.company_name||l.domain||'—')}</button></div>
+        const nome=esc(l.company_name||l.domain||'—');
+        const left=i>0
+          ? `<button class="kb-move" title="Mover para ${STAGE_LABELS[STAGE_ORDER[i-1]]}" onclick="moveLead(${l.id},'${STAGE_ORDER[i-1]}')">◀ Voltar</button>`
+          : '<span class="kb-move ghost">◀ Voltar</span>';
+        const right=i<STAGE_ORDER.length-1
+          ? `<button class="kb-move" title="Mover para ${STAGE_LABELS[STAGE_ORDER[i+1]]}" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">Avançar ▶</button>`
+          : '<span class="kb-move ghost">Avançar ▶</span>';
+        return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)" title="Arraste para outra coluna para mudar o estágio">
+          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${nome}">${nome}</button></div>
           <div class="kb-domain">${esc(l.domain||'')}</div>
           <div class="kb-card-actions">${left}${right}</div>
         </div>`;
-      }).join('')||'<div class="kb-empty">—</div>';
-      return `<div class="kb-col" data-stage="${stage}" ondrop="dragDropCol(event)" ondragover="dragOverCol(event)" ondragleave="dragLeaveCol(event)"><div class="kb-col-hdr">${STAGE_LABELS[stage]} <span class="kb-count">${byStage[stage].length}</span></div>${cards}</div>`;
+      }).join('')||'<div class="kb-empty">Nenhum lead aqui</div>';
+      return `<div class="kb-col" data-stage="${stage}" ondrop="dragDropCol(event)" ondragover="dragOverCol(event)" ondragleave="dragLeaveCol(event)">
+        <div class="kb-col-hdr">
+          <div class="kb-col-name">${STAGE_LABELS[stage]} <span class="kb-count">${byStage[stage].length}</span></div>
+          <div class="kb-col-desc">${STAGE_DESC[stage]||''}</div>
+        </div>${cards}</div>`;
     }).join('')}</div></div>`;
     document.querySelectorAll('.kb-card').forEach(c=>{
       c.addEventListener('dragend',()=>{c.classList.remove('dragging');document.querySelectorAll('.kb-col.drag-over').forEach(k=>k.classList.remove('drag-over'));});
@@ -455,6 +625,7 @@ async function loadIntegrations(){
 
 const IC_SPARK='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.7L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.3z"/></svg>';
 const IC_PUSH='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+const IC_DOWN='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
 
 async function genAiSummary(force){
   if(!currentLeadId)return;
@@ -527,6 +698,10 @@ function renderResult(data){
   currentLeadId=data.id;
   currentLeadData=data;
   setTimeout(loadTimeline,300);
+  // Com uma ficha na tela, o formulário encolhe e o painel de apoio sai
+  document.getElementById('view-search')?.classList.add('has-result');
+  const recent=document.getElementById('recent-block');
+  if(recent)recent.style.display='none';
   const root=document.getElementById('results-section');root.innerHTML='';
   const smap={enriched:['Enriquecido','enriched'],partial:['Parcial','partial'],failed:['Falhou','failed']};
   const[sl,sc]=smap[data.status]||['—','partial'];
@@ -571,19 +746,21 @@ function renderResult(data){
       <div class="result-hdr-right"><span class="status-pill ${sc}">${sl}</span></div>
     </div>
     <div class="lead-actions" id="lead-actions"></div>
+    <div class="sec-head"><span class="sec-num">1</span><h4>Ficha da empresa</h4><span>Dados públicos coletados a partir do domínio</span></div>
     <div class="result-grid">${cards.join('')}</div>
     ${dns}
     <div class="dec-section">
-      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Mapear Decisores</div>
-      <div class="dec-sub">Informe o cargo e receba perfis com LinkedIn e emails.</div>
+      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Passo 2 · Encontrar decisores</div>
+      <div class="dec-sub">Diga o cargo que você quer alcançar. Buscamos perfis públicos nessa empresa e devolvemos LinkedIn e e-mail corporativo provável, com a confiança de cada endereço. Leva até 15 segundos.</div>
       <div class="role-irow">
         <input id="role-input" class="role-inp" placeholder="Ex: Coordenador de TI, CFO, Diretor Comercial..." />
-        <button class="role-srch-btn" id="role-btn" onclick="searchDecisores()">
-          <span id="role-btn-text">Buscar</span>
+        <button class="role-srch-btn" id="role-btn" onclick="searchDecisores()" title="Buscar pessoas com esse cargo na empresa">
+          <span id="role-btn-text">Buscar decisores</span>
           <span id="role-btn-spinner" class="spinner" style="display:none"></span>
         </button>
       </div>
       <div class="role-chips">
+        <span class="role-chips-lbl">Cargos comuns:</span>
         <button class="role-chip" onclick="setRole('Coordenador de TI')">Coordenador de TI</button>
         <button class="role-chip" onclick="setRole('Diretor de TI')">Diretor de TI</button>
         <button class="role-chip" onclick="setRole('CTO')">CTO</button>
@@ -593,20 +770,20 @@ function renderResult(data){
       <div id="decisores-list" class="dec-list">
         <div class="empty-state-box">
           <div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
-          <div class="empty-title">Pronto para mapear decisores</div>
-          <div class="empty-sub">Informe o cargo acima e clique em Buscar.</div>
+          <div class="empty-title">Nenhum cargo buscado ainda</div>
+          <div class="empty-sub">Escolha um cargo acima (ou digite o seu) e clique em <strong>Buscar decisores</strong>.</div>
         </div>
       </div>
     </div>
     <div class="call-section">
-      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>Registrar ligação</div>
-      <div class="dec-sub">O resultado vira follow-up ou reunião automaticamente.</div>
+      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>Passo 3 · Registrar o resultado da ligação</div>
+      <div class="dec-sub">Clique no que aconteceu. <strong>Não atendeu</strong>, <strong>Ocupado</strong> e <strong>Caixa postal</strong> criam sozinhos um follow-up para daqui a 2 dias; <strong>Conversou</strong> move o lead para "Contatado"; <strong>Reunião agendada</strong> pede a data e gera o convite .ics.</div>
       <div class="call-row">
-        <button class="call-btn" onclick="logCall('no_answer')">Não atendeu</button>
-        <button class="call-btn" onclick="logCall('busy')">Ocupado</button>
-        <button class="call-btn" onclick="logCall('voicemail')">Caixa postal</button>
-        <button class="call-btn" onclick="logCall('talked')">Conversou</button>
-        <button class="call-btn meet" onclick="toggleMeetRow()">Reunião agendada</button>
+        <button class="call-btn" onclick="logCall('no_answer')" title="Cria um follow-up para daqui a 2 dias">Não atendeu</button>
+        <button class="call-btn" onclick="logCall('busy')" title="Cria um follow-up para daqui a 2 dias">Ocupado</button>
+        <button class="call-btn" onclick="logCall('voicemail')" title="Cria um follow-up para daqui a 2 dias">Caixa postal</button>
+        <button class="call-btn" onclick="logCall('talked')" title="Registra o contato e move o lead para Contatado">Conversou</button>
+        <button class="call-btn meet" onclick="toggleMeetRow()" title="Informar a data e gerar o convite de calendário">Reunião agendada</button>
       </div>
       <div class="meet-row" id="meet-row" style="display:none">
         <input type="datetime-local" id="meet-when" class="role-inp" style="max-width:230px;flex:none"/>
@@ -617,11 +794,18 @@ function renderResult(data){
     <div class="ai-box" id="ai-box" style="display:none"></div>
     <div id="timeline-box" style="display:none"></div>
   </div>`;
-  // Barra de ações: IA e CRM conforme configuração (exportação é em massa, ver Histórico)
+  // Barra de ações: quando a integração não está configurada o botão continua
+  // visível, em estado apagado, dizendo o que falta — some não ensina nada.
   const integ=_integr||{};
   document.getElementById('lead-actions').innerHTML=[
-    integ.ai?`<span class="la-lbl">Ações</span><button class="la-btn" onclick="genAiSummary()">${IC_SPARK} Resumo IA</button>`:'',
-    integ.crm_webhook?`<button class="la-btn accent" onclick="pushToCrm()">${IC_PUSH} Enviar ao CRM</button>`:'',
+    '<span class="la-lbl">Ações do lead</span>',
+    integ.ai
+      ? `<button class="la-btn" onclick="genAiSummary()" title="Gera um resumo executivo desta empresa com IA">${IC_SPARK} Resumo com IA</button>`
+      : `<span class="la-btn off" title="Disponível quando a chave de IA está configurada no servidor">${IC_SPARK} Resumo com IA</span>`,
+    integ.crm_webhook
+      ? `<button class="la-btn accent" onclick="pushToCrm()" title="Envia este lead ao webhook configurado em Configurações">${IC_PUSH} Enviar ao CRM</button>`
+      : `<span class="la-btn off" onclick="nav('settings')" title="Configure um webhook em Configurações para habilitar" style="cursor:pointer">${IC_PUSH} Enviar ao CRM · configurar</span>`,
+    `<button class="la-btn" onclick="openExportModal()" title="Baixar seus leads em Excel ou CSV">${IC_DOWN} Exportar leads</button>`,
   ].filter(Boolean).join('');
   if(data.ai_summary){
     const box=document.getElementById('ai-box');
@@ -644,14 +828,14 @@ async function searchDecisores(){
   const bText=document.getElementById('role-btn-text');
   const bSpin=document.getElementById('role-btn-spinner');
   btn.disabled=true;bText.textContent='Buscando...';bSpin.style.display='inline-block';
-  list.innerHTML='<div class="muted-box">Procurando no LinkedIn… (até 15s)</div>';
+  list.innerHTML=`<div class="muted-box">Procurando pessoas com o cargo “${esc(role)}” nesta empresa… (até 15s)</div>`;
   try{
     const resp=await authFetch('/api/decisores',{method:'POST',body:JSON.stringify({lead_id:currentLeadId,roles:[role]})});
     const json=await resp.json();
     if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">${esc(json.detail||json.message||'Erro.')}</div>`;return;}
     renderDecisores(json.decisores);
   }catch(e){list.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
-  finally{btn.disabled=false;bText.textContent='Buscar';bSpin.style.display='none';}
+  finally{btn.disabled=false;bText.textContent='Buscar decisores';bSpin.style.display='none';}
 }
 
 function renderDecisores(list){
@@ -1041,12 +1225,14 @@ function renderHistory(q){
     const va=_histSortVal(a,_histSort.key),vb=_histSortVal(b,_histSort.key);
     return (va<vb?-1:va>vb?1:0)*_histSort.dir;
   });
-  count.textContent=_histLeads.length?`${leads.length} de ${_histLeads.length} lead${_histLeads.length!==1?'s':''}`:'';
+  count.textContent=_histLeads.length
+    ? `Mostrando ${leads.length} de ${_histLeads.length} empresa${_histLeads.length!==1?'s':''} · clique no nome para ver o resumo`
+    : '';
   if(!_histLeads.length){
-    body.innerHTML=`<div class="muted-box">Nenhum lead ainda.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Fazer minha primeira busca</a></div>`;
+    body.innerHTML=`<div class="muted-box">Nenhuma empresa analisada ainda.<br/>O histórico guarda tudo o que você pesquisar, com exportação para Excel.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Fazer minha primeira análise</a></div>`;
     return;
   }
-  if(!leads.length){body.innerHTML='<div class="muted-box">Nenhum lead corresponde ao filtro.</div>';return;}
+  if(!leads.length){body.innerHTML='<div class="muted-box">Nenhuma empresa corresponde ao filtro.</div>';return;}
 
   const th=(label,key)=>{
     if(!key)return `<th>${label}</th>`;
@@ -1235,57 +1421,65 @@ function renderSettings(me,conns){
       </div>`
     :'';
 
+  const head=(icon,title,desc)=>`<div class="set-head">
+    <span class="set-ic">${icon}</span>
+    <span><div class="set-title">${title}</div><p class="set-desc">${desc}</p></span>
+  </div>`;
+  const IC_USER='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+  const IC_PLUG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/></svg>';
+  const IC_EXT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg>';
+  const IC_EXIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+
   body.innerHTML=`
     <div class="panel panel-pad">
-      <div class="set-title">Conta</div>
-      <div class="set-row"><span class="set-lbl">Email</span><span class="set-val">${esc(me?.email||(demo?'sessão demo':'—'))}</span></div>
+      ${head(IC_USER,'Conta e uso do ciclo','Quanto da sua cota já foi usada e quando ela renova. Uma análise é consumida por domínio novo; reabrir uma empresa dos últimos 7 dias é grátis.')}
+      <div class="set-row"><span class="set-lbl">E-mail</span><span class="set-val">${esc(me?.email||(demo?'sessão demo':'—'))}</span></div>
       <div class="set-row"><span class="set-lbl">Plano</span><span class="set-val"><span class="plan-badge">${esc(plan)}</span></span></div>
       <div class="set-row" style="display:block">
-        <span class="set-lbl">Uso do ciclo</span>
+        <span class="set-lbl">Análises de empresa</span>
         <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
-          <span class="set-val" style="text-align:left">${unlimited?'Análises ilimitadas':`${used} de ${limit} análises`}</span>
+          <span class="set-val" style="text-align:left">${unlimited?'Ilimitadas':`${used} de ${limit} usadas`}</span>
           ${reset&&!unlimited?`<span class="set-lbl">renova em ${reset}</span>`:''}
         </div>
         ${unlimited?'':`<div class="usage-track"><div class="usage-fill${pctUsed>=100?' full':''}" style="width:${pctUsed}%"></div></div>`}
       </div>
-      <div class="set-row"><span class="set-lbl">Revelações de contato</span><span class="set-val">${revealsUnlimited?'ilimitadas':`${revealsUsed} de ${revealsLimit}`}</span></div>
+      <div class="set-row">
+        <span class="set-lbl">Revelações de contato (extensão)</span>
+        <span class="set-val">${revealsUnlimited?'ilimitadas':`${revealsUsed} de ${revealsLimit} usadas`}</span>
+      </div>
       ${planActions}
     </div>
 
     <div class="panel panel-pad">
-      <div class="set-title">Integração CRM — webhook</div>
-      <p class="set-desc">
-        Enviamos cada lead (com decisores e atividades) via <strong>POST assinado com HMAC-SHA256</strong>
-        para o endpoint que você configurar — funciona com Zapier, Make, Power Automate ou seu próprio sistema.
-        O botão "Enviar ao CRM" aparece no card do lead quando há um webhook ativo.
-      </p>
+      ${head(IC_PLUG,'Enviar leads para o seu CRM','Cada lead — com decisores e atividades — é enviado por <strong>POST assinado com HMAC-SHA256</strong> ao endereço que você informar. Funciona com Zapier, Make, Power Automate ou um sistema próprio. Com o webhook ativo, o botão “Enviar ao CRM” fica habilitado na ficha do lead.')}
       ${connCard}
       <div class="set-form">
-        <input id="crm-url" class="set-input" placeholder="https://hooks.zapier.com/…" autocomplete="off" spellcheck="false"/>
-        <input id="crm-secret" class="set-input" placeholder="Segredo HMAC (opcional, recomendado)" autocomplete="off" spellcheck="false"/>
+        <div class="set-field">
+          <label for="crm-url">URL que vai receber os leads</label>
+          <input id="crm-url" class="set-input" placeholder="https://hooks.zapier.com/…" autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="set-field">
+          <label for="crm-secret">Segredo para assinar o envio (opcional, recomendado)</label>
+          <input id="crm-secret" class="set-input" placeholder="Uma frase secreta que só você e o seu sistema conhecem" autocomplete="off" spellcheck="false"/>
+        </div>
         <div class="set-actions">
-          <button class="set-btn primary" onclick="saveCrmWebhook()">${webhook?'Atualizar webhook':'Salvar webhook'}</button>
+          <button class="set-btn primary" onclick="saveCrmWebhook()">${webhook?'Atualizar webhook':'Salvar e ativar webhook'}</button>
         </div>
         <p id="crm-feedback" class="set-feedback"></p>
       </div>
     </div>
 
     <div class="panel panel-pad">
-      <div class="set-title">Extensão do navegador</div>
-      <p class="set-desc">
-        Instale a extensão e veja <strong>decisores, e-mail corporativo verificado e telefone da empresa</strong>
-        direto nas páginas do LinkedIn. Gere um código abaixo e cole na extensão para conectar este navegador.
-        Cada revelação consome 1 crédito — <strong>e nada é cobrado quando não encontramos contato</strong>.
-      </p>
+      ${head(IC_EXT,'Extensão do navegador (LinkedIn)','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Cada revelação consome 1 crédito — <strong>e nada é cobrado quando não encontramos contato</strong>.')}
       <div class="set-actions">
         <button class="set-btn primary" onclick="generatePairCode()">Gerar código de pareamento</button>
+        <span class="set-lbl">Válido por poucos minutos, uso único</span>
       </div>
       <p id="ext-feedback" class="set-feedback"></p>
     </div>
 
     <div class="panel panel-pad">
-      <div class="set-title">Sessão</div>
-      <p class="set-desc">Encerra sua sessão neste navegador.</p>
+      ${head(IC_EXIT,'Sessão','Encerra o acesso neste navegador. Seus leads continuam salvos na conta.')}
       <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
     </div>`;
 }
@@ -1299,7 +1493,7 @@ async function generatePairCode(){
     const resp=await authFetch('/api/extension/pair-code',{method:'POST',body:'{}'});
     if(!resp.ok){el.textContent='Não conseguimos gerar o código agora.';el.className='set-feedback err';return;}
     const data=await resp.json();
-    el.innerHTML=`Cole este código na extensão: <strong style="font-size:18px;letter-spacing:2px">${esc(data.code)}</strong>
+    el.innerHTML=`Cole este código no popup da extensão:<br><span class="pair-code">${esc(data.code)}</span>
       <br><span class="set-lbl">Válido por ${data.expires_in_minutes} minutos.</span>`;
     el.className='set-feedback ok';
   }catch(e){
@@ -1361,7 +1555,12 @@ function setLoading(s){
 }
 function showError(m){const el=document.getElementById('error-banner');el.textContent=m;el.style.display='block';}
 function hideError(){document.getElementById('error-banner').style.display='none';}
-function hideResults(){document.getElementById('results-section').innerHTML='';}
+function hideResults(){
+  document.getElementById('results-section').innerHTML='';
+  document.getElementById('view-search')?.classList.remove('has-result');
+  const block=document.getElementById('recent-block');
+  if(block&&document.getElementById('recent-grid')?.children.length)block.style.display='block';
+}
 function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
 /* ══════ ATALHOS DE TECLADO ══════ */
