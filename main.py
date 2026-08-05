@@ -16,12 +16,8 @@ from models.database import get_db, init_db
 from middleware.auth import demo_mode_enabled, jwt_configured, rate_limit_key
 from routers import (
     enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config,
-    imports, sheet, batch, extension, internal, privacy
+    imports, sheet
 )
-from routers import dns_intel as dns_intel_router
-from routers import seo as seo_router
-from services import guides, seo
-from services.people import optout
 
 # ── Logging estruturado ───────────────────────────────────────────────────────
 logging.config.dictConfig({
@@ -157,7 +153,6 @@ templates = Jinja2Templates(directory="templates")
 
 app.include_router(enrichment.router)
 app.include_router(leads.router)
-app.include_router(dns_intel_router.router)
 app.include_router(auth.router)
 app.include_router(billing.router)
 app.include_router(export.router)
@@ -165,11 +160,6 @@ app.include_router(activities.router)
 app.include_router(dashboard.router)
 app.include_router(integrations.router)
 app.include_router(crm_config.router)
-app.include_router(batch.router)
-app.include_router(extension.router)
-app.include_router(internal.router)
-app.include_router(privacy.router)
-app.include_router(seo_router.router)
 app.include_router(imports.router)
 app.include_router(sheet.router)
 
