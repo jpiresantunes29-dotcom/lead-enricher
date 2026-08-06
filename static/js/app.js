@@ -14,6 +14,11 @@ function startLoad(){
 }
 function stopLoad(){clearInterval(loadInt);document.getElementById('loading-status').classList.remove('visible');}
 
+/* ══════ IMPORT CONSTANTS ══════ */
+const IMP_FIELDS={'domain':'Domínio','company_name':'Empresa','linkedin_url':'LinkedIn','corporate_email':'Email','phone':'Telefone','sector':'Setor','location':'Localização','employee_count':'Funcionários','mx_provider':'Servidor MX','description':'Descrição'};
+const IMP_STATUS={'ok':{label:'✓',cls:'imp-ok'},'invalid':{label:'✗ Inválida',cls:'imp-invalid'},'duplicate_file':{label:'⟳ Duplicata',cls:'imp-dup'},'duplicate_db':{label:'← No histórico',cls:'imp-dup'}};
+const IMP_PREVIEW_COLS=5;
+
 /* ══════ SUPABASE AUTH ══════ */
 const _sb = supabase.createClient(
   'https://unpujwtgnldkrqisoytf.supabase.co',
@@ -1765,9 +1770,12 @@ async function uploadImportFile(file,sheet){
   try{
     // FormData define o próprio Content-Type (com boundary) — por isso o fetch
     // aqui é manual, sem o header JSON do authFetch.
+    console.log('uploadImportFile: iniciando upload com token', token?.substring(0,20)+'...');
     const resp=await fetch('/api/import/preview',{method:'POST',
       headers:{Authorization:`Bearer ${token}`},body:form});
+    console.log('uploadImportFile: resposta recebida', resp.status);
     const json=await resp.json().catch(()=>({}));
+    console.log('uploadImportFile: json parseado', json.message?.substring(0,50));
     if(!resp.ok){
       if(resp.status===401||resp.status===403){
         _clearDemoToken();renderImportDrop('Sua sessão expirou. Por favor, entre novamente.');
@@ -1775,11 +1783,13 @@ async function uploadImportFile(file,sheet){
       }
       renderImportDrop(json.detail||'Não consegui ler esta planilha.');return;
     }
+    if(!json||!json.columns){throw new Error('Resposta inválida do servidor: '+JSON.stringify(json).substring(0,100));}
     _imp.preview=json;
+    console.log('uploadImportFile: renderizando preview', json.total_rows+'linhas');
     renderImportPreview();
   }catch(e){
-    console.error('Import upload error:',e);
-    const msg=e.name==='TypeError'?'Erro de conexão ou timeout. Verifique sua internet e tente novamente.':'Erro de conexão ao enviar o arquivo.';
+    console.error('Import upload error:',e.message,e.stack);
+    const msg=e.message.includes('Resposta inválida')?e.message:(e.name==='TypeError'?'Erro de conexão ou timeout. Verifique sua internet e tente novamente.':'Erro de conexão ao enviar o arquivo.');
     renderImportDrop(msg);
   }
 }
