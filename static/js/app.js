@@ -1768,10 +1768,20 @@ async function uploadImportFile(file,sheet){
     const resp=await fetch('/api/import/preview',{method:'POST',
       headers:{Authorization:`Bearer ${token}`},body:form});
     const json=await resp.json().catch(()=>({}));
-    if(!resp.ok){renderImportDrop(json.detail||'Não consegui ler esta planilha.');return;}
+    if(!resp.ok){
+      if(resp.status===401||resp.status===403){
+        _clearDemoToken();renderImportDrop('Sua sessão expirou. Por favor, entre novamente.');
+        setTimeout(()=>location.reload(),2000);return;
+      }
+      renderImportDrop(json.detail||'Não consegui ler esta planilha.');return;
+    }
     _imp.preview=json;
     renderImportPreview();
-  }catch(e){renderImportDrop('Erro de conexão ao enviar o arquivo.');}
+  }catch(e){
+    console.error('Import upload error:',e);
+    const msg=e.name==='TypeError'?'Erro de conexão ou timeout. Verifique sua internet e tente novamente.':'Erro de conexão ao enviar o arquivo.';
+    renderImportDrop(msg);
+  }
 }
 
 function renderImportPreview(){
