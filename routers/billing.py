@@ -31,7 +31,7 @@ PLAN_LIMITS = {
 REVEAL_LIMITS = {
     "free": 5,
     "pro": 300,
-    "enterprise": -1,
+    "enterprise": -1,  # -1 = ilimitado
 }
 
 

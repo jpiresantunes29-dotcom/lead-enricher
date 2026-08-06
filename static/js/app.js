@@ -1867,7 +1867,7 @@ function renderImportDone(result){
       <p class="imp-done-sub">
         ${result.skipped?`${result.skipped} linha(s) ignorada(s) por já existirem ou por não terem identificação.<br/>`:''}
         A planilha completa já está no sistema, com todas as colunas do seu arquivo.
-        O enriquecimento roda de lá e acrescenta site, LinkedIn, DNS/MX, telefone e score.
+        O enriquecimento roda de lá e acrescenta site, LinkedIn, DNS/MX e telefone.
       </p>
       <p class="imp-quota">${quota!==null?`Você tem ${quota} busca(s) na cota — cada empresa enriquecida consome 1.`:'Cada empresa enriquecida consome 1 busca da cota.'}</p>
       <div class="imp-done-actions">
