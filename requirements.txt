@@ -17,3 +17,6 @@ cryptography>=42.0.0
 psycopg2-binary>=2.9.0
 stripe>=11.0.0
 slowapi>=0.1.9
+# FastAPI exige isto para rotas com Form()/UploadFile (routers/imports.py) —
+# so vinha como dependencia opcional, ausente do ambiente serverless.
+python-multipart>=0.0.9
