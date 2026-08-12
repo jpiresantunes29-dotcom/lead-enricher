@@ -154,24 +154,7 @@ function updateNavUser(){
 }
 
 function openAuthModal(){document.getElementById('auth-modal').classList.add('open');}
-function closeAuthModal(){
-  document.getElementById('auth-modal').classList.remove('open');
-  document.getElementById('auth-error').style.display='none';
-  document.getElementById('auth-success').style.display='none';
-}
-
-async function sendMagicLink(){
-  const email=document.getElementById('auth-email').value.trim();
-  const errEl=document.getElementById('auth-error');
-  if(!email){errEl.textContent='Informe seu email.';errEl.style.display='block';return;}
-  const btn=document.getElementById('magic-btn-text');const sp=document.getElementById('magic-btn-spin');
-  btn.textContent='Enviando...';sp.style.display='inline-block';
-  errEl.style.display='none';
-  const{error}=await _sb.auth.signInWithOtp({email,options:{emailRedirectTo:_AUTH_REDIRECT}});
-  btn.textContent='Receber link de acesso';sp.style.display='none';
-  if(error){errEl.textContent=error.message;errEl.style.display='block';}
-  else{const ok=document.getElementById('auth-success');ok.textContent='Link enviado. Verifique seu e-mail.';ok.style.display='block';}
-}
+function closeAuthModal(){document.getElementById('auth-modal').classList.remove('open');}
 
 async function signInWithGoogle(){await _sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:_AUTH_REDIRECT}});}
 async function signInWithGitHub(){await _sb.auth.signInWithOAuth({provider:'github',options:{redirectTo:_AUTH_REDIRECT}});}

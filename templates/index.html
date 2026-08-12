@@ -491,23 +491,6 @@
         Apple
       </button>
     </div>
-    <div class="auth-divider">
-      <span class="auth-divider-line"></span>
-      <span class="auth-divider-txt">ou com email</span>
-      <span class="auth-divider-line"></span>
-    </div>
-    <div id="auth-magic-view">
-      <div class="auth-email-field">
-        <input id="auth-email" class="auth-email-input" type="email" placeholder="seu@email.com" autocomplete="email"/>
-      </div>
-      <button onclick="sendMagicLink()" class="auth-magic-btn">
-        <span id="magic-btn-text">Receber link de acesso</span>
-        <span id="magic-btn-spin" class="spinner" style="display:none"></span>
-      </button>
-      <p id="auth-error" class="auth-msg err"></p>
-      <p id="auth-success" class="auth-msg ok"></p>
-      <p class="auth-hint">Sem senha — enviamos um link de acesso seguro para o seu e-mail.</p>
-    </div>
     <div class="auth-demo-block">
       <div class="auth-demo-divider"><span>ou</span></div>
       <button class="auth-demo-btn" onclick="signInAsDemo()">
@@ -522,7 +505,7 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=23"></script>
+<script src="/static/js/app.js?v=24"></script>
 {# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
    com edição célula a célula e teclado próprio. #}
 <script src="/static/js/sheet.js?v=22"></script>
