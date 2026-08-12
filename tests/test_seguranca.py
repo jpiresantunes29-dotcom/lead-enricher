@@ -102,6 +102,99 @@ def test_demo_desligado_recusa_token_demo(raw_client, monkeypatch):
     assert resp.status_code == 401
 
 
+# ── Verificação por chave pública (JWKS) ─────────────────────────────────────
+
+def test_chaves_vem_do_projeto_da_anon_key(monkeypatch):
+    """
+    Uma `SUPABASE_URL` esquecida de um projeto antigo não pode desviar a busca
+    das chaves: quem define o projeto é a anon key com que o usuário logou.
+    """
+    from middleware import auth as auth_mod
+
+    monkeypatch.setenv("SUPABASE_URL", "https://projeto-errado.supabase.co")
+    monkeypatch.delenv("SUPABASE_ANON_KEY", raising=False)
+    ref = jwt.get_unverified_claims(auth_mod.anon_key())["ref"]
+
+    assert auth_mod.supabase_url() == f"https://{ref}.supabase.co"
+
+def _par_de_chaves_ec():
+    """Gera um par EC P-256 e devolve (jwk_publico, pem_privado)."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from jose import jwk as jose_jwk
+
+    privada = ec.generate_private_key(ec.SECP256R1())
+    pem = privada.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+    publico = jose_jwk.construct(privada.public_key(), "ES256").to_dict()
+    publico = {k: (v.decode() if isinstance(v, bytes) else v) for k, v in publico.items()}
+    publico.update({"kid": "chave-de-teste", "alg": "ES256", "use": "sig"})
+    return publico, pem
+
+
+@pytest.fixture
+def jwks_com_chave(monkeypatch):
+    """Projeto que publica chave pública, como o Supabase faz com ECC P-256."""
+    publico, pem = _par_de_chaves_ec()
+    from middleware import auth as auth_mod
+    monkeypatch.setattr(auth_mod, "_jwks", lambda forcar=False: [publico])
+    return pem
+
+
+def test_token_assinado_pela_chave_do_projeto_autentica(raw_client, monkeypatch, jwks_com_chave):
+    """
+    O caso que quebrou o login em produção: o Supabase passou a assinar com uma
+    signing key própria (o token traz `kid`), e o servidor só sabia conferir o
+    JWT Secret legado — todo login virava 401.
+    """
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+    monkeypatch.setenv("DEMO_MODE", "0")
+
+    token = jwt.encode(
+        {"sub": "usuario-real-uuid", "email": "a@b.c", "aud": "authenticated"},
+        jwks_com_chave, algorithm="ES256", headers={"kid": "chave-de-teste"},
+    )
+    resp = raw_client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert resp.status_code == 200
+    assert resp.json()["id"] == "usuario-real-uuid"
+
+
+def test_token_de_outra_chave_com_o_mesmo_kid_nao_autentica(raw_client, monkeypatch, jwks_com_chave):
+    """Assinar com chave própria e reivindicar o `kid` do projeto não pode colar."""
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+    monkeypatch.setenv("DEMO_MODE", "0")
+
+    _, pem_do_atacante = _par_de_chaves_ec()
+    forjado = jwt.encode(
+        {"sub": "vitima-uuid"}, pem_do_atacante,
+        algorithm="ES256", headers={"kid": "chave-de-teste"},
+    )
+    resp = raw_client.get("/api/me", headers={"Authorization": f"Bearer {forjado}"})
+
+    assert resp.status_code == 401
+    assert "vitima-uuid" not in resp.text
+
+
+def test_kid_desconhecido_nao_cai_em_verificacao_fraca(raw_client, monkeypatch, jwks_com_chave):
+    """
+    `kid` que o JWKS não conhece cai no caminho legado — que sem segredo real
+    responde 503, nunca "aceito".
+    """
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+    monkeypatch.setenv("DEMO_MODE", "0")
+
+    forjado = jwt.encode({"sub": "vitima-uuid"}, "", algorithm="HS256",
+                         headers={"kid": "kid-que-nao-existe"})
+    resp = raw_client.get("/api/me", headers={"Authorization": f"Bearer {forjado}"})
+
+    assert resp.status_code == 503
+    assert "vitima-uuid" not in resp.text
+
+
 # ── Cabeçalhos de navegador ──────────────────────────────────────────────────
 
 def test_cabecalhos_de_seguranca_em_toda_resposta(raw_client):

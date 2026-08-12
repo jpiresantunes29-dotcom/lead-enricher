@@ -24,6 +24,7 @@ from middleware.auth import (
     demo_mode_enabled,
     jwt_configured,
     secret_confere_com_projeto,
+    verificacao_por_jwks,
 )
 from models.database import ALEMBIC_HEAD, SessionLocal, schema_status
 from services import ai_insights, crypto
@@ -89,22 +90,41 @@ def _checar_fundacao(rel: Relatorio) -> None:
             f"(a revisão atual é {ALEMBIC_HEAD}).",
         ))
 
-    if not jwt_configured():
-        rel.achados.append(Achado(
-            IMPEDE, "SUPABASE_JWT_SECRET ausente ou curto demais",
-            "Nenhum login real é aceito: as rotas autenticadas respondem 503.",
-            "Copie o JWT Secret em Supabase > Settings > API.",
-        ))
-    elif secret_confere_com_projeto() is False:
-        rel.achados.append(Achado(
-            IMPEDE, "SUPABASE_JWT_SECRET é de outro projeto Supabase",
-            "O login pelo Google termina bem e mesmo assim o app volta "
-            "deslogado: o token que o Supabase emite não passa na verificação "
-            "e toda rota autenticada responde 401. Só o modo demo funciona.",
-            "Pegue o JWT Secret do MESMO projeto cuja anon key está em "
-            "static/js/app.js (Supabase > Settings > API > JWT Settings) e "
-            "atualize a variável no ambiente do deploy.",
-        ))
+    # Com chave pública publicada, o login se valida sozinho e o segredo legado
+    # deixa de importar. Só quando não há JWKS é que ele vira o único caminho.
+    if not verificacao_por_jwks():
+        if not jwt_configured():
+            rel.achados.append(Achado(
+                IMPEDE, "Sem chave para verificar login",
+                "Nenhum login real é aceito: as rotas autenticadas respondem 503. "
+                "O projeto não publica chave pública (JWKS) e não há "
+                "SUPABASE_JWT_SECRET configurado.",
+                "Troque a chave de assinatura do projeto para assimétrica "
+                "(Supabase > JWT Keys > ECC P-256) — é o caminho que dispensa "
+                "segredo no deploy. Alternativa: definir SUPABASE_JWT_SECRET.",
+            ))
+        elif secret_confere_com_projeto() is False:
+            rel.achados.append(Achado(
+                IMPEDE, "SUPABASE_JWT_SECRET é de outro projeto Supabase",
+                "O login pelo Google termina bem e mesmo assim o app volta "
+                "deslogado: o token que o Supabase emite não passa na verificação "
+                "e toda rota autenticada responde 401. Só o modo demo funciona.",
+                "Pegue o JWT Secret do MESMO projeto cuja anon key está em "
+                "static/js/app.js (Supabase > Settings > API > JWT Settings) e "
+                "atualize a variável no ambiente do deploy.",
+            ))
+        else:
+            rel.achados.append(Achado(
+                ATENCAO, "Login depende do JWT Secret legado",
+                "O projeto não publica chave pública, então tudo depende de ele "
+                "ainda assinar com o segredo legado. Se a chave de assinatura "
+                "atual for um 'segredo compartilhado', o material não é "
+                "extraível do Supabase e todo login é recusado com 401 — sem "
+                "nenhum valor de variável que resolva.",
+                "Confira em Supabase > JWT Keys qual é a chave atual. Se não for "
+                "a legada, troque-a por uma assimétrica (ECC P-256): ela é "
+                "publicada no JWKS e o servidor passa a validar sem segredo.",
+            ))
 
     if rel.producao and demo_mode_enabled():
         rel.achados.append(Achado(
