@@ -30,7 +30,19 @@ def list_connections(
 ):
     """Lista conexões CRM configuradas do usuário."""
     user_id = current_user.get("sub")
-    conns = db.query(CRMConnection).filter(CRMConnection.user_id == user_id).all()
+    # Só as colunas que a resposta usa. Carregar a linha inteira traria os
+    # segredos para a memória do processo à toa — e faria esta tela quebrar
+    # junto quando um deles não abrisse com a SECRETS_KEY atual.
+    conns = (
+        db.query(
+            CRMConnection.provider,
+            CRMConnection.is_active,
+            CRMConnection.webhook_url,
+            CRMConnection.updated_at,
+        )
+        .filter(CRMConnection.user_id == user_id)
+        .all()
+    )
     return [
         {
             "provider": c.provider,
@@ -82,10 +94,14 @@ def create_connection(
     ).first()
 
     if existing:
-        existing.webhook_url = body.webhook_url or existing.webhook_url
-        existing.webhook_secret = body.webhook_secret or existing.webhook_secret
-        existing.access_token = body.access_token or existing.access_token
-        existing.account_id = body.account_id or existing.account_id
+        # Só escreve o que veio preenchido, sem ler o valor guardado. Campo em
+        # branco continua significando "mantenha o que está lá", mas agora sem
+        # trombar num segredo que a chave atual não abre — e é justamente
+        # regravando aqui que o usuário conserta esse caso.
+        for campo in ("webhook_url", "webhook_secret", "access_token", "account_id"):
+            novo = getattr(body, campo)
+            if novo:
+                setattr(existing, campo, novo)
         existing.is_active = True
     else:
         existing = CRMConnection(

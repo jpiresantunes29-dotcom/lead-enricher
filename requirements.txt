@@ -11,6 +11,9 @@ dnspython==2.8.0
 phonenumbers==8.13.49
 ipwhois==1.3.0
 python-jose[cryptography]>=3.3.0
+# Declarada mesmo vindo junto do python-jose: services/crypto.py usa Fernet
+# direto, e uma dependencia so transitiva some sem aviso quando a de cima muda.
+cryptography>=42.0.0
 psycopg2-binary>=2.9.0
 stripe>=11.0.0
 slowapi>=0.1.9

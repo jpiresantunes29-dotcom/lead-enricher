@@ -17,9 +17,10 @@ import logging
 import os
 import time
 import uuid
+from datetime import timedelta
 from typing import List, Optional
 
-from sqlalchemy import func, update
+from sqlalchemy import func, or_, update
 from sqlalchemy.orm import Session
 
 from models.database import Job, Profile, utcnow
@@ -44,6 +45,11 @@ MAX_ATTEMPTS = 3
 # Teto de domínios por lote. Protege a cota do usuário de um CSV colado por
 # engano e o banco de um lote gigante enfileirado de uma vez.
 MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "200"))
+
+# Depois de quanto tempo um job reservado é considerado abandonado. Precisa ser
+# maior que a rodada mais longa possível, senão duas rodadas simultâneas
+# processam o mesmo domínio.
+STALE_JOB_SECONDS = int(os.getenv("JOBS_STALE_SECONDS", "300"))
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -105,6 +111,51 @@ def _claim(db: Session, job: Job) -> bool:
     )
     db.commit()
     return result.rowcount == 1
+
+
+def reclaim_stale(db: Session, older_than_seconds: int = STALE_JOB_SECONDS) -> int:
+    """
+    Devolve à fila os jobs reservados por uma rodada que nunca terminou.
+
+    A função serverless pode morrer no meio (limite de tempo, deploy, falta de
+    memória) e o job fica `running` para sempre: `_next_queued` nunca mais o
+    escolhe e o lote trava perto do fim, sem erro nenhum na tela. É a diferença
+    entre "a fila roda com a aba fechada" e "a fila roda até alguma rodada
+    morrer".
+
+    Job que já gastou as tentativas vira `failed` — repor na fila para sempre
+    seria trocar um lote travado por um lote que nunca acaba.
+    """
+    limite = utcnow() - timedelta(seconds=older_than_seconds)
+    devolvidos = db.execute(
+        update(Job)
+        .where(
+            Job.status == STATUS_RUNNING,
+            Job.attempts < MAX_ATTEMPTS,
+            # started_at nulo é job reservado por uma versão anterior do código;
+            # tratá-lo como recente o deixaria preso pelo mesmo motivo.
+            or_(Job.started_at.is_(None), Job.started_at < limite),
+        )
+        .values(status=STATUS_QUEUED, started_at=None)
+    ).rowcount
+    desistidos = db.execute(
+        update(Job)
+        .where(
+            Job.status == STATUS_RUNNING,
+            Job.attempts >= MAX_ATTEMPTS,
+            or_(Job.started_at.is_(None), Job.started_at < limite),
+        )
+        .values(status=STATUS_FAILED, finished_at=utcnow(),
+                error="interrompido antes de terminar")
+    ).rowcount
+    db.commit()
+
+    if devolvidos or desistidos:
+        logger.warning(
+            "Jobs interrompidos recuperados: %d devolvidos à fila, %d marcados como falha.",
+            devolvidos, desistidos,
+        )
+    return devolvidos + desistidos
 
 
 def _next_queued(db: Session, user_id: Optional[str] = None,
@@ -171,6 +222,10 @@ def run_pending(db: Session, budget_seconds: float = ROUND_BUDGET_SECONDS,
     processed = 0
     resumo = {"processed": 0, "done": 0, "failed": 0, "quota_reached": False,
               "remaining": 0, "elapsed_ms": 0}
+
+    # Antes de procurar trabalho novo, resgata o que ficou preso: sem isto o
+    # lote encolhe a cada rodada que morre e nunca chega ao fim.
+    reclaim_stale(db)
 
     while True:
         if max_jobs is not None and processed >= max_jobs:

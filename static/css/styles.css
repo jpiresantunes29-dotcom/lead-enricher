@@ -771,6 +771,166 @@ body{
 .meta-chip.email-valid{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
 .meta-chip.email-catchall{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-border)}
 .meta-chip.email-invalid{background:var(--err-bg);color:var(--err);border:1px solid var(--err-border)}
+.meta-chip.phone{background:var(--surface);color:var(--text-2);border:1px solid var(--border)}
+.meta-chip.act{background:transparent;color:var(--accent);border:1px dashed var(--accent-border);cursor:pointer}
+.meta-chip.act:hover{background:var(--accent-bg)}
+.dec-warn{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--warn)}
+.dec-msg{flex-basis:100%;font-size:11.5px;color:var(--text-3);margin-top:5px}
+
+/* ── Correção manual de campo (telefone) ── */
+.cell-edit{
+  font-size:11.5px;font-weight:700;color:var(--accent);
+  background:none;border:none;padding:0;cursor:pointer;text-decoration:underline;
+}
+.cell-edit:hover{color:var(--accent-h)}
+.cell-edit-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:2px 0}
+.cell-inp{
+  flex:1;min-width:130px;
+  font-family:inherit;font-size:13.5px;color:var(--text);
+  background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:6px 9px;
+}
+.cell-inp:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.1)}
+.cell-save,.cell-cancel{
+  font-size:12px;font-weight:600;border-radius:6px;padding:6px 11px;cursor:pointer;
+}
+.cell-save{background:var(--accent);color:var(--accent-ink);border:1px solid var(--accent)}
+.cell-save:hover{background:var(--accent-h)}
+.cell-cancel{background:transparent;color:var(--text-3);border:1px solid var(--border)}
+.cell-cancel:hover{color:var(--text-2);border-color:var(--text-3)}
+.sub-err{color:var(--err)}
+
+/* ── Conversas de WhatsApp ──
+   Duas colunas: a lista à esquerda, a conversa à direita. Em tela estreita
+   viram uma coluna só, com a conversa embaixo da lista. */
+.cv-wrap{
+  display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:14px;
+  align-items:start;
+}
+@media (max-width:900px){.cv-wrap{grid-template-columns:1fr}}
+
+.cv-list{
+  display:flex;flex-direction:column;gap:8px;
+  max-height:70vh;overflow-y:auto;
+}
+.cv-card{
+  display:flex;flex-direction:column;gap:4px;text-align:left;
+  background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
+  padding:12px 14px;cursor:pointer;width:100%;
+}
+.cv-card:hover{border-color:var(--accent-border);background:var(--surface)}
+.cv-card.aberta{border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.09)}
+.cv-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.cv-card-nome{font-size:14px;font-weight:700;color:var(--text)}
+.cv-card-quem{font-size:12px;color:var(--text-2)}
+.cv-card-previa{font-size:12.5px;color:var(--text-2);line-height:1.5}
+.cv-card-sub{font-size:11.5px;color:var(--text-3)}
+
+/* O selo é o elemento mais importante da tela: diz quem está respondendo. */
+.cv-selo{
+  flex-shrink:0;font-size:10.5px;font-weight:700;letter-spacing:.04em;
+  padding:3px 8px;border-radius:5px;white-space:nowrap;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.cv-selo.grande{font-size:12px;padding:5px 12px}
+.cv-selo.ativa{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
+.cv-selo.aguardando{background:var(--warn-bg);color:var(--warn);border:1px solid var(--warn-border)}
+.cv-selo.assumida{background:var(--info-bg);color:var(--info);border:1px solid var(--info-border)}
+.cv-selo.pausada{background:var(--err-bg);color:var(--err);border:1px solid var(--err-border)}
+.cv-selo.encerrada{background:var(--surface);color:var(--text-3);border:1px solid var(--border)}
+
+.cv-panel{
+  background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
+  display:flex;flex-direction:column;min-height:340px;
+}
+.cv-empty{padding:48px 24px;text-align:center;color:var(--text-3)}
+.cv-head{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:14px 18px;border-bottom:1px solid var(--border);
+}
+.cv-head-nome{font-size:15px;font-weight:700}
+.cv-head-sub{font-size:12px;color:var(--text-3);margin-top:2px}
+.cv-explica{padding:10px 18px 0;font-size:12.5px;color:var(--text-2)}
+.cv-motivo{color:var(--text-3);font-style:italic}
+.cv-acoes{display:flex;gap:7px;flex-wrap:wrap;padding:10px 18px}
+.cv-btn{
+  font-size:12.5px;font-weight:600;color:var(--text-2);cursor:pointer;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:7px;padding:7px 13px;
+}
+.cv-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+.cv-btn.destaque{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.cv-btn.destaque:hover{background:var(--accent-h);color:var(--accent-ink)}
+
+.cv-msgs{
+  flex:1;display:flex;flex-direction:column;gap:10px;
+  padding:14px 18px;max-height:44vh;overflow-y:auto;
+  border-top:1px solid var(--border);
+}
+.cv-msg{display:flex;flex-direction:column;gap:3px;max-width:78%}
+.cv-msg.in{align-self:flex-start}
+.cv-msg.out{align-self:flex-end;align-items:flex-end}
+.cv-msg-bolha{
+  font-size:13.5px;line-height:1.55;padding:9px 13px;border-radius:12px;
+  background:var(--surface);border:1px solid var(--border);color:var(--text);
+}
+.cv-msg.out .cv-msg-bolha{background:var(--accent-bg);border-color:var(--accent-border)}
+.cv-msg-meta{font-size:11px;color:var(--text-3)}
+.cv-msg-vazio{font-size:12.5px;color:var(--text-3);text-align:center;padding:20px}
+
+.cv-reply{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--border)}
+.cv-reply.off{
+  font-size:12.5px;color:var(--text-3);background:var(--surface);
+  border-radius:0 0 10px 10px;
+}
+.cv-textarea{
+  flex:1;font-family:inherit;font-size:13.5px;color:var(--text);resize:vertical;
+  background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;
+}
+.cv-textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.1)}
+.cv-send{
+  align-self:flex-end;font-size:13px;font-weight:600;cursor:pointer;
+  background:var(--accent);color:var(--accent-ink);border:1px solid var(--accent);
+  border-radius:8px;padding:9px 18px;
+}
+.cv-send:hover{background:var(--accent-h)}
+.cv-reply-sub{padding:0 18px 12px;font-size:11.5px;color:var(--text-3)}
+
+/* Números do período, acima da lista */
+.cv-metrics{
+  background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
+  padding:14px 16px;margin-bottom:14px;
+}
+.cv-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.cv-kpi{display:flex;flex-direction:column;gap:2px}
+.cv-kpi-num{font-size:22px;font-weight:700;color:var(--text);line-height:1.1}
+.cv-kpi-lbl{font-size:12px;font-weight:600;color:var(--text-2)}
+.cv-kpi-sub{font-size:11px;color:var(--text-3);line-height:1.4}
+.cv-motivos{
+  margin-top:12px;padding-top:12px;border-top:1px solid var(--border);
+  font-size:12px;color:var(--text-2);
+}
+.cv-motivos ul{margin:5px 0 0;padding-left:18px;line-height:1.7}
+.cv-motivo-n{color:var(--text-3);font-weight:600}
+.cv-metrics-sub{
+  margin-top:10px;font-size:11px;color:var(--text-3);line-height:1.5;
+}
+.cv-quality{
+  border-radius:9px;padding:11px 15px;margin-bottom:12px;
+  font-size:12.5px;line-height:1.6;
+}
+.cv-quality.atencao{background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn)}
+.cv-quality.critico{background:var(--err-bg);border:1px solid var(--err-border);color:var(--err)}
+
+.cv-warn{
+  background:var(--warn-bg);border:1px solid var(--warn-border);color:var(--warn);
+  border-radius:9px;padding:12px 15px;margin-bottom:14px;
+  font-size:12.5px;line-height:1.6;
+}
+.cv-vars code{
+  font-family:var(--mono);font-size:11.5px;
+  background:var(--bg-2);border:1px solid var(--warn-border);
+  border-radius:4px;padding:1px 5px;margin-right:4px;
+}
 
 /* ── Registro de ligação ── */
 .call-section{padding:22px 26px;border-top:1px solid var(--border);background:var(--surface)}

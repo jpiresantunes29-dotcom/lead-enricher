@@ -8,6 +8,8 @@ import hmac
 import os
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from tests.test_api import client, clean_db, _Session, MOCK_ENRICH_RESULT  # noqa: F401
 from models.database import Profile
 
@@ -121,6 +123,99 @@ def test_push_sends_signed_payload(client, monkeypatch):
     # Auditoria: nota criada na timeline
     timeline = client.get(f"/api/leads/{lead['id']}/activities").json()
     assert any("CRM" in (a["notes"] or "") for a in timeline)
+
+
+# ── Mapeamento para o Dynamics ───────────────────────────────────────────────
+#
+# O fluxo do Power Automate é montado à mão por uma pessoa. Tudo aqui existe
+# para essa pessoa não precisar aprender o vocabulário interno do LeadEnricher
+# nem adivinhar como decidir entre criar e atualizar um registro.
+
+def _payload_capturado(client, monkeypatch, lead_id):
+    monkeypatch.setenv("CRM_WEBHOOK_URL", "https://hooks.example.com/in")
+    capturado = {}
+
+    def fake_post(url, data=None, headers=None, timeout=None, allow_redirects=None):
+        capturado["data"] = data
+        m = MagicMock()
+        m.status_code = 200
+        return m
+
+    with patch("services.crm.webhook.is_public_url", return_value=True), \
+         patch("services.crm.webhook.requests.post", side_effect=fake_post):
+        resp = client.post(f"/api/leads/{lead_id}/push")
+    assert resp.status_code == 200
+    return json.loads(capturado["data"])
+
+
+def test_payload_traz_chave_de_deduplicacao_pelo_dominio(client, monkeypatch):
+    """
+    Nosso `lead.id` muda quando a mesma empresa volta por outra planilha; o
+    domínio, não. Deduplicar pelo id daria um registro duplicado no Dynamics a
+    cada reimportação.
+    """
+    lead = _make_lead(client)
+    payload = _payload_capturado(client, monkeypatch, lead["id"])
+
+    assert payload["dedup_key"] == f"domain:{lead['domain']}"
+    assert payload["dynamics"]["dedup_field"] == "domain"
+
+
+def test_payload_declara_a_versao_do_formato(client, monkeypatch):
+    """Um fluxo montado à mão quebra em silêncio quando o payload muda."""
+    lead = _make_lead(client)
+    assert _payload_capturado(client, monkeypatch, lead["id"])["schema_version"] == 2
+
+
+@pytest.mark.parametrize("tipo,entidade", [
+    ("call", "phonecall"),
+    ("meeting", "appointment"),
+    ("task", "task"),
+    ("note", "annotation"),
+])
+def test_cada_atividade_diz_a_entidade_do_dynamics(client, monkeypatch, tipo, entidade):
+    """
+    Com a entidade no payload, o fluxo é um `switch` num campo só, em vez de
+    uma escada de condições sobre os nossos nomes internos.
+    """
+    lead = _make_lead(client)
+    client.post(f"/api/leads/{lead['id']}/activities",
+                json={"type": tipo, "notes": "teste"})
+
+    payload = _payload_capturado(client, monkeypatch, lead["id"])
+    atividade = next(a for a in payload["activities"] if a["type"] == tipo)
+    assert atividade["entity"] == entidade
+
+
+def test_atividade_de_tipo_desconhecido_vira_anotacao():
+    """
+    Anotação registra sem inventar semântica — as outras entidades do Dynamics
+    têm campos obrigatórios que não teríamos como preencher.
+    """
+    from services.crm import webhook as crm_webhook
+    assert crm_webhook.ENTIDADE_DYNAMICS.get("inexistente",
+                                             crm_webhook.ENTIDADE_PADRAO) == "annotation"
+
+
+def test_relacionamento_do_lead_vai_no_payload(client, monkeypatch):
+    """
+    Um CRM que recebe cliente atual na fila de prospecção gera abordagem
+    repetida — o mesmo erro que o portão evita do lado de cá.
+    """
+    lead = _make_lead(client)
+    payload = _payload_capturado(client, monkeypatch, lead["id"])
+    assert payload["lead"]["relationship"] == "LEAD"
+
+
+def test_conversas_de_whatsapp_nao_saem_no_payload(client, monkeypatch):
+    """
+    Mandar o que foi dito para um sistema de terceiros é decisão sobre dado
+    pessoal, não detalhe de integração — e o que sai não volta.
+    """
+    lead = _make_lead(client)
+    payload = _payload_capturado(client, monkeypatch, lead["id"])
+    assert "conversations" not in payload
+    assert "messages" not in payload
 
 
 def test_push_upstream_failure_returns_502(client, monkeypatch):

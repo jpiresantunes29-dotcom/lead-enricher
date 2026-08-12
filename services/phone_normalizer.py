@@ -76,6 +76,45 @@ def _classify_type(num: phonenumbers.PhoneNumber) -> str:
     }.get(t, "unknown")
 
 
+#: Tipos que atendem numa central/recepção, não no bolso de uma pessoa. É o
+#: que separa "dá para mandar mensagem" de "só dá para ligar".
+COMPANY_PHONE_TYPES = {
+    "fixed_line", "toll_free", "premium", "shared_cost", "uan", "voip", "unknown",
+}
+
+
+def normalize_input(raw: str, default_region: str = "BR") -> Optional[dict]:
+    """
+    Telefone digitado por gente, não raspado de página.
+
+    Devolve `{e164, formatted, type, country, is_mobile}` ou None quando o
+    número não existe de verdade. A diferença para
+    `extract_and_normalize_phones` é a intenção: aqui o texto inteiro é o
+    número, então algo como "abc" precisa virar erro em vez de lista vazia
+    silenciosa — quem digitou merece saber que não foi salvo.
+    """
+    if not raw or not raw.strip():
+        return None
+    try:
+        num = phonenumbers.parse(raw.strip(), default_region)
+    except phonenumbers.NumberParseException:
+        return None
+    if not phonenumbers.is_valid_number(num):
+        return None
+
+    tipo = _classify_type(num)
+    return {
+        "e164": phonenumbers.format_number(num, PhoneNumberFormat.E164),
+        "formatted": _format_pretty(num),
+        "type": tipo,
+        "country": phonenumbers.region_code_for_number(num),
+        # `fixed_or_mobile` conta como celular: em vários países a numeração
+        # não distingue, e recusar o benefício da dúvida bloquearia o WhatsApp
+        # de números que funcionam.
+        "is_mobile": tipo in ("mobile", "fixed_or_mobile"),
+    }
+
+
 def extract_and_normalize_phones(text: str, default_region: str = "BR") -> List[dict]:
     """
     Extrai todos os números válidos do texto.

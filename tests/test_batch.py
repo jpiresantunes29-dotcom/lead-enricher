@@ -3,11 +3,12 @@ Testes do enriquecimento em lote: parsing da lista, fila, cota e as rodadas
 que fazem o lote andar sem estourar o tempo da função.
 """
 import pytest
+from datetime import timedelta
 from unittest.mock import patch
 
 from tests.test_api import client, clean_db, _Session, MOCK_ENRICH_RESULT  # noqa: F401
 
-from models.database import Job, Lead, Profile
+from models.database import Job, Lead, Profile, utcnow
 from services import domain_list, jobs
 
 
@@ -208,6 +209,84 @@ def test_dois_workers_nao_processam_o_mesmo_job(client):
     finally:
         db_a.close()
         db_b.close()
+
+
+# ── Rodada que morreu no meio ────────────────────────────────────────────────
+# A função serverless pode ser interrompida (tempo, deploy, memória) com um job
+# já reservado. Sem recuperação ele fica `running` para sempre e o lote trava
+# perto do fim, sem erro nenhum na tela.
+
+def _envelhecer_job(batch_id: str, segundos: int, attempts: int = 1):
+    """Coloca o job em `running` como se tivesse sido reservado há X segundos."""
+    db = _Session()
+    try:
+        job = db.query(Job).filter(Job.batch_id == batch_id).first()
+        job.status = jobs.STATUS_RUNNING
+        job.attempts = attempts
+        job.started_at = utcnow() - timedelta(seconds=segundos)
+        db.commit()
+        return job.id
+    finally:
+        db.close()
+
+
+def _status_do_job(job_id: int) -> str:
+    db = _Session()
+    try:
+        return db.query(Job).filter(Job.id == job_id).first().status
+    finally:
+        db.close()
+
+
+def test_job_travado_volta_para_a_fila(client):
+    batch_id = client.post("/api/batches", json={"domains": ["travado.com.br"]}).json()["batch_id"]
+    job_id = _envelhecer_job(batch_id, segundos=jobs.STALE_JOB_SECONDS + 60)
+
+    db = _Session()
+    try:
+        assert jobs.reclaim_stale(db) == 1
+    finally:
+        db.close()
+    assert _status_do_job(job_id) == jobs.STATUS_QUEUED
+
+
+def test_job_reservado_agora_nao_e_roubado(client):
+    """Senão duas rodadas simultâneas processariam o mesmo domínio."""
+    batch_id = client.post("/api/batches", json={"domains": ["rodando.com.br"]}).json()["batch_id"]
+    job_id = _envelhecer_job(batch_id, segundos=5)
+
+    db = _Session()
+    try:
+        assert jobs.reclaim_stale(db) == 0
+    finally:
+        db.close()
+    assert _status_do_job(job_id) == jobs.STATUS_RUNNING
+
+
+def test_job_travado_sem_tentativas_restantes_vira_falha(client):
+    """Repor na fila para sempre trocaria um lote travado por um lote infinito."""
+    batch_id = client.post("/api/batches", json={"domains": ["insistente.com.br"]}).json()["batch_id"]
+    job_id = _envelhecer_job(batch_id, segundos=jobs.STALE_JOB_SECONDS + 60,
+                             attempts=jobs.MAX_ATTEMPTS)
+
+    db = _Session()
+    try:
+        jobs.reclaim_stale(db)
+    finally:
+        db.close()
+    assert _status_do_job(job_id) == jobs.STATUS_FAILED
+
+
+def test_rodada_retoma_o_lote_que_ficou_travado(client):
+    batch_id = client.post("/api/batches", json={"domains": ["retomado.com.br"]}).json()["batch_id"]
+    _envelhecer_job(batch_id, segundos=jobs.STALE_JOB_SECONDS + 60)
+
+    with patch("services.enrichment_service.enrich_company", side_effect=_mock_enrich):
+        resp = client.post(f"/api/batches/{batch_id}/run")
+
+    corpo = resp.json()
+    assert corpo["processed"] == 1
+    assert corpo["progresso"]["finalizado"] is True
 
 
 # ── Isolamento entre contas ──────────────────────────────────────────────────

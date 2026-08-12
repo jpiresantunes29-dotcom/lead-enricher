@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from models.database import get_db, Lead, Activity, Profile, CRMConnection
 from middleware.auth import get_current_user
 from routers.auth import get_or_create_profile
-from services import ai_insights
+from services import ai_insights, crypto
 from services.crm import webhook as crm_webhook
 from services.providers import hunter
 
@@ -112,6 +112,17 @@ def push_to_crm(
         raise HTTPException(
             status_code=503,
             detail="CRM não configurado. Adicione seu webhook em Configurações.",
+        )
+
+    # Segredo gravado que não abre com a SECRETS_KEY atual: recusamos em vez de
+    # enviar sem assinatura. O receptor que valida o HMAC descartaria em
+    # silêncio, e o que não valida passaria a aceitar payload de qualquer
+    # origem — nos dois casos a proteção teria sumido sem ninguém notar.
+    if conn and conn.webhook_secret == crypto.ILEGIVEL:
+        raise HTTPException(
+            status_code=409,
+            detail="O segredo do webhook não pôde ser lido com a chave atual do "
+                   "servidor. Regrave-o em Configurações para voltar a enviar.",
         )
 
     lead = _get_user_lead(db, lead_id, user_id)

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from models.database import get_db
 from services import demo_cleanup, jobs
+from services.wa import orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,32 @@ def rodar_fila(db: Session = Depends(get_db)):
     """
     resumo = jobs.run_pending(db)
     return {"ok": True, **resumo}
+
+
+@router.get("/preflight", dependencies=[Depends(require_cron_secret)])
+def prontidao(db: Session = Depends(get_db)):
+    """
+    O que precisa estar no lugar antes de ligar — e o que acontece se não estiver.
+
+    Protegida pelo segredo do cron porque a resposta é um mapa do que está e do
+    que não está configurado no servidor: útil para quem opera, útil demais
+    para quem estiver sondando.
+    """
+    from services import preflight
+    return preflight.verificar(db=db).como_dict()
+
+
+@router.post("/wa/pending", dependencies=[Depends(require_cron_secret)])
+def responder_pendentes(db: Session = Depends(get_db)):
+    """
+    Responde as conversas em que o lead falou por último e ficou sem resposta.
+
+    Duas situações caem aqui e as duas são silêncio, que é o pior resultado
+    possível: o lead que escreveu de madrugada (o portão recusou o envio na
+    hora) e o turno que não chegou a rodar porque a função foi interrompida no
+    meio. Sem esta rodada, a mensagem dele ficaria parada sem ninguém saber.
+    """
+    return {"ok": True, **orchestrator.rodar_pendentes(db)}
 
 
 @router.post("/demo/cleanup", dependencies=[Depends(require_cron_secret)])

@@ -17,6 +17,7 @@ from middleware.auth import demo_mode_enabled, jwt_configured, rate_limit_key
 from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
 from routers import batch, extension, internal, privacy
 from routers import imports, sheet
+from routers import wa as wa_router
 from routers import dns_intel as dns_intel_router
 from routers import seo as seo_router
 from services import guides, seo
@@ -74,6 +75,58 @@ def _check_configuration() -> None:
             "de demonstração. Defina DEMO_MODE=0 quando houver clientes reais."
         )
 
+    _check_whatsapp_configuration()
+
+
+def _check_whatsapp_configuration() -> None:
+    """
+    Meia configuração do WhatsApp é pior do que nenhuma.
+
+    Com envio ligado e `WHATSAPP_APP_SECRET` ausente, o produto manda o convite
+    (que a Meta cobra) e depois recusa toda entrega do webhook por falta de
+    assinatura — recusa correta, mas o efeito prático é o lead responder e
+    ninguém ficar sabendo. Convite pago, resposta perdida, e nada disso aparece
+    como erro em lugar nenhum.
+
+    Em produção é falha dura: quem configurou metade quase certamente esqueceu
+    o resto, e descobrir isso pelo silêncio custa leads reais.
+    """
+    from services.wa import client as wa_client, webhook as wa_webhook
+
+    if not wa_client.is_configured():
+        return
+    if wa_webhook.is_configured():
+        return
+
+    message = (
+        "WhatsApp configurado para ENVIAR mas sem WHATSAPP_APP_SECRET: o "
+        "convite sai e é cobrado, e a resposta do lead é recusada no webhook "
+        "por falta de assinatura."
+    )
+    if IS_PRODUCTION:
+        raise RuntimeError(message)
+    logger.warning("%s (em produção isto impediria o boot)", message)
+
+
+def _log_prontidao() -> None:
+    """
+    Escreve no log do boot o que está pendente, com a consequência de cada item.
+
+    Roda **depois** do `init_db()` porque a conferência de schema precisa do
+    banco de pé. É informativo: o que impede o boot já falhou antes daqui; o
+    resto fica registrado para quem for ler o log do deploy.
+    """
+    try:
+        from services import preflight
+        relatorio = preflight.verificar(producao=IS_PRODUCTION)
+        if relatorio.achados:
+            logger.info("Conferência de prontidão:\n%s",
+                        preflight.resumo_para_log(relatorio))
+    except Exception:
+        # Conferência é diagnóstico: se ela quebrar, o app continua de pé.
+        logger.warning("Não foi possível rodar a conferência de prontidão.",
+                       exc_info=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -89,6 +142,7 @@ async def lifespan(app: FastAPI):
         logger.exception("init_db() falhou.")
         if IS_PRODUCTION:
             raise
+    _log_prontidao()
     yield
     logger.info("LeadEnricher shutting down.")
 
@@ -172,6 +226,7 @@ app.include_router(seo_router.router)
 # Importação de planilha e a visão de grade sobre os leads importados.
 app.include_router(imports.router)
 app.include_router(sheet.router)
+app.include_router(wa_router.router)
 
 
 @app.get("/health", tags=["meta"])

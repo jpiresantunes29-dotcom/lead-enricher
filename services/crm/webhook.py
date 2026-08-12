@@ -48,10 +48,49 @@ def is_configured() -> bool:
     return bool(os.getenv("CRM_WEBHOOK_URL"))
 
 
+#: Nossa atividade → entidade do Dynamics 365.
+#:
+#: Vai no payload para o fluxo do Power Automate poder ser um `switch` num
+#: campo só, em vez de uma escada de condições sobre o nosso vocabulário
+#: interno. Quem monta o fluxo não deveria precisar aprender os nomes que
+#: usamos aqui dentro.
+ENTIDADE_DYNAMICS = {
+    "call": "phonecall",
+    "meeting": "appointment",
+    "task": "task",
+    "email": "email",
+    "note": "annotation",
+}
+#: Atividade de tipo desconhecido vira anotação: registra sem inventar
+#: semântica que o Dynamics cobraria em campos obrigatórios.
+ENTIDADE_PADRAO = "annotation"
+
+
+def dedup_key(lead: Any) -> Optional[str]:
+    """
+    Chave estável para o CRM decidir entre criar e atualizar.
+
+    O domínio é o identificador que o produto inteiro usa e o único que
+    sobrevive a uma reimportação de planilha — nosso `lead.id` muda quando a
+    mesma empresa entra de novo por outro arquivo, e aí o Dynamics ganharia um
+    registro duplicado por importação.
+    """
+    if getattr(lead, "domain", None):
+        return f"domain:{lead.domain.strip().lower()}"
+    if getattr(lead, "raw_input_domain", None):
+        return f"domain:{lead.raw_input_domain.strip().lower()}"
+    return None
+
+
 def _serialize_lead(lead: Any, decision_makers: List[Any], activities: List[Any]) -> dict:
     return {
         "event": "lead.push",
         "sent_at": datetime.now(UTC).isoformat(),
+        # Versão do formato. Um fluxo do Power Automate montado à mão quebra em
+        # silêncio quando o payload muda de forma; com isto, dá para o fluxo
+        # ramificar em vez de processar errado.
+        "schema_version": 2,
+        "dedup_key": dedup_key(lead),
         "lead": {
             "id": lead.id,
             "domain": lead.domain,
@@ -64,6 +103,18 @@ def _serialize_lead(lead: Any, decision_makers: List[Any], activities: List[Any]
             "sector": lead.sector,
             "location": lead.location,
             "stage": lead.stage,
+            # Quem esta empresa é para nós. Vai junto porque um CRM que recebe
+            # "cliente atual" na fila de prospecção gera abordagem repetida —
+            # o mesmo erro que o portão evita do lado de cá.
+            "relationship": getattr(lead, "relationship", None),
+            "phone": lead.phone,
+            "corporate_email": lead.corporate_email,
+        },
+        "dynamics": {
+            # O alvo de cada parte, com os nomes do Dynamics.
+            "lead_entity": "lead",
+            "dedup_field": "domain",
+            "activity_entities": sorted(set(ENTIDADE_DYNAMICS.values())),
         },
         "decision_makers": [
             {
@@ -78,6 +129,7 @@ def _serialize_lead(lead: Any, decision_makers: List[Any], activities: List[Any]
         "activities": [
             {
                 "type": a.type,
+                "entity": ENTIDADE_DYNAMICS.get(a.type, ENTIDADE_PADRAO),
                 "outcome": a.outcome,
                 "notes": a.notes,
                 "due_at": a.due_at.isoformat() if a.due_at else None,
@@ -87,6 +139,12 @@ def _serialize_lead(lead: Any, decision_makers: List[Any], activities: List[Any]
             for a in activities
         ],
     }
+    # As conversas de WhatsApp NÃO vão neste payload, de propósito. Mandar o
+    # que foi dito para um sistema de terceiros é uma decisão sobre dado
+    # pessoal, não um detalhe de integração — e uma vez enviado, não volta.
+    # Quando fizer sentido, decida primeiro entre metadado (com quem, quando,
+    # quantas trocas) e conteúdo; o segundo precisa constar da política de
+    # privacidade.
 
 
 def push_lead(

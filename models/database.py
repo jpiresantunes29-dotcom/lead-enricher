@@ -8,7 +8,12 @@ from sqlalchemy import (
     Boolean, Float, UniqueConstraint, Index,
 )
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import sessionmaker, relationship
+# Importado com outro nome porque `Lead.relationship` é uma coluna: dentro do
+# corpo da classe, o nome `relationship` passaria a ser a Column e as ligações
+# declaradas depois quebrariam com "'Column' object is not callable".
+from sqlalchemy.orm import sessionmaker, relationship as orm_relationship
+
+from services.crypto import SegredoCriptografado
 
 load_dotenv()
 
@@ -88,6 +93,14 @@ class Lead(Base):
     corporate_email = Column(String(255))
     phone = Column(String(100))
     status = Column(String(50), default="enriched")
+    # Que relação esta empresa tem com o usuário — ver RELATIONSHIPS.
+    #
+    # Separado de `stage` de propósito: `stage` é onde a negociação está e
+    # muda o tempo todo; `relationship` é quem a empresa é, e é a trava
+    # estrutural que impede a automação de abordar quem já é cliente ou pediu
+    # para não ser contatado. Regra crítica não pode depender de um campo que
+    # o vendedor arrasta num kanban.
+    relationship = Column(String(20), nullable=False, default="LEAD")
     # Versão da lógica de coleta que gerou a ficha (services.enricher).
     # Ficha de versão antiga não é servida do cache — ver routers/enrichment.py.
     enrichment_version = Column(Integer, nullable=True)
@@ -103,8 +116,21 @@ class Lead(Base):
     import_batch_id = Column(String(36), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    decision_makers = relationship("DecisionMaker", back_populates="lead", cascade="all, delete-orphan")
-    activities = relationship("Activity", back_populates="lead", cascade="all, delete-orphan")
+    decision_makers = orm_relationship("DecisionMaker", back_populates="lead", cascade="all, delete-orphan")
+    activities = orm_relationship("Activity", back_populates="lead", cascade="all, delete-orphan")
+    conversations = orm_relationship("Conversation", back_populates="lead", cascade="all, delete-orphan")
+
+
+#: Valores de `Lead.relationship`. Só `LEAD` autoriza automação de contato;
+#: todo o resto é motivo de recusa no portão (services/wa/gate.py).
+RELATIONSHIP_LEAD = "LEAD"                      # prospecto: pode receber
+RELATIONSHIP_CUSTOMER = "CUSTOMER"              # cliente atual: nunca receber
+RELATIONSHIP_DO_NOT_CONTACT = "DO_NOT_CONTACT"  # pediu para não receber
+RELATIONSHIP_BLOCKED = "BLOCKED"                # erro ou suspeita de segurança
+RELATIONSHIPS = (
+    RELATIONSHIP_LEAD, RELATIONSHIP_CUSTOMER,
+    RELATIONSHIP_DO_NOT_CONTACT, RELATIONSHIP_BLOCKED,
+)
 
 
 class DecisionMaker(Base):
@@ -122,7 +148,7 @@ class DecisionMaker(Base):
     phone = Column(String(100))
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    lead = relationship("Lead", back_populates="decision_makers")
+    lead = orm_relationship("Lead", back_populates="decision_makers")
 
 
 class Activity(Base):
@@ -142,7 +168,135 @@ class Activity(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    lead = relationship("Lead", back_populates="activities")
+    lead = orm_relationship("Lead", back_populates="activities")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Contato por WhatsApp
+#
+# Dois eixos separados, e a separação é a proteção:
+#   Lead.relationship        — quem a empresa é (estrutural, muda raramente)
+#   Conversation.ai_status   — se a automação pode falar agora (operacional)
+#
+# Juntar os dois num campo só faria "pausar a IA nesta conversa" e "esta
+# empresa virou cliente" serem a mesma escrita, e um retomar desfaria o outro.
+# ─────────────────────────────────────────────────────────────────────────────
+
+#: Valores de `Conversation.ai_status`. Só `AI_ACTIVE` autoriza envio.
+AI_ACTIVE = "AI_ACTIVE"          # automação respondendo
+AI_PAUSED = "AI_PAUSED"          # o usuário pausou à mão
+HUMAN_HANDOFF = "HUMAN_HANDOFF"  # o usuário assumiu, ou um gatilho transferiu
+STOPPED = "STOPPED"              # encerrada
+AI_STATUSES = (AI_ACTIVE, AI_PAUSED, HUMAN_HANDOFF, STOPPED)
+
+
+class Conversation(Base):
+    """Uma conversa de WhatsApp com um lead."""
+    __tablename__ = "conversations"
+    __table_args__ = (
+        # A tela de conversas lista sempre "as minhas, mais recentes primeiro".
+        Index("ix_conversations_user_updated", "user_id", "updated_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False, index=True)
+    decision_maker_id = Column(Integer, ForeignKey("decision_makers.id"), nullable=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    phone_e164 = Column(String(20), nullable=False, index=True)
+    channel = Column(String(20), nullable=False, default="whatsapp")
+    ai_status = Column(String(20), nullable=False, default=AI_ACTIVE)
+    # Fim da janela de 24 h aberta pela última mensagem do lead. Fora dela, a
+    # Meta só aceita template pago — e template não é conversa.
+    window_expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_inbound_at = Column(DateTime(timezone=True), nullable=True)
+    last_outbound_at = Column(DateTime(timezone=True), nullable=True)
+    # Prévia para a lista de conversas não precisar carregar as mensagens.
+    last_message_body = Column(Text, nullable=True)
+    # Por que saiu do automático. É o que a tela mostra para o usuário saber o
+    # que aconteceu sem abrir a conversa.
+    handoff_reason = Column(String(500), nullable=True)
+    after_hours = Column(Boolean, nullable=False, default=False)
+    # Quantas respostas automáticas já saíram na faixa de fora-do-expediente.
+    # Zera quando um turno acontece dentro do horário comercial: o teto é por
+    # noite/fim de semana, não para a vida da conversa.
+    after_hours_turns = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    lead = orm_relationship("Lead", back_populates="conversations")
+    messages = orm_relationship(
+        "WaMessage", back_populates="conversation",
+        cascade="all, delete-orphan", order_by="WaMessage.id",
+    )
+
+
+class WaMessage(Base):
+    """Cada mensagem trocada, na ordem em que aconteceu."""
+    __tablename__ = "wa_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"),
+                             nullable=False, index=True)
+    direction = Column(String(10), nullable=False)   # in | out
+    # ID da Meta. Único porque o webhook reentrega a mesma mensagem quando não
+    # recebe 200 a tempo: sem esta restrição, uma lentidão nossa vira mensagem
+    # duplicada na conversa e uma resposta repetida para o lead.
+    wa_message_id = Column(String(128), nullable=True, unique=True, index=True)
+    type = Column(String(20), nullable=False, default="text")  # text|template|image|button
+    body = Column(Text, nullable=True)
+    template_name = Column(String(120), nullable=True)
+    status = Column(String(20), nullable=True)       # sent|delivered|read|failed
+    sent_by = Column(String(10), nullable=True)      # ai | human
+    intent_detected = Column(String(40), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+
+    conversation = orm_relationship("Conversation", back_populates="messages")
+
+
+class AuditLog(Base):
+    """
+    Trilha de decisões: quem mudou o quê, quando e por quê.
+
+    **Não guarda mensagens.** O conteúdo trocado já vive em `wa_messages`, com
+    direção, autor e horário; copiar isso aqui só criaria uma segunda cópia de
+    dado pessoal para manter em dia. O que falta em qualquer outro lugar são as
+    *decisões*: quem pausou, quem assumiu, quando a automação levantou a mão e
+    quando uma empresa deixou de ser lead.
+
+    A pergunta que esta tabela existe para responder é "por que essa conversa
+    continuou depois de eu ter pausado?" — e `Conversation.handoff_reason`
+    guarda só o último motivo, o que não conta história nenhuma.
+    """
+    __tablename__ = "audit_logs"
+    __table_args__ = (
+        Index("ix_audit_logs_user_created", "user_id", "created_at"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id"),
+                             nullable=True, index=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True, index=True)
+    acao = Column(String(40), nullable=False)
+    # Quem fez: "humano" (o dono da conta), "ia" (a automação) ou "sistema"
+    # (o portão, um cron). Sem isto, "conversa encerrada" não distingue um
+    # clique de um gatilho automático — que é justamente o que se quer saber.
+    ator = Column(String(20), nullable=False, default="sistema")
+    detalhe = Column(String(500), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+#: Vocabulário de `AuditLog.acao`. Curto de propósito: um vocabulário que
+#: cresce a cada funcionalidade vira log que ninguém consegue ler.
+AUDIT_CONVERSA_ABERTA = "conversa_aberta"      # template enviado (ação paga)
+AUDIT_PAUSADA = "pausada"
+AUDIT_ASSUMIDA = "assumida"
+AUDIT_RETOMADA = "retomada"
+AUDIT_ENCERRADA = "encerrada"
+AUDIT_RELACIONAMENTO = "relacionamento"        # LEAD → CUSTOMER / DO_NOT_CONTACT
+# Qualidade do número não entra aqui: ela é do WABA, não de um usuário, e
+# atribuí-la a alguém seria inventar um dono. Vai para o log do servidor e
+# aparece ao vivo em /api/wa/status.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +327,7 @@ class Company(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    persons = relationship("Person", back_populates="company")
+    persons = orm_relationship("Person", back_populates="company")
 
 
 class Person(Base):
@@ -200,9 +354,9 @@ class Person(Base):
     last_seen_at = Column(DateTime(timezone=True), default=utcnow)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    company = relationship("Company", back_populates="persons")
-    emails = relationship("PersonEmail", back_populates="person", cascade="all, delete-orphan")
-    phones = relationship("PersonPhone", back_populates="person", cascade="all, delete-orphan")
+    company = orm_relationship("Company", back_populates="persons")
+    emails = orm_relationship("PersonEmail", back_populates="person", cascade="all, delete-orphan")
+    phones = orm_relationship("PersonPhone", back_populates="person", cascade="all, delete-orphan")
 
 
 class PersonEmail(Base):
@@ -220,7 +374,7 @@ class PersonEmail(Base):
     verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    person = relationship("Person", back_populates="emails")
+    person = orm_relationship("Person", back_populates="emails")
 
 
 class PersonPhone(Base):
@@ -237,7 +391,7 @@ class PersonPhone(Base):
     verified_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    person = relationship("Person", back_populates="phones")
+    person = orm_relationship("Person", back_populates="phones")
 
 
 class EmailPattern(Base):
@@ -499,15 +653,22 @@ class ImportBatch(Base):
 
 
 class CRMConnection(Base):
-    """Configuração de integração CRM por usuário."""
+    """
+    Configuração de integração CRM por usuário.
+
+    Os três campos de credencial usam `SegredoCriptografado`: no banco eles
+    aparecem como `enc:v1:...` e só voltam legíveis dentro do processo, com a
+    `SECRETS_KEY`. `webhook_url` e `account_id` ficam em claro de propósito —
+    o motivo está em services/crypto.py.
+    """
     __tablename__ = "crm_connections"
 
     user_id = Column(String, primary_key=True)
     provider = Column(String, primary_key=True)  # webhook, dynamics, hubspot, pipedrive
     webhook_url = Column(String, nullable=True)
-    webhook_secret = Column(String, nullable=True)
-    access_token = Column(String, nullable=True)
-    refresh_token = Column(String, nullable=True)
+    webhook_secret = Column(SegredoCriptografado, nullable=True)
+    access_token = Column(SegredoCriptografado, nullable=True)
+    refresh_token = Column(SegredoCriptografado, nullable=True)
     account_id = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
@@ -516,7 +677,7 @@ class CRMConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "7c2a1f4b9e33"
+ALEMBIC_HEAD = "c58a2f9017bd"
 
 
 def _stamp_alembic_head() -> None:

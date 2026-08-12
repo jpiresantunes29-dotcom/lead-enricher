@@ -1,6 +1,22 @@
 from datetime import datetime
 from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
+
+from services.phone_normalizer import normalize_input
+
+
+def _telefone_e_celular(phone: Optional[str]) -> Optional[bool]:
+    """
+    None quando não há telefone ou o formato não permite dizer.
+
+    Serve para a tela avisar que o número guardado atende numa central: é o
+    telefone da empresa que a coleta encontra, e mandar mensagem para ele não
+    alcança o decisor.
+    """
+    if not phone:
+        return None
+    dados = normalize_input(phone)
+    return dados["is_mobile"] if dados else None
 
 
 class EnrichRequest(BaseModel):
@@ -24,6 +40,11 @@ class DecisionMakerOut(BaseModel):
     probable_emails: Optional[List[Any]] = None  # aceita lista de dicts
     match_confidence: Optional[str] = None
     phone: Optional[str] = None
+
+    @computed_field
+    @property
+    def phone_is_mobile(self) -> Optional[bool]:
+        return _telefone_e_celular(self.phone)
 
 
 class LeadOut(BaseModel):
@@ -52,6 +73,11 @@ class LeadOut(BaseModel):
     stage: Optional[str] = "novo"
     ai_summary: Optional[str] = None
     created_at: datetime
+
+    @computed_field
+    @property
+    def phone_is_mobile(self) -> Optional[bool]:
+        return _telefone_e_celular(self.phone)
 
 
 class LeadListOut(LeadOut):
@@ -125,6 +151,168 @@ class ActivityResponse(BaseModel):
 
 class StageUpdate(BaseModel):
     stage: str
+
+
+class LeadUpdate(BaseModel):
+    """
+    Correção manual da ficha.
+
+    Só o telefone por enquanto — é o campo que a coleta erra com mais
+    frequência e o único que bloqueia o contato por WhatsApp. String vazia
+    apaga o valor; campo ausente não é tocado.
+    """
+    phone: Optional[str] = None
+
+
+class DecisionMakerUpdate(BaseModel):
+    """Celular do decisor, confirmado por quem está prospectando."""
+    phone: Optional[str] = None
+
+
+# ── WhatsApp ─────────────────────────────────────────────────────────────────
+
+class WaStartRequest(BaseModel):
+    """
+    Pedido de primeiro contato.
+
+    `phone` só é necessário quando o número certo não está guardado em lugar
+    nenhum ainda; sem ele, o destino sai do decisor escolhido e, por último, do
+    telefone da empresa.
+    """
+    lead_id: int
+    phone: Optional[str] = None
+    decision_maker_id: Optional[int] = None
+    # O template aprovado pode ter uma variável no corpo (o nome da empresa).
+    # Falso quando o template é fixo — mandar parâmetro a mais faz a Meta
+    # recusar a mensagem.
+    usar_nome_da_empresa: bool = True
+
+
+class ConversationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    lead_id: int
+    decision_maker_id: Optional[int] = None
+    phone_e164: str
+    channel: str
+    ai_status: str
+    window_expires_at: Optional[datetime] = None
+    last_inbound_at: Optional[datetime] = None
+    last_outbound_at: Optional[datetime] = None
+    last_message_body: Optional[str] = None
+    handoff_reason: Optional[str] = None
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+
+class WaStartResponse(BaseModel):
+    success: bool
+    message: str
+    conversation: ConversationOut
+
+
+class ConversationSeal(BaseModel):
+    """
+    O selo do card. Vem pronto do servidor porque o estado da conversa é uma
+    regra de negócio, não uma decisão de tela: dois lugares calculando isso
+    acabam discordando, e o usuário confia no que está vendo.
+    """
+    tom: str          # ativa | aguardando | assumida | pausada | encerrada
+    rotulo: str       # o que aparece no selo
+    explicacao: str   # o que isso significa, em uma frase
+
+
+class ConversationCard(BaseModel):
+    """Uma conversa na lista, com o que o card precisa mostrar."""
+    id: int
+    lead_id: int
+    company_name: Optional[str] = None
+    contato: Optional[str] = None       # nome do decisor, quando há
+    phone_e164: str
+    ai_status: str
+    selo: ConversationSeal
+    last_message_body: Optional[str] = None
+    last_inbound_at: Optional[datetime] = None
+    last_outbound_at: Optional[datetime] = None
+    handoff_reason: Optional[str] = None
+    janela_aberta: bool = False
+    aguardando_voce: bool = False
+    updated_at: Optional[datetime] = None
+
+
+class WaMessageOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    direction: str
+    type: str
+    body: Optional[str] = None
+    template_name: Optional[str] = None
+    status: Optional[str] = None
+    sent_by: Optional[str] = None
+    intent_detected: Optional[str] = None
+    created_at: datetime
+
+
+class ConversationDetail(BaseModel):
+    card: ConversationCard
+    messages: List[WaMessageOut] = []
+
+
+class ConversationAction(BaseModel):
+    """
+    Ação do usuário sobre a automação.
+
+    Só quatro verbos, e nenhum deles escreve `ai_status` diretamente: quem
+    traduz verbo em estado é o serviço, para a tela não poder inventar um
+    estado que o portão não conhece.
+    """
+    acao: str          # pausar | assumir | retomar | encerrar
+    motivo: Optional[str] = None
+
+
+class WaReplyRequest(BaseModel):
+    """Resposta escrita pelo próprio usuário, com a IA fora do caminho."""
+    texto: str
+
+
+class AuditEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    conversation_id: Optional[int] = None
+    lead_id: Optional[int] = None
+    acao: str
+    ator: str
+    detalhe: Optional[str] = None
+    created_at: datetime
+
+
+class WaMetrics(BaseModel):
+    """
+    Números da operação de WhatsApp no período.
+
+    Sem estimativa de custo em reais: o preço do template muda por país e por
+    categoria, e um valor inventado na tela vira uma decisão de negócio errada.
+    O que aparece é a **contagem de convites**, que é o que se multiplica pela
+    tabela atual da Meta.
+    """
+    dias: int
+    conversas_iniciadas: int = 0
+    convites_enviados: int = 0
+    leads_que_responderam: int = 0
+    taxa_de_resposta: float = 0.0        # 0 a 1
+    respostas_da_ia: int = 0
+    respostas_suas: int = 0
+    handoffs: int = 0
+    taxa_de_handoff: float = 0.0         # sobre as conversas com resposta
+    motivos_de_handoff: List[Dict[str, Any]] = []
+    viraram_cliente: int = 0
+    pediram_para_parar: int = 0
+    aguardando_voce: int = 0
+    # Como a Meta classifica o número agora. None quando não dá para consultar.
+    qualidade_do_numero: Optional[Dict[str, Any]] = None
 
 
 # ── Extensão / Contact Intelligence ──────────────────────────────────────────

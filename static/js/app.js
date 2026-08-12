@@ -69,7 +69,7 @@ async function loadProfile(){
     const resp=await authFetch('/api/me');
     if(resp.ok){
       _profile=await resp.json();
-      updateQuotaUI();updateNavUser();loadTodayFollowupsCount();loadRecent();
+      updateQuotaUI();updateNavUser();loadTodayFollowupsCount();loadRecent();loadWaStatus();
     }
   }catch(_){}
 }
@@ -84,6 +84,19 @@ async function loadTodayFollowupsCount(){
         if(fus.length>0){badge.textContent=fus.length;badge.style.display='inline-block';}
         else badge.style.display='none';
       }
+    }
+  }catch(_){}
+}
+
+/* Situação do WhatsApp: alimenta o aviso na barra lateral e decide se o botão
+   "Iniciar contato" da ficha aparece ativo ou apagado. Carregado uma vez no
+   início; a tela de conversas atualiza sozinha enquanto está aberta. */
+async function loadWaStatus(){
+  try{
+    const resp=await authFetch('/api/wa/status');
+    if(resp.ok){
+      _waStatus=await resp.json();
+      atualizarBadgeConversas(_waStatus);
     }
   }catch(_){}
 }
@@ -210,7 +223,7 @@ function closePaywall(){document.getElementById('paywall-modal').classList.remov
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
-const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','history','settings'];
+const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','conversas','history','settings'];
 
 function nav(route){
   if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
@@ -247,6 +260,10 @@ const VIEW_META={
   dashboard:{
     title:'Dashboard comercial',
     sub:'Esforço e conversão do período: quanto ligou, quanto virou contato e quanto virou reunião.',
+  },
+  conversas:{
+    title:'Conversas de WhatsApp',
+    sub:'O que cada lead respondeu e quem está respondendo por você. Assumir cala a automação na hora.',
   },
   history:{
     title:'Histórico de leads',
@@ -296,6 +313,7 @@ function applyRoute(){
   else if(h==='dashboard')loadDashboard();
   else if(h==='pipeline')loadPipeline();
   else if(h==='followups')loadFollowups();
+  else if(h==='conversas')loadConversas();
   else if(h==='history')loadHistory();
   else if(h==='settings')loadSettings();
 }
@@ -792,6 +810,8 @@ async function loadIntegrations(){
 const IC_SPARK='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.7L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.3z"/></svg>';
 const IC_PUSH='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
 const IC_DOWN='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+const IC_PHONE='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+const IC_CHAT='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
 
 async function genAiSummary(force){
   if(!currentLeadId)return;
@@ -901,6 +921,7 @@ function renderResult(data){
     cell('Localização',data.location,{ic:IC.pin,delay:d+=50}),
     cell('Setor',data.sector,{ic:IC.tag,delay:d+=50}),
   ];
+  cards.push(phoneCellHtml(d+=50));
   if(data.hosting_provider)cards.push(cell('Hosting',data.hosting_provider,{ic:IC.globe,delay:d+=50}));
   const dns=renderInfra(data);
   root.innerHTML=`<div class="result-card">
@@ -971,6 +992,13 @@ function renderResult(data){
     integ.crm_webhook
       ? `<button class="la-btn accent" onclick="pushToCrm()" title="Envia este lead ao webhook configurado em Configurações">${IC_PUSH} Enviar ao CRM</button>`
       : `<span class="la-btn off" onclick="nav('settings')" title="Configure um webhook em Configurações para habilitar" style="cursor:pointer">${IC_PUSH} Enviar ao CRM · configurar</span>`,
+    // Primeiro contato: pago e irreversível. Fica visível sempre — apagado e
+    // explicando o que falta quando não dá para usar.
+    _waStatus&&_waStatus.configurado
+      ? (data.phone
+          ? `<button class="la-btn" onclick="iniciarWhatsapp()" title="Envia o convite aprovado para ${esc(data.phone)}. A Meta cobra por esta mensagem.">${IC_CHAT} Iniciar contato por WhatsApp</button>`
+          : `<span class="la-btn off" title="Informe o telefone na ficha para poder enviar o convite">${IC_CHAT} WhatsApp · informe o telefone</span>`)
+      : `<span class="la-btn off" title="Falta configurar as credenciais da Meta no servidor">${IC_CHAT} WhatsApp · não configurado</span>`,
     `<button class="la-btn" onclick="openExportModal()" title="Baixar seus leads em Excel ou CSV">${IC_DOWN} Exportar leads</button>`,
   ].filter(Boolean).join('');
   if(data.ai_summary){
@@ -981,6 +1009,328 @@ function renderResult(data){
   document.getElementById('role-input').addEventListener('keydown',e=>{if(e.key==='Enter')searchDecisores()});
   const top=root.closest('.results-wrap').getBoundingClientRect().top+window.scrollY-100;
   window.scrollTo({top,behavior:'smooth'});
+}
+
+/* ══════ CONVERSAS DE WHATSAPP ══════
+   A tela de controle humano. A regra que ela precisa deixar óbvia o tempo
+   todo: quem está respondendo agora — a automação ou você. Por isso o selo é
+   grande, vem pronto do servidor e traz uma frase explicando o que significa;
+   e por isso "Assumir agora" fica visível em toda conversa, inclusive nas que
+   já estão paradas. */
+
+let _conversas=[];          // último carregamento da lista
+let _conversaAberta=null;   // id da conversa no painel da direita
+let _conversasTimer=null;   // polling enquanto a tela está aberta
+let _waStatus=null;         // o que está configurado no servidor
+let _waMetrics=null;        // números do período (só nesta tela)
+
+async function loadConversas(){
+  const root=document.getElementById('conversas-body');
+  if(!root)return;
+  if(!_conversas.length)root.innerHTML='<div class="muted-box">Carregando conversas…</div>';
+  try{
+    const [st,lista,met]=await Promise.all([
+      authFetch('/api/wa/status').then(r=>r.ok?r.json():null),
+      authFetch('/api/wa/conversations').then(r=>r.ok?r.json():[]),
+      authFetch('/api/wa/metrics').then(r=>r.ok?r.json():null),
+    ]);
+    _waStatus=st;_conversas=lista||[];_waMetrics=met;
+    renderConversas();
+    atualizarBadgeConversas(st);
+  }catch(_){
+    root.innerHTML='<div class="muted-box">Não foi possível carregar as conversas.</div>';
+  }
+  // Recarrega sozinho enquanto a tela está aberta: mensagem que chega enquanto
+  // o usuário olha a tela precisa aparecer sem ele ter que atualizar a página.
+  clearInterval(_conversasTimer);
+  _conversasTimer=setInterval(()=>{
+    if(location.hash.slice(1)==='conversas')loadConversas();
+    else clearInterval(_conversasTimer);
+  },15000);
+}
+
+function atualizarBadgeConversas(st){
+  const badge=document.getElementById('nav-wa-count');
+  if(!badge)return;
+  const n=(st&&st.aguardando)||0;
+  if(n>0){badge.textContent=n;badge.style.display='inline-block';}
+  else badge.style.display='none';
+}
+
+function renderConversas(){
+  const root=document.getElementById('conversas-body');
+  if(!root)return;
+  const st=_waStatus||{};
+
+  // Serviço não configurado: a tela continua existindo e diz o que falta. Some
+  // da tela é o que impede alguém de descobrir que a função existe.
+  const aviso=st.configurado?'':`<div class="cv-warn">
+      <strong>WhatsApp ainda não está ligado neste servidor.</strong>
+      As conversas abaixo continuam visíveis, mas nada é enviado enquanto faltar:
+      <span class="cv-vars">${(st.faltando||[]).map(v=>`<code>${esc(v)}</code>`).join(' ')}</span>
+      ${st.webhook_assinado?'':'<br/>Falta também <code>WHATSAPP_APP_SECRET</code> — sem ele o recebimento é recusado.'}
+    </div>`;
+
+  if(!_conversas.length){
+    root.innerHTML=`${aviso}<div class="empty-state-box">
+      <div class="empty-icon">${IC_CHAT}</div>
+      <div class="empty-title">Nenhuma conversa ainda</div>
+      <div class="empty-sub">Abra a ficha de um lead e clique em <strong>Iniciar contato por WhatsApp</strong>.
+      O primeiro convite parte de você; a partir da resposta do lead, a automação assume dentro das regras.</div>
+    </div>`;
+    return;
+  }
+
+  const cards=_conversas.map(c=>cardConversa(c)).join('');
+  root.innerHTML=`${aviso}${faixaMetricas()}<div class="cv-wrap">
+    <aside class="cv-list" id="cv-list">${cards}</aside>
+    <section class="cv-panel" id="cv-panel">${painelVazio()}</section>
+  </div>`;
+  if(_conversaAberta)abrirConversa(_conversaAberta,true);
+}
+
+/* Números do período. Cada um traz embaixo o que ele significa — número solto
+   numa tela é o tipo de coisa que se interpreta errado com confiança. */
+function faixaMetricas(){
+  const m=_waMetrics;
+  if(!m||!m.conversas_iniciadas)return '';
+  const pct=(v)=>Math.round((v||0)*100)+'%';
+  const q=m.qualidade_do_numero;
+  const alerta=q&&q.tom&&q.tom!=='ok'&&q.tom!=='desconhecido'
+    ? `<div class="cv-quality ${esc(q.tom)}"><strong>Qualidade do número: ${esc(q.rating)}.</strong> ${esc(q.recado)}</div>`
+    : '';
+  const bloco=(valor,rotulo,ajuda)=>`<div class="cv-kpi">
+      <span class="cv-kpi-num">${valor}</span>
+      <span class="cv-kpi-lbl">${rotulo}</span>
+      <span class="cv-kpi-sub">${ajuda}</span>
+    </div>`;
+  const motivos=(m.motivos_de_handoff||[]).slice(0,3)
+    .map(x=>`<li>${esc(x.motivo)} <span class="cv-motivo-n">${x.vezes}×</span></li>`).join('');
+  return `${alerta}<div class="cv-metrics">
+    <div class="cv-kpis">
+      ${bloco(m.convites_enviados,'Convites enviados','Cada um é cobrado pela Meta')}
+      ${bloco(pct(m.taxa_de_resposta),'Responderam','Dos leads que receberam convite')}
+      ${bloco(m.respostas_da_ia,'Respostas da IA','Dentro da janela de 24h, sem custo')}
+      ${bloco(m.respostas_suas,'Respostas suas','Escritas por você na tela')}
+      ${bloco(pct(m.taxa_de_handoff),'Passaram para você','Das conversas que tiveram resposta')}
+      ${bloco(m.pediram_para_parar,'Pediram para parar','Número bloqueado permanentemente')}
+    </div>
+    ${motivos?`<div class="cv-motivos"><span>Por que passaram para você:</span><ul>${motivos}</ul></div>`:''}
+    <div class="cv-metrics-sub">Últimos ${m.dias} dias. Não mostramos custo em reais: o preço do
+      template muda por país e categoria — multiplique os convites pela tabela atual da Meta.</div>
+  </div>`;
+}
+
+function painelVazio(){
+  return `<div class="cv-empty">
+    <div class="empty-icon">${IC_CHAT}</div>
+    <div class="empty-title">Escolha uma conversa</div>
+    <div class="empty-sub">Clique num card à esquerda para ler as mensagens e assumir quando quiser.</div>
+  </div>`;
+}
+
+function cardConversa(c){
+  const nome=esc(c.company_name||'Empresa');
+  const quem=c.contato?`<span class="cv-card-quem">${esc(c.contato)}</span>`:'';
+  const previa=c.last_message_body?esc(c.last_message_body.slice(0,90)):'—';
+  const ativo=_conversaAberta===c.id?' aberta':'';
+  return `<button type="button" class="cv-card${ativo}" onclick="abrirConversa(${c.id})" title="Abrir a conversa com ${nome}">
+    <div class="cv-card-top">
+      <span class="cv-card-nome">${nome}</span>
+      <span class="cv-selo ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
+    </div>
+    ${quem}
+    <div class="cv-card-previa">${previa}</div>
+    <div class="cv-card-sub">${esc(c.selo.explicacao)}</div>
+  </button>`;
+}
+
+async function abrirConversa(id,silencioso){
+  _conversaAberta=id;
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+  const painel=document.getElementById('cv-panel');
+  if(!painel)return;
+  if(!silencioso)painel.innerHTML='<div class="muted-box">Abrindo conversa…</div>';
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}`);
+    if(!resp.ok){painel.innerHTML='<div class="muted-box">Conversa não encontrada.</div>';return;}
+    renderPainelConversa(await resp.json());
+  }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
+}
+
+function renderPainelConversa(det){
+  const painel=document.getElementById('cv-panel');
+  if(!painel)return;
+  const c=det.card;
+  const msgs=(det.messages||[]).map(m=>{
+    const lado=m.direction==='in'?'in':'out';
+    const autor=m.direction==='in'?'Lead':(m.sent_by==='ai'?'IA':'Você');
+    const corpo=m.type==='template'
+      ? `<em>Convite enviado (template ${esc(m.template_name||'')})</em>`
+      : esc(m.body||'');
+    return `<div class="cv-msg ${lado}">
+      <div class="cv-msg-bolha">${corpo}</div>
+      <div class="cv-msg-meta">${autor} · ${_fmtQuando(m.created_at)}${m.status?` · ${esc(m.status)}`:''}</div>
+    </div>`;
+  }).join('')||'<div class="cv-msg-vazio">Nenhuma mensagem trocada ainda.</div>';
+
+  // A janela de 24h é regra da Meta: fora dela, o campo de resposta aparece
+  // desabilitado explicando o porquê — em vez de sumir ou dar erro no envio.
+  const podeResponder=c.janela_aberta&&(_waStatus||{}).configurado;
+  const caixa=podeResponder
+    ? `<div class="cv-reply">
+         <textarea id="cv-texto" class="cv-textarea" rows="2" placeholder="Escreva sua resposta…" aria-label="Sua resposta"></textarea>
+         <button type="button" class="cv-send" onclick="enviarResposta(${c.id})">Enviar</button>
+       </div>
+       <div class="cv-reply-sub" id="cv-msg">Responder aqui assume a conversa: a automação para de responder por você.</div>`
+    : `<div class="cv-reply off">
+         <span>${c.janela_aberta?'WhatsApp não está configurado neste servidor.'
+           :'A janela de 24 horas fechou. Só um novo convite (cobrado) reabre a conversa.'}</span>
+       </div>`;
+
+  painel.innerHTML=`
+    <div class="cv-head">
+      <div>
+        <div class="cv-head-nome">${esc(c.company_name||'Empresa')}</div>
+        <div class="cv-head-sub">${esc(c.contato||'Contato não identificado')} · <span class="mono">${esc(c.phone_e164)}</span></div>
+      </div>
+      <span class="cv-selo grande ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
+    </div>
+    <div class="cv-explica">${esc(c.selo.explicacao)}${c.handoff_reason?` <span class="cv-motivo">${esc(c.handoff_reason)}</span>`:''}</div>
+    <div class="cv-acoes">${botoesConversa(c)}</div>
+    <div class="cv-msgs">${msgs}</div>
+    ${caixa}`;
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+  const card=document.querySelector(`.cv-card[onclick="abrirConversa(${c.id})"]`);
+  if(card)card.classList.add('aberta');
+}
+
+/* "Assumir agora" aparece sempre — é a saída de emergência, e saída de
+   emergência que só aparece em certos estados não serve para nada. */
+function botoesConversa(c){
+  const b=(acao,rotulo,titulo,cls)=>`<button type="button" class="cv-btn ${cls||''}" onclick="acaoConversa(${c.id},'${acao}')" title="${titulo}">${rotulo}</button>`;
+  const botoes=[b('assumir','Assumir agora','A automação cala na hora e quem responde passa a ser você','destaque')];
+  if(c.ai_status==='AI_ACTIVE')botoes.push(b('pausar','Pausar IA','Ninguém responde até você retomar ou assumir'));
+  else if(c.ai_status!=='STOPPED')botoes.push(b('retomar','Devolver para a IA','A automação volta a responder, dentro das regras'));
+  if(c.ai_status!=='STOPPED')botoes.push(b('encerrar','Encerrar','Fecha a conversa: nada mais é enviado'));
+  return botoes.join('');
+}
+
+async function acaoConversa(id,acao){
+  if(acao==='encerrar'&&!confirm('Encerrar esta conversa? Nada mais será enviado por aqui.'))return;
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}`,{method:'PATCH',body:JSON.stringify({acao})});
+    if(!resp.ok){alert((await resp.json()).detail||'Não foi possível concluir.');return;}
+    await loadConversas();
+    abrirConversa(id,true);
+  }catch(_){alert('Erro de conexão.');}
+}
+
+async function enviarResposta(id){
+  const campo=document.getElementById('cv-texto');
+  const msg=document.getElementById('cv-msg');
+  const texto=(campo&&campo.value||'').trim();
+  if(!texto){campo&&campo.focus();return;}
+  msg.className='cv-reply-sub';msg.textContent='Enviando…';
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}/reply`,{method:'POST',body:JSON.stringify({texto})});
+    const json=await resp.json();
+    if(!resp.ok){msg.className='cv-reply-sub sub-err';msg.textContent=json.detail||'Não foi possível enviar.';return;}
+    renderPainelConversa(json);
+    loadConversas();
+  }catch(_){msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão. A mensagem não foi enviada.';}
+}
+
+function _fmtQuando(iso){
+  if(!iso)return '';
+  const d=new Date(iso);
+  if(isNaN(d))return '';
+  return d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+
+/* ══════ INICIAR CONTATO A PARTIR DA FICHA ══════
+   O primeiro convite é a ação paga e irreversível do produto: chega no celular
+   de uma pessoa e a Meta cobra por ela. Por isso pede confirmação explícita e
+   mostra para qual número vai. */
+
+async function iniciarWhatsapp(){
+  if(!currentLeadId||!currentLeadData)return;
+  const d=currentLeadData;
+  const numero=d.phone;
+  if(!numero){
+    alert('Este lead não tem telefone. Informe o número na ficha antes de iniciar o contato.');
+    return;
+  }
+  const alerta=d.phone_is_mobile===false
+    ? '\n\nATENÇÃO: este número atende numa central, não é celular. O convite é cobrado mesmo assim.'
+    : '';
+  if(!confirm(`Enviar o convite de WhatsApp para ${numero}?${alerta}\n\nA mensagem é cobrada pela Meta e não pode ser desfeita.`))return;
+  try{
+    const resp=await authFetch('/api/wa/start',{method:'POST',body:JSON.stringify({lead_id:currentLeadId})});
+    const json=await resp.json();
+    if(!resp.ok){alert(json.detail||'Não foi possível iniciar a conversa.');return;}
+    nav('conversas');
+  }catch(_){alert('Erro de conexão.');}
+}
+
+/* ══════ TELEFONE — o único campo da ficha que se corrige à mão ══════
+   A coleta acha o telefone publicado no site: quase sempre a central. Dizer
+   isso na tela evita a descoberta cara — ligar, cair na recepção e perder a
+   janela de contato com o decisor. */
+
+function phoneCellHtml(delay){
+  const d=currentLeadData||{};
+  const editar=`<button type="button" class="cell-edit" onclick="editPhone()" title="Corrigir ou informar o telefone desta empresa">${d.phone?'Editar':'Informar'}</button>`;
+  const topo=`<span class="data-lbl">${IC_PHONE}Telefone</span>`;
+  if(!d.phone){
+    return `<div class="data-cell" id="phone-cell" style="animation-delay:${delay}ms">${topo}
+      <span class="data-val muted">—</span>
+      <span class="data-sub">Nenhum telefone público encontrado. ${editar}</span></div>`;
+  }
+  const sub=d.phone_is_mobile===false
+    ? 'Atende numa central. O celular do decisor vai no card dele, abaixo.'
+    : (d.phone_is_mobile===true ? 'Celular — aceita ligação e mensagem.' : 'Tipo de linha não identificado.');
+  return `<div class="data-cell" id="phone-cell" style="animation-delay:${delay}ms">${topo}
+    <span class="data-val">${esc(d.phone)}</span>
+    <span class="data-sub">${sub} ${editar}</span></div>`;
+}
+
+function renderPhoneCell(){
+  const cell=document.getElementById('phone-cell');
+  if(cell)cell.outerHTML=phoneCellHtml(0);
+}
+
+function editPhone(){
+  const cell=document.getElementById('phone-cell');
+  if(!cell)return;
+  const atual=(currentLeadData&&currentLeadData.phone)||'';
+  cell.innerHTML=`<span class="data-lbl">${IC_PHONE}Telefone</span>
+    <div class="cell-edit-row">
+      <input id="phone-input" class="cell-inp" value="${esc(atual)}" placeholder="(11) 98888-7777" aria-label="Telefone da empresa"/>
+      <button type="button" class="cell-save" onclick="savePhone()">Salvar</button>
+      <button type="button" class="cell-cancel" onclick="renderPhoneCell()">Cancelar</button>
+    </div>
+    <span class="data-sub" id="phone-msg">Com DDD. Em branco apaga o telefone da ficha.</span>`;
+  const inp=document.getElementById('phone-input');
+  inp.focus();inp.select();
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='Enter')savePhone();
+    if(e.key==='Escape')renderPhoneCell();
+  });
+}
+
+async function savePhone(){
+  const inp=document.getElementById('phone-input');
+  const msg=document.getElementById('phone-msg');
+  if(!inp||!currentLeadId)return;
+  msg.className='data-sub';msg.textContent='Salvando…';
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}`,{method:'PATCH',body:JSON.stringify({phone:inp.value})});
+    const json=await resp.json();
+    if(!resp.ok){msg.className='data-sub sub-err';msg.textContent=json.detail||'Não foi possível salvar.';return;}
+    currentLeadData=json;
+    renderPhoneCell();
+  }catch(e){msg.className='data-sub sub-err';msg.textContent='Erro de conexão. O telefone não foi salvo.';}
 }
 
 function setRole(v){const el=document.getElementById('role-input');if(el)el.value=v;}
@@ -1009,12 +1359,59 @@ function renderDecisores(list){
   if(!list||!list.length){root.innerHTML=`<div class="empty-state-box"><div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/></svg></div><div class="empty-title">Nenhum resultado</div><div class="empty-sub">Tente variar o cargo — "Diretor TI" em vez de "Diretor de TI".</div></div>`;return;}
   const mB=(c)=>{const m={high:['✓','verified'],medium:['~','probable'],low:['?','unverified']};const[l,cl]=m[c]||['?','unverified'];return `<span class="conf-badge ${cl}">${l}</span>`;};
   const eC=(e)=>{if(typeof e==='string')return `<span class="meta-chip email">${esc(e)}</span>`;const m={valid:['✓','email-valid'],catch_all:['~','email-catchall'],invalid:['✗','email-invalid'],unknown:['?','']};const[ic,cl]=m[e.status]||m.unknown;return `<span class="meta-chip email ${cl}">${ic} ${esc(e.email)}</span>`;};
+  _decisores=list;
   root.innerHTML=list.map((p,i)=>{
     const init=(p.name||'?').trim()[0].toUpperCase();
     const emails=(p.probable_emails||[]).slice(0,4).map(eC).join('');
     const li=p.linkedin_url?`<a class="meta-chip linkedin" href="${p.linkedin_url}" target="_blank" rel="noopener">LinkedIn</a>`:'';
-    return `<div class="dec-card" style="animation-delay:${i*60}ms"><div class="dec-ava">${init}</div><div class="dec-info"><div class="dec-name">${esc(p.name||'—')} ${mB(p.match_confidence)}</div><div class="dec-role-txt">${esc(p.title_searched||'')}</div>${p.snippet?`<div class="dec-snippet">${esc(p.snippet.slice(0,200))}</div>`:''}<div class="dec-meta">${li}${emails}</div></div></div>`;
+    return `<div class="dec-card" style="animation-delay:${i*60}ms"><div class="dec-ava">${init}</div><div class="dec-info"><div class="dec-name">${esc(p.name||'—')} ${mB(p.match_confidence)}</div><div class="dec-role-txt">${esc(p.title_searched||'')}</div>${p.snippet?`<div class="dec-snippet">${esc(p.snippet.slice(0,200))}</div>`:''}<div class="dec-meta" id="dec-meta-${p.id}">${li}${emails}${decPhoneHtml(p)}</div></div></div>`;
   }).join('');
+}
+
+/* ══════ CELULAR DO DECISOR ══════
+   A coleta gratuita não entrega celular pessoal — ela entrega o telefone da
+   empresa. Este campo existe para o número certo entrar depois de confirmado
+   por quem prospecta; sem ele não há como falar direto com o decisor. */
+let _decisores=[];
+
+function decPhoneHtml(p){
+  if(!p||!p.id)return '';
+  if(p.phone){
+    const aviso=p.phone_is_mobile===false?' <span class="dec-warn">central</span>':'';
+    return `<span class="meta-chip phone">${esc(p.phone)}${aviso}</span><button type="button" class="meta-chip act" onclick="editDecPhone(${p.id})" title="Corrigir o celular de ${esc(p.name||'este decisor')}">Trocar</button>`;
+  }
+  return `<button type="button" class="meta-chip act" onclick="editDecPhone(${p.id})" title="Guardar o celular de ${esc(p.name||'este decisor')} — a coleta pública não encontra celular pessoal">+ Celular</button>`;
+}
+
+function editDecPhone(id){
+  const box=document.getElementById('dec-meta-'+id);
+  if(!box)return;
+  const p=_decisores.find(x=>x.id===id)||{};
+  box.innerHTML=`<div class="cell-edit-row">
+      <input id="dec-inp-${id}" class="cell-inp" value="${esc(p.phone||'')}" placeholder="(11) 98888-7777" aria-label="Celular do decisor"/>
+      <button type="button" class="cell-save" onclick="saveDecPhone(${id})">Salvar</button>
+      <button type="button" class="cell-cancel" onclick="renderDecisores(_decisores)">Cancelar</button>
+    </div>
+    <span class="dec-msg" id="dec-msg-${id}">Com DDD. Em branco apaga o celular guardado.</span>`;
+  const inp=document.getElementById('dec-inp-'+id);
+  inp.focus();inp.select();
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='Enter')saveDecPhone(id);
+    if(e.key==='Escape')renderDecisores(_decisores);
+  });
+}
+
+async function saveDecPhone(id){
+  const inp=document.getElementById('dec-inp-'+id);
+  const msg=document.getElementById('dec-msg-'+id);
+  if(!inp)return;
+  msg.className='dec-msg';msg.textContent='Salvando…';
+  try{
+    const resp=await authFetch(`/api/decisores/${id}`,{method:'PATCH',body:JSON.stringify({phone:inp.value})});
+    const json=await resp.json();
+    if(!resp.ok){msg.className='dec-msg sub-err';msg.textContent=json.detail||'Não foi possível salvar.';return;}
+    renderDecisores(_decisores.map(p=>p.id===id?json:p));
+  }catch(e){msg.className='dec-msg sub-err';msg.textContent='Erro de conexão. O celular não foi salvo.';}
 }
 
 /* ══════ INFRAESTRUTURA DE DNS E E-MAIL ══════
