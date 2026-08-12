@@ -44,6 +44,48 @@ def jwt_configured() -> bool:
     return len(jwt_secret()) >= MIN_SECRET_LENGTH
 
 
+# Chave pública (anon) do projeto Supabase — a mesma de `static/js/app.js`.
+# Ela é um JWT assinado com o JWT Secret do projeto, o que a torna um gabarito:
+# um segredo que não valida esta chave é de **outro projeto**, e aí todo login
+# real leva 401 mesmo com tudo o mais certo. Trocou de projeto? Troque os dois.
+SUPABASE_ANON_KEY_PADRAO = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnZmJwbG96cnBqbnN1ZG9hd3B6Iiwicm9sZSI6"
+    "ImFub24iLCJpYXQiOjE3ODY1NTAyMjksImV4cCI6MjEwMjEyNjIyOX0."
+    "ry1F3IaKFd7yMFD8-pjj2j06xTZl6Xm8iUnweztCSMA"
+)
+
+
+def anon_key() -> str:
+    return (os.getenv("SUPABASE_ANON_KEY") or SUPABASE_ANON_KEY_PADRAO).strip()
+
+
+def secret_confere_com_projeto():
+    """
+    O segredo configurado é mesmo o do projeto que o frontend usa?
+
+    Devolve True/False, ou None quando não dá para afirmar nada (sem segredo
+    configurado, ou sem a chave anon para comparar).
+    """
+    if not jwt_configured():
+        return None
+    chave = anon_key()
+    if not chave:
+        return None
+    try:
+        jwt.decode(
+            chave,
+            jwt_secret(),
+            algorithms=["HS256"],
+            # Só interessa a assinatura: a chave anon tem validade de anos e a
+            # comparação continua valendo mesmo se um dia ela expirar.
+            options={"verify_aud": False, "verify_exp": False},
+        )
+        return True
+    except JWTError:
+        return False
+
+
 def is_demo_user(user_id: str) -> bool:
     """User demo (efêmero, por navegador). UUIDs do Supabase nunca têm esse prefixo."""
     return bool(user_id) and user_id.startswith(DEMO_USER_PREFIX)
@@ -61,6 +103,25 @@ def demo_identity(token: str) -> dict:
         "email": "demo@leadenricher.app",
         "_demo": True,
     }
+
+
+def _origem_do_token(token: str) -> str:
+    """
+    De qual projeto Supabase veio o token, lido sem verificar assinatura.
+
+    Só para o log. A causa mais comum de 401 em todo login é o
+    `SUPABASE_JWT_SECRET` do servidor pertencer a outro projeto — e a única
+    forma de ver isso é comparar o `iss` do token com o projeto do frontend.
+    """
+    try:
+        claims = jwt.get_unverified_claims(token)
+        header = jwt.get_unverified_header(token)
+        return (
+            f"iss={claims.get('iss')} alg={header.get('alg')} "
+            f"kid={header.get('kid')} exp={claims.get('exp')}"
+        )
+    except Exception:  # token malformado: não é o caso interessante
+        return "token ilegível"
 
 
 def decode_jwt(token: str) -> dict:
@@ -86,7 +147,11 @@ def decode_jwt(token: str) -> dict:
             algorithms=["HS256"],
             options={"verify_aud": False},
         )
-    except JWTError:
+    except JWTError as erro:
+        # O motivo precisa aparecer no log: "assinatura não confere" (segredo de
+        # outro projeto Supabase) e "token expirado" pedem ações opostas, e da
+        # tela os dois chegam como o mesmo 401 mudo.
+        logger.warning("JWT recusado: %s — %s", type(erro).__name__, _origem_do_token(token))
         raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
 
     if not payload.get("sub"):

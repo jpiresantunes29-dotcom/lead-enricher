@@ -55,7 +55,7 @@ Confira em `/health`: `schema_ok` precisa ser `true`. Se vier `false`, a lista
 |---|---|
 | `APP_ENV=production` | fecha `/docs`, exige schema no boot, liga HSTS |
 | `DEMO_MODE=0` | sem isto, **qualquer visitante** ganha conta Pro sem cadastro |
-| `SUPABASE_JWT_SECRET` | sem ele nenhum login real é aceito |
+| `SUPABASE_JWT_SECRET` | sem ele nenhum login real é aceito — e, se for de **outro** projeto Supabase, o login pelo Google termina bem e o app volta deslogado (401 em toda rota autenticada). Tem que ser o segredo do mesmo projeto da anon key em `static/js/app.js`; a conferência de prontidão acusa quando não é |
 | `CRON_SECRET` | sem ele a fila não anda e conversas da madrugada não são retomadas |
 | `SECRETS_KEY` | sem ela o segredo que assina o push para o CRM fica **em claro no banco** |
 | `SITE_URL` | URLs canônicas; sem ele, conteúdo duplicado com o `*.vercel.app` |

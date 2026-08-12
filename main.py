@@ -13,7 +13,12 @@ from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
 
 from models.database import get_db, init_db, schema_status
-from middleware.auth import demo_mode_enabled, jwt_configured, rate_limit_key
+from middleware.auth import (
+    demo_mode_enabled,
+    jwt_configured,
+    rate_limit_key,
+    secret_confere_com_projeto,
+)
 from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
 from routers import batch, extension, internal, privacy
 from routers import imports, sheet
@@ -67,6 +72,14 @@ def _check_configuration() -> None:
         if IS_PRODUCTION and not demo_mode_enabled():
             raise RuntimeError(message)
         logger.warning("%s Modo demo=%s.", message, demo_mode_enabled())
+    elif secret_confere_com_projeto() is False:
+        # Segredo presente e do projeto errado é o pior dos mundos: o boot passa,
+        # o login pelo Google termina bem e o app volta deslogado sem erro nenhum.
+        logger.error(
+            "SUPABASE_JWT_SECRET não confere com o projeto Supabase do frontend: "
+            "todo login real será recusado com 401 (só o modo demo funciona). "
+            "Copie o JWT Secret do mesmo projeto da anon key em static/js/app.js."
+        )
 
     if IS_PRODUCTION and demo_mode_enabled():
         # Não é erro — é decisão consciente que precisa aparecer no log.
