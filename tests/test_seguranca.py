@@ -104,6 +104,34 @@ def test_demo_desligado_recusa_token_demo(raw_client, monkeypatch):
 
 # ── Verificação por chave pública (JWKS) ─────────────────────────────────────
 
+def test_jwks_vazio_nao_apaga_chave_ja_conhecida(monkeypatch):
+    """
+    O JWKS do Supabase é servido por borda: durante uma rotação, uma borda
+    responde a lista nova e a vizinha ainda responde vazio. Trocar a chave boa
+    por uma lista vazia derrubaria logins válidos de forma intermitente.
+    """
+    from middleware import auth as auth_mod
+    from tests.conftest import JWKS_REAL
+
+    publico, _ = _par_de_chaves_ec()
+    monkeypatch.setattr(auth_mod, "_jwks", JWKS_REAL)  # a busca de verdade
+    auth_mod._jwks_cache["chaves"] = [publico]
+    auth_mod._jwks_cache["em"] = 0.0
+
+    class RespostaVazia:
+        def raise_for_status(self): pass
+        def json(self): return {"keys": []}
+
+    monkeypatch.setattr(auth_mod.requests, "get", lambda *a, **k: RespostaVazia())
+    assert auth_mod._jwks() == [publico]
+
+    # E uma falha de rede também não descarta o que já funciona.
+    def explode(*a, **k):
+        raise RuntimeError("rede caiu")
+    monkeypatch.setattr(auth_mod.requests, "get", explode)
+    assert auth_mod._jwks(forcar=True) == [publico]
+
+
 def test_chaves_vem_do_projeto_da_anon_key(monkeypatch):
     """
     Uma `SUPABASE_URL` esquecida de um projeto antigo não pode desviar a busca

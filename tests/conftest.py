@@ -11,6 +11,10 @@ import pytest
 
 from middleware import auth as auth_mod
 
+# Guardada antes de qualquer monkeypatch: é o que permite testar a busca de
+# verdade (cache, resposta vazia, falha de rede) mesmo com a suíte offline.
+JWKS_REAL = auth_mod._jwks
+
 
 @pytest.fixture(autouse=True)
 def jwks_offline(monkeypatch):

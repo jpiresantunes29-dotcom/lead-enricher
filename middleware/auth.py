@@ -129,10 +129,20 @@ def _jwks(forcar: bool = False) -> list:
         chaves = resp.json().get("keys") or []
     except Exception as erro:
         # Sem JWKS o decode cai no caminho legado, que exige segredo real: uma
-        # falha de rede nunca vira "token aceito".
+        # falha de rede nunca vira "token aceito". Se já havia chave boa em
+        # mãos, ela continua valendo — chave pública velha verifica igual.
         logger.warning("Não foi possível buscar o JWKS do Supabase: %s", erro)
         _jwks_cache["em"] = agora
-        return []
+        return _jwks_cache["chaves"]
+    if not chaves and _jwks_cache["chaves"]:
+        # Resposta vazia com chave boa guardada: o JWKS do Supabase é servido
+        # por borda, e durante uma rotação uma borda responde a lista nova e a
+        # vizinha ainda a antiga. Descartar o que funciona por causa de uma
+        # resposta dessas derrubaria logins válidos de forma intermitente.
+        logger.warning("JWKS voltou vazio; mantendo as %d chave(s) já conhecidas.",
+                       len(_jwks_cache["chaves"]))
+        _jwks_cache["em"] = agora
+        return _jwks_cache["chaves"]
     _jwks_cache["em"] = agora
     _jwks_cache["chaves"] = chaves
     return chaves
