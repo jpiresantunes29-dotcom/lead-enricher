@@ -21,8 +21,8 @@ const IMP_PREVIEW_COLS=5;
 
 /* ══════ SUPABASE AUTH ══════ */
 const _sb = supabase.createClient(
-  'https://unpujwtgnldkrqisoytf.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVucHVqd3Rnbmxka3JxaXNveXRmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc5MTAwNzEsImV4cCI6MjA5MzQ4NjA3MX0.MWn_SZdK619vsAdziVbGAz7_fScmKlDx3I1yZUDLd8Q'
+  'https://sgfbplozrpjnsudoawpz.supabase.co',
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnZmJwbG96cnBqbnN1ZG9hd3B6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NTAyMjksImV4cCI6MjEwMjEyNjIyOX0.ry1F3IaKFd7yMFD8-pjj2j06xTZl6Xm8iUnweztCSMA'
 );
 let _profile=null;
 let currentLeadId=null;
