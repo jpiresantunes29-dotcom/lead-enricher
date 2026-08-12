@@ -1598,6 +1598,13 @@ body{
 }
 .auth-msg.err{color:var(--err);background:var(--err-bg);border:1px solid var(--err-border)}
 .auth-msg.ok{color:var(--ok);background:var(--ok-bg);border:1px solid var(--ok-border)}
+.auth-retry-btn{
+  display:block;margin-top:9px;padding:7px 13px;border-radius:7px;
+  border:1px solid var(--err-border);background:var(--bg-2);
+  color:var(--err);font-size:12.5px;font-weight:700;transition:all .2s;
+}
+.auth-retry-btn:hover:not(:disabled){background:var(--err);color:#fff;border-color:var(--err)}
+.auth-retry-btn:disabled{opacity:.55;cursor:default}
 .auth-hint{
   font-size:11px;color:var(--text-3);text-align:center;margin-top:14px;
   letter-spacing:.02em;

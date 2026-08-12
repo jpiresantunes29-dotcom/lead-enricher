@@ -84,7 +84,8 @@ async function loadProfile(){
   }catch(e){
     if(e&&e.message==='not_authenticated')return false;
     _profile=null;updateNavUser();
-    showAuthMsg('Não foi possível falar com o servidor para confirmar seu login. Verifique a conexão e tente de novo.');
+    showAuthMsg('Não foi possível falar com o servidor para confirmar seu login. '
+      +'Verifique a conexão e tente de novo.','err',true);
     return false;
   }
   if(resp.ok){
@@ -96,9 +97,29 @@ async function loadProfile(){
   let detalhe='';
   try{const j=await resp.json();detalhe=j.detail||'';}catch(_){}
   _profile=null;updateNavUser();
-  showAuthMsg(_motivoRecusa(resp.status,detalhe));
+  showAuthMsg(_motivoRecusa(resp.status,detalhe),'err',true);
   openAuthModal();
   return false;
+}
+
+/* Repete o /api/me com a sessão que já está no navegador.
+
+   Existe porque a recusa nem sempre é definitiva: propagação de chave nova,
+   oscilação de rede, deploy no ar naquele segundo. Sem isto a tela fica presa
+   num erro que já não é verdade, e a única saída é o usuário adivinhar que
+   precisa recarregar a página. */
+async function tentarLoginDeNovo(botao){
+  if(botao){botao.disabled=true;botao.textContent='Verificando…';}
+  const ok=await loadProfile();
+  if(ok){
+    closeAuthModal();
+    loadIntegrations();
+    applyRoute();focusSearch();
+    return;
+  }
+  // loadProfile já reescreveu a mensagem com o motivo desta tentativa.
+  const novo=document.getElementById('auth-retry');
+  if(novo){novo.disabled=false;novo.textContent='Tentar de novo';}
 }
 
 async function loadTodayFollowupsCount(){
@@ -183,9 +204,19 @@ function updateNavUser(){
 function openAuthModal(){document.getElementById('auth-modal').classList.add('open');checarProvedores();}
 function closeAuthModal(){document.getElementById('auth-modal').classList.remove('open');}
 
-function showAuthMsg(texto,tipo='err'){
+/* `comRetentativa` só faz sentido quando já existe sessão do provedor no
+   navegador — é ela que o botão reenvia ao servidor. */
+function showAuthMsg(texto,tipo='err',comRetentativa=false){
   const el=document.getElementById('auth-msg');if(!el)return;
-  el.textContent=texto;el.className='auth-msg '+tipo;el.style.display='block';
+  el.className='auth-msg '+tipo;el.style.display='block';
+  el.textContent=texto;
+  if(comRetentativa){
+    const btn=document.createElement('button');
+    btn.type='button';btn.id='auth-retry';btn.className='auth-retry-btn';
+    btn.textContent='Tentar de novo';
+    btn.onclick=()=>tentarLoginDeNovo(btn);
+    el.appendChild(btn);
+  }
 }
 function clearAuthMsg(){
   const el=document.getElementById('auth-msg');if(!el)return;
