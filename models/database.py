@@ -677,7 +677,7 @@ class CRMConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "c58a2f9017bd"
+ALEMBIC_HEAD = "e91b4c2a6f18"
 
 
 def _stamp_alembic_head() -> None:
