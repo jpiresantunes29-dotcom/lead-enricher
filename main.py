@@ -18,6 +18,7 @@ from middleware.auth import (
     jwt_configured,
     rate_limit_key,
     secret_confere_com_projeto,
+    verificacao_por_jwks,
 )
 from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
 from routers import batch, extension, internal, privacy
@@ -64,22 +65,33 @@ def _check_configuration() -> None:
     Em produção é falha dura: subir sem poder autenticar ninguém é pior do que
     não subir.
     """
-    if not jwt_configured():
-        message = (
-            "SUPABASE_JWT_SECRET ausente ou curto demais: nenhum login real "
-            "será aceito (as rotas respondem 503)."
-        )
-        if IS_PRODUCTION and not demo_mode_enabled():
-            raise RuntimeError(message)
-        logger.warning("%s Modo demo=%s.", message, demo_mode_enabled())
-    elif secret_confere_com_projeto() is False:
-        # Segredo presente e do projeto errado é o pior dos mundos: o boot passa,
-        # o login pelo Google termina bem e o app volta deslogado sem erro nenhum.
-        logger.error(
-            "SUPABASE_JWT_SECRET não confere com o projeto Supabase do frontend: "
-            "todo login real será recusado com 401 (só o modo demo funciona). "
-            "Copie o JWT Secret do mesmo projeto da anon key em static/js/app.js."
-        )
+    # Chave pública publicada pelo projeto já basta: o segredo legado só entra
+    # quando não há JWKS nenhum.
+    if not verificacao_por_jwks():
+        if not jwt_configured():
+            message = (
+                "Sem chave para verificar login: o projeto não publica JWKS e "
+                "SUPABASE_JWT_SECRET está ausente ou curto demais (as rotas "
+                "autenticadas respondem 503)."
+            )
+            if IS_PRODUCTION and not demo_mode_enabled():
+                raise RuntimeError(message)
+            logger.warning("%s Modo demo=%s.", message, demo_mode_enabled())
+        elif secret_confere_com_projeto() is False:
+            # Segredo presente e do projeto errado é o pior dos mundos: o boot
+            # passa, o login termina bem e o app volta deslogado sem erro nenhum.
+            logger.error(
+                "SUPABASE_JWT_SECRET não confere com o projeto Supabase do frontend: "
+                "todo login real será recusado com 401 (só o modo demo funciona). "
+                "Copie o JWT Secret do mesmo projeto da anon key em static/js/app.js."
+            )
+        else:
+            logger.warning(
+                "O projeto Supabase não publica chave pública (JWKS): o login só "
+                "funciona enquanto ele assinar com o JWT Secret legado. Se a chave "
+                "de assinatura atual for um segredo compartilhado, todo login será "
+                "recusado — troque-a por uma assimétrica (ECC P-256)."
+            )
 
     if IS_PRODUCTION and demo_mode_enabled():
         # Não é erro — é decisão consciente que precisa aparecer no log.

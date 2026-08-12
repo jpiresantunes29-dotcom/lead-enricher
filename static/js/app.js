@@ -67,10 +67,10 @@ async function authFetch(url,opts={}){
    login "dá certo" no Google, o /api/me responde 401 e a tela volta ao estado
    deslogado sem explicar nada — o usuário fica clicando em Entrar para sempre. */
 function _motivoRecusa(status,detalhe){
-  if(status===401)return 'O Google autenticou você, mas o servidor recusou a credencial (401). '
-    +'Normalmente é o SUPABASE_JWT_SECRET do servidor apontando para outro projeto Supabase.';
-  if(status===503)return 'O servidor está sem a chave de verificação de login (SUPABASE_JWT_SECRET). '
-    +'Nenhum login real é aceito enquanto ela não for configurada.';
+  if(status===401)return 'O provedor autenticou você, mas o servidor recusou a credencial (401). '
+    +'É configuração de chave do projeto Supabase, não erro seu — o log do servidor traz o motivo exato.';
+  if(status===503)return 'O servidor está sem chave para verificar o login. '
+    +'Nenhum login real é aceito enquanto isso não for configurado.';
   return `O servidor recusou a sessão (HTTP ${status}).`+(detalhe?` ${detalhe}`:'');
 }
 

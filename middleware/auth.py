@@ -1,15 +1,31 @@
 """
 Autenticação: JWT do Supabase + sessão demo.
 
-Regra que não pode ser quebrada: **JWT só é decodificado com um segredo real**.
+Regra que não pode ser quebrada: **JWT só é decodificado com uma chave real**.
 Com `SUPABASE_JWT_SECRET` ausente o valor cai para string vazia, e o HS256
 valida qualquer token assinado com "" — ou seja, qualquer pessoa assumiria
-qualquer `sub`. Por isso o segredo é checado antes de cada decode e a ausência
+qualquer `sub`. Por isso a chave é checada antes de cada decode e a ausência
 vira 503 (erro de configuração do servidor), nunca "token aceito".
+
+Dois caminhos de verificação, nesta ordem:
+
+1. **JWKS** (`/auth/v1/.well-known/jwks.json`) — projetos que usam as *JWT
+   signing keys* assinam com uma chave própria e publicam só a parte pública.
+   O token traz o `kid`, e é ele que diz qual chave usar. Nada de segredo no
+   ambiente do deploy.
+2. **Segredo legado** (`SUPABASE_JWT_SECRET`, HS256) — projetos que ainda
+   assinam com o JWT Secret compartilhado.
+
+Por que os dois: se o projeto migrou para signing keys com *segredo
+compartilhado*, o material dessa chave **não é extraível do Supabase** (é
+decisão de projeto deles), e aí nenhum valor de `SUPABASE_JWT_SECRET` faz o
+login passar — o jeito é a chave ser assimétrica e vir pelo JWKS.
 """
 import logging
 import os
+import time
 
+import requests
 from fastapi import HTTPException, Request, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
@@ -60,6 +76,96 @@ def anon_key() -> str:
     return (os.getenv("SUPABASE_ANON_KEY") or SUPABASE_ANON_KEY_PADRAO).strip()
 
 
+def supabase_url() -> str:
+    """
+    URL do projeto de onde vêm as chaves de verificação.
+
+    Manda o `ref` da própria anon key, não `SUPABASE_URL`. Não é preciosismo:
+    a anon key é a que o navegador usa para logar, então é ela que define
+    contra qual projeto o usuário se autenticou. Buscar chave em outro projeto
+    seria conferir assinatura com o chaveiro errado — e uma variável esquecida
+    de um projeto antigo (ou apontada para um projeto de terceiro) viraria
+    exatamente isso.
+
+    `SUPABASE_URL` só entra quando não dá para derivar — instalação
+    self-hosted, em que a anon key não traz `ref`.
+    """
+    try:
+        ref = jwt.get_unverified_claims(anon_key()).get("ref")
+    except Exception:
+        ref = None
+    env = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+    if ref:
+        derivada = f"https://{ref}.supabase.co"
+        if env and ref not in env:
+            logger.warning(
+                "SUPABASE_URL (%s) não é o projeto da anon key (ref=%s); usando "
+                "o projeto da anon key para buscar as chaves de verificação.",
+                env, ref,
+            )
+        return derivada
+    return env
+
+
+# Cache do JWKS: uma busca por chave nova, não uma por requisição. O TTL curto
+# é o que faz uma rotação de chave entrar sozinha, sem redeploy.
+_JWKS_TTL_SEGUNDOS = 600
+_JWKS_TTL_ERRO = 30
+_jwks_cache = {"em": 0.0, "chaves": []}
+
+
+def _jwks(forcar: bool = False) -> list:
+    agora = time.monotonic()
+    if not forcar and _jwks_cache["chaves"] and agora - _jwks_cache["em"] < _JWKS_TTL_SEGUNDOS:
+        return _jwks_cache["chaves"]
+    if not forcar and not _jwks_cache["chaves"] and agora - _jwks_cache["em"] < _JWKS_TTL_ERRO:
+        return []
+    base = supabase_url()
+    if not base:
+        return []
+    try:
+        resp = requests.get(f"{base}/auth/v1/.well-known/jwks.json", timeout=5)
+        resp.raise_for_status()
+        chaves = resp.json().get("keys") or []
+    except Exception as erro:
+        # Sem JWKS o decode cai no caminho legado, que exige segredo real: uma
+        # falha de rede nunca vira "token aceito". Se já havia chave boa em
+        # mãos, ela continua valendo — chave pública velha verifica igual.
+        logger.warning("Não foi possível buscar o JWKS do Supabase: %s", erro)
+        _jwks_cache["em"] = agora
+        return _jwks_cache["chaves"]
+    if not chaves and _jwks_cache["chaves"]:
+        # Resposta vazia com chave boa guardada: o JWKS do Supabase é servido
+        # por borda, e durante uma rotação uma borda responde a lista nova e a
+        # vizinha ainda a antiga. Descartar o que funciona por causa de uma
+        # resposta dessas derrubaria logins válidos de forma intermitente.
+        logger.warning("JWKS voltou vazio; mantendo as %d chave(s) já conhecidas.",
+                       len(_jwks_cache["chaves"]))
+        _jwks_cache["em"] = agora
+        return _jwks_cache["chaves"]
+    _jwks_cache["em"] = agora
+    _jwks_cache["chaves"] = chaves
+    return chaves
+
+
+def _chave_publica(kid: str):
+    """
+    A chave pública do `kid`, ou None. Chaves simétricas (`oct`) são ignoradas
+    de propósito: o Supabase não as publica, então uma que aparecesse aqui só
+    poderia vir de uma resposta adulterada.
+    """
+    if not kid:
+        return None
+    for chave in _jwks():
+        if chave.get("kid") == kid and chave.get("kty") != "oct":
+            return chave
+    # kid desconhecido pode ser rotação recém-feita: uma releitura, e só.
+    for chave in _jwks(forcar=True):
+        if chave.get("kid") == kid and chave.get("kty") != "oct":
+            return chave
+    return None
+
+
 def secret_confere_com_projeto():
     """
     O segredo configurado é mesmo o do projeto que o frontend usa?
@@ -84,6 +190,11 @@ def secret_confere_com_projeto():
         return True
     except JWTError:
         return False
+
+
+def verificacao_por_jwks() -> bool:
+    """O projeto publica chave pública? Então dá para validar login sem segredo."""
+    return bool(_jwks())
 
 
 def is_demo_user(user_id: str) -> bool:
@@ -124,35 +235,70 @@ def _origem_do_token(token: str) -> str:
         return "token ilegível"
 
 
+# Algoritmos aceitos por chave do JWKS. Fixos de propósito: se o algoritmo
+# viesse do cabeçalho do token, quem o forja escolheria como ele é conferido.
+_ALGS_JWKS = {"EC": ["ES256"], "RSA": ["RS256"], "OKP": ["EdDSA"]}
+
+
 def decode_jwt(token: str) -> dict:
     """
     Valida um JWT do Supabase. Levanta HTTPException em qualquer caminho que
-    não seja "assinatura conferida com segredo real".
+    não seja "assinatura conferida com chave real".
     """
-    if not jwt_configured():
-        # Nunca cair para decode com segredo fraco/vazio: seria aceitar token
-        # forjado. Erro de servidor, não do cliente.
-        logger.error(
-            "SUPABASE_JWT_SECRET ausente ou curto demais — autenticação por JWT "
-            "está desligada. Defina a variável de ambiente para aceitar logins."
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Autenticação indisponível: servidor sem chave de verificação configurada.",
-        )
     try:
-        payload = jwt.decode(
-            token,
-            jwt_secret(),
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-    except JWTError as erro:
-        # O motivo precisa aparecer no log: "assinatura não confere" (segredo de
-        # outro projeto Supabase) e "token expirado" pedem ações opostas, e da
-        # tela os dois chegam como o mesmo 401 mudo.
-        logger.warning("JWT recusado: %s — %s", type(erro).__name__, _origem_do_token(token))
+        kid = jwt.get_unverified_header(token).get("kid")
+    except Exception:
         raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
+
+    chave = _chave_publica(kid)
+    if chave is not None:
+        algs = _ALGS_JWKS.get(chave.get("kty"), [])
+        # A chave pode declarar o algoritmo dela; só vale se for um dos aceitos.
+        if chave.get("alg") in algs:
+            algs = [chave["alg"]]
+        try:
+            payload = jwt.decode(token, chave, algorithms=algs, options={"verify_aud": False})
+        except JWTError as erro:
+            logger.warning("JWT recusado (JWKS): %s — %s",
+                           type(erro).__name__, _origem_do_token(token))
+            raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
+    else:
+        if not jwt_configured():
+            # Nunca cair para decode com segredo fraco/vazio: seria aceitar token
+            # forjado. Erro de servidor, não do cliente.
+            logger.error(
+                "Sem chave para verificar o token: o JWKS do projeto não tem o "
+                "kid=%s e SUPABASE_JWT_SECRET está ausente ou curto demais.", kid,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="Autenticação indisponível: servidor sem chave de verificação configurada.",
+            )
+        try:
+            payload = jwt.decode(
+                token,
+                jwt_secret(),
+                algorithms=["HS256"],
+                options={"verify_aud": False},
+            )
+        except JWTError as erro:
+            # O motivo precisa aparecer no log: "assinatura não confere" e "token
+            # expirado" pedem ações opostas, e da tela os dois chegam como o
+            # mesmo 401 mudo.
+            logger.warning("JWT recusado (segredo legado): %s — %s",
+                           type(erro).__name__, _origem_do_token(token))
+            if kid:
+                # Assinatura de uma signing key que o JWKS não publica: chave
+                # atual é um segredo compartilhado, e esse material o Supabase
+                # não entrega. Nenhum valor de SUPABASE_JWT_SECRET resolve.
+                logger.error(
+                    "O token foi assinado pela signing key kid=%s, que não está "
+                    "no JWKS do projeto — sinal de chave atual do tipo 'segredo "
+                    "compartilhado', cujo material não é extraível do Supabase. "
+                    "Troque a chave de assinatura do projeto para assimétrica "
+                    "(ECC P-256) para que ela seja publicada no JWKS.", kid,
+                )
+            raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
 
     if not payload.get("sub"):
         raise HTTPException(status_code=401, detail="Token inválido.")

@@ -79,9 +79,10 @@ def test_falta_de_cron_secret_impede():
     assert "madrugada" in a.consequencia
 
 
-def test_jwt_ausente_impede(monkeypatch):
+def test_sem_nenhuma_chave_de_verificacao_impede(monkeypatch):
+    """Sem JWKS e sem segredo não há como conferir assinatura nenhuma."""
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "curto")
-    a = _achado(preflight.verificar(producao=True), "SUPABASE_JWT_SECRET")
+    a = _achado(preflight.verificar(producao=True), "Sem chave para verificar login")
     assert a.severidade == preflight.IMPEDE
 
 

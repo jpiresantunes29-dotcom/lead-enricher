@@ -55,7 +55,7 @@ Confira em `/health`: `schema_ok` precisa ser `true`. Se vier `false`, a lista
 |---|---|
 | `APP_ENV=production` | fecha `/docs`, exige schema no boot, liga HSTS |
 | `DEMO_MODE=0` | sem isto, **qualquer visitante** ganha conta Pro sem cadastro |
-| `SUPABASE_JWT_SECRET` | sem ele nenhum login real é aceito — e, se for de **outro** projeto Supabase, o login pelo Google termina bem e o app volta deslogado (401 em toda rota autenticada). Tem que ser o segredo do mesmo projeto da anon key em `static/js/app.js`; a conferência de prontidão acusa quando não é |
+| `SUPABASE_JWT_SECRET` | só é necessário se o projeto **não** publicar chave pública. Ver "Como o login é verificado", abaixo |
 | `CRON_SECRET` | sem ele a fila não anda e conversas da madrugada não são retomadas |
 | `SECRETS_KEY` | sem ela o segredo que assina o push para o CRM fica **em claro no banco** |
 | `SITE_URL` | URLs canônicas; sem ele, conteúdo duplicado com o `*.vercel.app` |
@@ -66,6 +66,28 @@ Confira em `/health`: `schema_ok` precisa ser `true`. Se vier `false`, a lista
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
+
+### Como o login é verificado
+
+O servidor confere a assinatura do token do Supabase por um de dois caminhos,
+nesta ordem:
+
+1. **Chave pública (JWKS)** — o projeto publica a parte pública da chave de
+   assinatura em `/auth/v1/.well-known/jwks.json`, o token diz no `kid` qual
+   usar, e nada precisa ser guardado no ambiente do deploy. É o caminho bom.
+2. **`SUPABASE_JWT_SECRET`** (HS256) — só para projetos que ainda assinam com
+   o JWT Secret legado.
+
+A armadilha que já custou um dia de depuração: em **Supabase > JWT Keys**, se a
+chave atual for do tipo *segredo compartilhado* e não a legada, o material dela
+**não é extraível** — os próprios docs do Supabase dizem isso. O JWKS vem vazio
+(chave simétrica não se publica) e o segredo legado não confere. Resultado: o
+login pelo Google termina bem, toda rota autenticada responde 401 e nenhum
+valor de variável resolve.
+
+Se cair nisso, a saída é trocar a chave de assinatura do projeto por uma
+**assimétrica (ECC P-256)**: ela é publicada no JWKS e o caminho 1 passa a
+funcionar. A troca invalida as sessões abertas — todo mundo loga de novo.
 
 ### `SECRETS_KEY` — defina uma vez e guarde
 
