@@ -20,10 +20,9 @@ const IMP_STATUS={'ok':{label:'✓',cls:'imp-ok'},'invalid':{label:'✗ Inválid
 const IMP_PREVIEW_COLS=5;
 
 /* ══════ SUPABASE AUTH ══════ */
-const _sb = supabase.createClient(
-  'https://sgfbplozrpjnsudoawpz.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnZmJwbG96cnBqbnN1ZG9hd3B6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NTAyMjksImV4cCI6MjEwMjEyNjIyOX0.ry1F3IaKFd7yMFD8-pjj2j06xTZl6Xm8iUnweztCSMA'
-);
+const _SB_URL='https://sgfbplozrpjnsudoawpz.supabase.co';
+const _SB_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnZmJwbG96cnBqbnN1ZG9hd3B6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NTAyMjksImV4cCI6MjEwMjEyNjIyOX0.ry1F3IaKFd7yMFD8-pjj2j06xTZl6Xm8iUnweztCSMA';
+const _sb = supabase.createClient(_SB_URL,_SB_ANON);
 let _profile=null;
 let currentLeadId=null;
 let currentLeadData=null;   // ficha aberta — usada pela prévia do relatório DNS
@@ -64,14 +63,42 @@ async function authFetch(url,opts={}){
   return fetch(url,{...opts,headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,...(opts.headers||{})}});
 }
 
+/* Traduz a recusa do servidor para uma frase que diz o que fazer. Sem isto o
+   login "dá certo" no Google, o /api/me responde 401 e a tela volta ao estado
+   deslogado sem explicar nada — o usuário fica clicando em Entrar para sempre. */
+function _motivoRecusa(status,detalhe){
+  if(status===401)return 'O Google autenticou você, mas o servidor recusou a credencial (401). '
+    +'Normalmente é o SUPABASE_JWT_SECRET do servidor apontando para outro projeto Supabase.';
+  if(status===503)return 'O servidor está sem a chave de verificação de login (SUPABASE_JWT_SECRET). '
+    +'Nenhum login real é aceito enquanto ela não for configurada.';
+  return `O servidor recusou a sessão (HTTP ${status}).`+(detalhe?` ${detalhe}`:'');
+}
+
+/* Carrega o perfil. Devolve true só quando o servidor aceitou a sessão — quem
+   chama precisa saber a diferença entre "logado" e "logou no provedor mas o
+   backend não reconhece". */
 async function loadProfile(){
+  let resp;
   try{
-    const resp=await authFetch('/api/me');
-    if(resp.ok){
-      _profile=await resp.json();
-      updateQuotaUI();updateNavUser();loadTodayFollowupsCount();loadRecent();loadWaStatus();
-    }
-  }catch(_){}
+    resp=await authFetch('/api/me');
+  }catch(e){
+    if(e&&e.message==='not_authenticated')return false;
+    _profile=null;updateNavUser();
+    showAuthMsg('Não foi possível falar com o servidor para confirmar seu login. Verifique a conexão e tente de novo.');
+    return false;
+  }
+  if(resp.ok){
+    _profile=await resp.json();
+    clearAuthMsg();
+    updateQuotaUI();updateNavUser();loadTodayFollowupsCount();loadRecent();loadWaStatus();
+    return true;
+  }
+  let detalhe='';
+  try{const j=await resp.json();detalhe=j.detail||'';}catch(_){}
+  _profile=null;updateNavUser();
+  showAuthMsg(_motivoRecusa(resp.status,detalhe));
+  openAuthModal();
+  return false;
 }
 
 async function loadTodayFollowupsCount(){
@@ -153,13 +180,65 @@ function updateNavUser(){
   if(quotaBox)quotaBox.style.display=unlimited?'none':'block';
 }
 
-function openAuthModal(){document.getElementById('auth-modal').classList.add('open');}
+function openAuthModal(){document.getElementById('auth-modal').classList.add('open');checarProvedores();}
 function closeAuthModal(){document.getElementById('auth-modal').classList.remove('open');}
 
-async function signInWithGoogle(){await _sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:_AUTH_REDIRECT}});}
-async function signInWithGitHub(){await _sb.auth.signInWithOAuth({provider:'github',options:{redirectTo:_AUTH_REDIRECT}});}
-async function signInWithMicrosoft(){await _sb.auth.signInWithOAuth({provider:'azure',options:{redirectTo:_AUTH_REDIRECT}});}
-async function signInWithApple(){await _sb.auth.signInWithOAuth({provider:'apple',options:{redirectTo:_AUTH_REDIRECT}});}
+function showAuthMsg(texto,tipo='err'){
+  const el=document.getElementById('auth-msg');if(!el)return;
+  el.textContent=texto;el.className='auth-msg '+tipo;el.style.display='block';
+}
+function clearAuthMsg(){
+  const el=document.getElementById('auth-msg');if(!el)return;
+  el.textContent='';el.style.display='none';
+}
+
+/* Quais provedores estão realmente ligados no projeto Supabase. Botão de
+   provedor desligado continua na tela, apagado e explicando o porquê — some
+   seria pior: ninguém descobre que faltou habilitar. */
+const _PROV_BTN={google:'google',github:'github',azure:'microsoft',apple:'apple'};
+let _provChecados=false;
+async function checarProvedores(){
+  if(_provChecados)return;_provChecados=true;
+  let ext;
+  try{
+    const r=await fetch(`${_SB_URL}/auth/v1/settings`,{headers:{apikey:_SB_ANON}});
+    if(!r.ok)return;
+    ext=(await r.json()).external||{};
+  }catch(_){return;}
+  Object.entries(_PROV_BTN).forEach(([prov,slug])=>{
+    const btn=document.querySelector(`.auth-oauth-btn[data-prov="${slug}"]`);
+    if(!btn)return;
+    const ligado=ext[prov]===true;
+    btn.classList.toggle('desligado',!ligado);
+    btn.title=ligado?'':'Provedor não habilitado no projeto Supabase.';
+  });
+}
+
+async function signInWithProvider(provider,nome){
+  clearAuthMsg();
+  const{error}=await _sb.auth.signInWithOAuth({provider,options:{redirectTo:_AUTH_REDIRECT}});
+  // signInWithOAuth não lança: sem checar o `error`, provedor desabilitado vira
+  // um clique que não faz absolutamente nada.
+  if(error)showAuthMsg(`Não foi possível abrir o login com ${nome}: ${error.message}`);
+}
+async function signInWithGoogle(){await signInWithProvider('google','Google');}
+async function signInWithGitHub(){await signInWithProvider('github','GitHub');}
+async function signInWithMicrosoft(){await signInWithProvider('azure','Microsoft');}
+async function signInWithApple(){await signInWithProvider('apple','Apple');}
+
+/* O provedor devolve erro no fragmento (#error=…) ou na query (?error=…). Sem
+   ler isso, "consentimento negado" e "provedor não habilitado" chegam na tela
+   como um retorno silencioso ao estado deslogado. */
+function _erroDeRetornoOAuth(){
+  const params=new URLSearchParams(location.search);
+  const hash=new URLSearchParams(location.hash.replace(/^#/,''));
+  const code=hash.get('error')||params.get('error');
+  if(!code)return null;
+  const desc=hash.get('error_description')||params.get('error_description')||code;
+  // Limpa a URL para o erro não reaparecer a cada F5.
+  history.replaceState(null,'',location.pathname+location.search.replace(/[?&](error|error_code|error_description)=[^&]*/g,'').replace(/^&/,'?'));
+  return decodeURIComponent(desc.replace(/\+/g,' '));
+}
 
 async function signOut(){
   _clearDemoToken();
@@ -2363,25 +2442,32 @@ document.addEventListener('DOMContentLoaded',async()=>{
     window.history.replaceState({},'',window.location.pathname+window.location.hash);
   }
 
+  // erro devolvido pelo provedor no retorno do OAuth
+  const _erroOAuth=_erroDeRetornoOAuth();
+
   // sessão existente (Supabase ou demo)
   const{data:{session}}=await _sb.auth.getSession();
   if(session||isDemoSession()){
-    await loadProfile();
+    const ok=await loadProfile();
     loadIntegrations();
     applyRoute();
-    if(!location.hash&&!_qDomain)focusSearch();
+    if(ok&&!location.hash&&!_qDomain)focusSearch();
   }else{
     updateNavUser();
     applyRoute();   // rota protegida sem sessão → volta pra busca e abre login
     if(!_qDomain)focusSearch();
   }
+  if(_erroOAuth){showAuthMsg(`O provedor recusou o login: ${_erroOAuth}`);openAuthModal();}
 
-  // mudanças de auth (callback do magic link / OAuth)
+  // mudanças de auth (callback do OAuth)
   _sb.auth.onAuthStateChange(async(event,session)=>{
     if(session){
-      closeAuthModal();
       const wasLoggedIn=!!_profile;
-      await loadProfile();
+      const ok=await loadProfile();
+      // Só fecha o modal quando o servidor aceitou a sessão: fechar antes
+      // esconderia justamente a mensagem que explica a recusa.
+      if(!ok)return;
+      closeAuthModal();
       loadIntegrations();
       if(!wasLoggedIn){
         if(_pendingRoute){const r=_pendingRoute;_pendingRoute=null;location.hash=r;}

@@ -1564,6 +1564,10 @@ body{
 }
 .auth-oauth-btn:hover{background:var(--surface);border-color:var(--accent-border);color:var(--text)}
 .auth-oauth-btn svg{width:17px;height:17px;flex-shrink:0}
+/* Provedor não habilitado no projeto: fica apagado e clicável (o clique
+   explica o motivo). Sumir esconderia a configuração que falta. */
+.auth-oauth-btn.desligado{opacity:.42;border-style:dashed}
+.auth-oauth-btn.desligado:hover{background:var(--bg-2);border-color:var(--border-2);color:var(--text-2)}
 .auth-divider{display:flex;align-items:center;gap:10px;margin-bottom:18px}
 .auth-divider-line{flex:1;height:1px;background:var(--border)}
 .auth-divider-txt{
@@ -1588,9 +1592,12 @@ body{
 }
 .auth-magic-btn:hover{background:var(--accent-h);transform:translateY(-1px);box-shadow:0 4px 12px rgba(29,78,216,.25)}
 .auth-magic-btn:active{transform:translateY(0)}
-.auth-msg{font-size:13px;margin-top:8px;display:none}
-.auth-msg.err{color:var(--err)}
-.auth-msg.ok{color:var(--ok)}
+.auth-msg{
+  font-size:12.5px;line-height:1.5;display:none;
+  padding:10px 12px;border-radius:9px;margin:-10px 0 18px;
+}
+.auth-msg.err{color:var(--err);background:var(--err-bg);border:1px solid var(--err-border)}
+.auth-msg.ok{color:var(--ok);background:var(--ok-bg);border:1px solid var(--ok-border)}
 .auth-hint{
   font-size:11px;color:var(--text-3);text-align:center;margin-top:14px;
   letter-spacing:.02em;

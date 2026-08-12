@@ -19,7 +19,8 @@ def ambiente_limpo(monkeypatch):
     for var in ("WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN",
                 "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN",
                 "WHATSAPP_TEMPLATE_NAME", "ANTHROPIC_API_KEY",
-                "RESEND_API_KEY", "SITE_URL", "CRON_SECRET"):
+                "RESEND_API_KEY", "SITE_URL", "CRON_SECRET",
+                "SUPABASE_ANON_KEY"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "x" * 40)
     monkeypatch.setenv("DEMO_MODE", "0")
@@ -82,6 +83,35 @@ def test_jwt_ausente_impede(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "curto")
     a = _achado(preflight.verificar(producao=True), "SUPABASE_JWT_SECRET")
     assert a.severidade == preflight.IMPEDE
+
+
+def test_jwt_de_outro_projeto_impede():
+    """
+    O caso que passou despercebido: segredo presente, longo, e de outro
+    projeto Supabase. O boot passa, o login pelo Google termina bem e o app
+    volta deslogado — sem erro em lugar nenhum. A conferência tem que gritar.
+    """
+    # A fixture já deixa um segredo de 40 caracteres que não é o do projeto.
+    a = _achado(preflight.verificar(producao=True), "outro projeto Supabase")
+    assert a.severidade == preflight.IMPEDE
+    assert "401" in a.consequencia
+
+
+def test_jwt_do_projeto_certo_nao_vira_achado(monkeypatch):
+    """Com o segredo certo, a conferência precisa ficar quieta."""
+    from middleware import auth as auth_mod
+
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", "segredo-de-teste-com-tamanho-suficiente")
+    # Chave "anon" assinada com esse segredo — o gabarito que a checagem usa.
+    from jose import jwt as jose_jwt
+    anon = jose_jwt.encode(
+        {"iss": "supabase", "ref": "projeto-x", "role": "anon"},
+        "segredo-de-teste-com-tamanho-suficiente",
+        algorithm="HS256",
+    )
+    monkeypatch.setenv("SUPABASE_ANON_KEY", anon)
+    assert auth_mod.secret_confere_com_projeto() is True
+    assert _achado(preflight.verificar(producao=True), "outro projeto Supabase") is None
 
 
 def test_producao_com_sqlite_impede(monkeypatch):

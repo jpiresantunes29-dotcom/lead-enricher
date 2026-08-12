@@ -20,7 +20,11 @@ import os
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from middleware.auth import demo_mode_enabled, jwt_configured
+from middleware.auth import (
+    demo_mode_enabled,
+    jwt_configured,
+    secret_confere_com_projeto,
+)
 from models.database import ALEMBIC_HEAD, SessionLocal, schema_status
 from services import ai_insights, crypto
 from services.wa import brain, client as wa_client, webhook as wa_webhook
@@ -90,6 +94,16 @@ def _checar_fundacao(rel: Relatorio) -> None:
             IMPEDE, "SUPABASE_JWT_SECRET ausente ou curto demais",
             "Nenhum login real é aceito: as rotas autenticadas respondem 503.",
             "Copie o JWT Secret em Supabase > Settings > API.",
+        ))
+    elif secret_confere_com_projeto() is False:
+        rel.achados.append(Achado(
+            IMPEDE, "SUPABASE_JWT_SECRET é de outro projeto Supabase",
+            "O login pelo Google termina bem e mesmo assim o app volta "
+            "deslogado: o token que o Supabase emite não passa na verificação "
+            "e toda rota autenticada responde 401. Só o modo demo funciona.",
+            "Pegue o JWT Secret do MESMO projeto cuja anon key está em "
+            "static/js/app.js (Supabase > Settings > API > JWT Settings) e "
+            "atualize a variável no ambiente do deploy.",
         ))
 
     if rel.producao and demo_mode_enabled():
