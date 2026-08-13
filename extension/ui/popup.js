@@ -1,4 +1,4 @@
-/* Popup: pareamento do navegador e saldo de créditos. */
+/* Popup: pareamento do navegador com a conta do LeadEnricher. */
 const $ = (id) => document.getElementById(id);
 
 function send(action, payload) {
@@ -24,11 +24,10 @@ async function refresh() {
 
   const me = await send('me');
   if (me.ok) {
-    const left = me.data.credits_left;
-    $('credits').textContent = left === null ? '∞' : left;
     const providers = (me.data.premium_providers || []);
-    $('plan').textContent =
-      `Plano ${me.data.plan}${providers.length ? ' · provedores: ' + providers.join(', ') : ' · fontes gratuitas'}`;
+    $('fontes').textContent = providers.length
+      ? 'Fontes extras ligadas: ' + providers.join(', ')
+      : 'Coletando das fontes públicas do domínio.';
   } else if (me.error === 'not_paired') {
     await send('unpair');
     refresh();

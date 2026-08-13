@@ -4,7 +4,7 @@ Rotas de manutenção, chamadas por agendador — não por gente.
 Protegidas por `CRON_SECRET` (header `Authorization: Bearer <segredo>`, que é
 o formato que o cron da Vercel envia). Sem o segredo configurado, as rotas
 respondem 503: endpoint de manutenção aberto é endpoint que qualquer um usa
-para gastar a sua cota de função ou apagar dados.
+para gastar o tempo de função do deploy ou apagar dados.
 """
 import hmac
 import logging
@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from models.database import get_db
-from services import demo_cleanup, jobs
+from services import jobs
 from services.wa import orchestrator
 
 logger = logging.getLogger(__name__)
@@ -71,9 +71,3 @@ def responder_pendentes(db: Session = Depends(get_db)):
     meio. Sem esta rodada, a mensagem dele ficaria parada sem ninguém saber.
     """
     return {"ok": True, **orchestrator.rodar_pendentes(db)}
-
-
-@router.post("/demo/cleanup", dependencies=[Depends(require_cron_secret)])
-def limpar_demo(db: Session = Depends(get_db)):
-    """Remove sessões de demonstração paradas há mais de DEMO_TTL_DAYS."""
-    return {"ok": True, **demo_cleanup.purge_demo_profiles(db)}

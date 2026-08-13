@@ -289,7 +289,7 @@
   }`;
 
   let host = null, shadow = null, panel = null, minimized = false;
-  let state = { view: 'idle', data: null, error: null, busy: false, msg: null, credits: null };
+  let state = { view: 'idle', data: null, error: null, busy: false, msg: null };
 
   function ensurePanel() {
     if (host && document.documentElement.contains(host)) return;
@@ -344,7 +344,6 @@
       </div>
       ${body}
       <div class="ft">
-        ${state.credits == null ? '' : `<span>${state.credits} crédito(s) neste ciclo</span>`}
         <span class="sp" style="flex:1"></span>
         <a href="#" data-act="app">Abrir app</a>
       </div>
@@ -442,9 +441,9 @@
         <button class="btn ghost" data-act="capture" ${state.busy ? 'disabled' : ''}>Capturar (grátis)</button>
         <button class="btn" data-act="bulk" ${state.busy || !n ? 'disabled' : ''}>Revelar até ${Math.min(n, BULK_MAX)}</button>
       </div>
-      <div class="note">Capturar só registra nome e cargo — não gasta crédito.
-      Revelar consome 1 crédito por pessoa encontrada e respeita um intervalo entre os perfis
-      para não sobrecarregar o LinkedIn.</div>
+      <div class="note">Capturar só registra nome e cargo. Revelar busca e-mail e telefone
+      de cada pessoa, respeitando um intervalo entre os perfis para não sobrecarregar o
+      LinkedIn.</div>
       ${state.msg ? `<div class="ok">${esc(state.msg)}</div>` : ''}
       ${state.error ? `<div class="err">${esc(state.error)}</div>` : ''}
     </div>`;
@@ -505,9 +504,7 @@
     state.busy = false;
 
     if (!resp.ok) {
-      state.error = resp.error === 'no_credits'
-        ? 'Créditos esgotados neste ciclo.'
-        : (resp.detail || 'Não conseguimos revelar agora.');
+      state.error = resp.detail || 'Não conseguimos revelar agora.';
       render(); return;
     }
 
@@ -522,8 +519,7 @@
         is_company_phone: r.phones[0].is_company_phone,
       };
     }
-    state.credits = r.credits_left;
-    state.msg = r.success ? (r.credits_charged ? 'Revelado — 1 crédito.' : 'Revelado (sem custo).') : r.message;
+    state.msg = r.success ? 'Contato revelado.' : r.message;
     if (!r.success) state.error = r.message;
     render();
   }
@@ -534,10 +530,9 @@
     const resp = await send('reveal', { person_id: personId, kind: 'both' });
     state.busy = false;
     if (!resp.ok) {
-      state.error = resp.error === 'no_credits' ? 'Créditos esgotados.' : (resp.detail || 'Falhou.');
+      state.error = resp.detail || 'Falhou.';
     } else {
       const r = resp.data;
-      state.credits = r.credits_left;
       const email = r.emails && r.emails[0] ? r.emails[0].email : null;
       state.msg = email ? `${r.full_name}: ${email}` : r.message;
       try { if (email) await navigator.clipboard.writeText(email); } catch (_) {}
@@ -593,13 +588,7 @@
 
       if (withReveal && resolved.data && resolved.data.person_id) {
         const r = await send('reveal', { person_id: resolved.data.person_id, kind: 'both' });
-        if (r.ok) {
-          state.credits = r.data.credits_left;
-          if (r.data.success) revealed++;
-        } else if (r.error === 'no_credits') {
-          state.error = 'Créditos esgotados — o lote foi interrompido.';
-          break;
-        }
+        if (r.ok && r.data.success) revealed++;
         // Intervalo com variação: nunca em ritmo de robô
         await sleep(BULK_MIN_DELAY + Math.floor(Math.random() * BULK_JITTER));
       } else {

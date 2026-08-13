@@ -1,5 +1,5 @@
 """
-Autenticação: JWT do Supabase + sessão demo.
+Autenticação: JWT do Supabase.
 
 Regra que não pode ser quebrada: **JWT só é decodificado com uma chave real**.
 Com `SUPABASE_JWT_SECRET` ausente o valor cai para string vazia, e o HS256
@@ -44,16 +44,6 @@ _security = HTTPBearer()
 # pode ser usada para validar assinatura.
 MIN_SECRET_LENGTH = 32
 
-# Demo mode — permite testar a plataforma sem OAuth real.
-# Ligado por padrão; DEMO_MODE=0 desliga (produção com clientes reais).
-DEMO_TOKEN_PREFIX = "demo-session-"
-DEMO_USER_PREFIX = "demo-"
-
-
-def demo_mode_enabled() -> bool:
-    """Lido a cada chamada para que testes e deploys possam alternar sem reimport."""
-    return os.getenv("DEMO_MODE", "1") == "1"
-
 
 def jwt_secret() -> str:
     return (os.getenv("SUPABASE_JWT_SECRET") or "").strip()
@@ -64,10 +54,23 @@ def jwt_configured() -> bool:
     return len(jwt_secret()) >= MIN_SECRET_LENGTH
 
 
-# Chave pública (anon) do projeto Supabase — a mesma de `static/js/app.js`.
+# ── O projeto Supabase, em um lugar só ───────────────────────────────────────
+# https://supabase.com/dashboard/project/sgfbplozrpjnsudoawpz
+#
+# Este `ref` é a fonte única de verdade do backend: dele saem a URL do projeto,
+# o JWKS que verifica o login e a comparação com o `iss` dos tokens. O mesmo
+# projeto está em `static/js/app.js` (`_SB_URL`/`_SB_ANON`) — os dois lados
+# precisam ser o MESMO projeto, e um teste trava isso.
+#
+# Trocar de projeto é editar aqui: `PROJETO_REF`, `SUPABASE_ANON_KEY_PADRAO`,
+# `JWKS_PADRAO` e as duas constantes do app.js. Não dá para trocar por variável
+# de ambiente de propósito — ver `anon_key()` logo abaixo.
+PROJETO_REF = "sgfbplozrpjnsudoawpz"
+
+# Chave pública (anon) do projeto — a mesma de `static/js/app.js`.
 # Ela é um JWT assinado com o JWT Secret do projeto, o que a torna um gabarito:
 # um segredo que não valida esta chave é de **outro projeto**, e aí todo login
-# real leva 401 mesmo com tudo o mais certo. Trocou de projeto? Troque os dois.
+# real leva 401 mesmo com tudo o mais certo.
 SUPABASE_ANON_KEY_PADRAO = (
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
     "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnZmJwbG96cnBqbnN1ZG9hd3B6Iiwicm9sZSI6"
@@ -75,40 +78,65 @@ SUPABASE_ANON_KEY_PADRAO = (
     "ry1F3IaKFd7yMFD8-pjj2j06xTZl6Xm8iUnweztCSMA"
 )
 
+# Variáveis de ambiente descartadas por apontarem para outro projeto: nome → o
+# que elas diziam. Não participam de nada; existem para o diagnóstico poder
+# nomear a variável que precisa ser apagada no painel do deploy. Sem isso, uma
+# variável esquecida de um projeto antigo é invisível — o painel mostra que ela
+# está lá, o app diz que está tudo certo, e ninguém liga uma coisa à outra.
+_env_ignoradas: dict = {}
+
+
+def _ignorar_env(nome: str, valor_visto: str) -> None:
+    if _env_ignoradas.get(nome) != valor_visto:   # loga uma vez por valor novo
+        logger.error(
+            "%s aponta para o projeto Supabase '%s', mas este app é do projeto "
+            "'%s' — variável ignorada. Apague-a (ou corrija-a) no ambiente do "
+            "deploy: enquanto ela estiver aí, ninguém entende de onde vem a "
+            "divergência.", nome, valor_visto, PROJETO_REF,
+        )
+    _env_ignoradas[nome] = valor_visto
+
+
+def _ref_da_anon(chave: str) -> str:
+    try:
+        return jwt.get_unverified_claims(chave).get("ref") or ""
+    except Exception:
+        return ""
+
 
 def anon_key() -> str:
-    return (os.getenv("SUPABASE_ANON_KEY") or SUPABASE_ANON_KEY_PADRAO).strip()
+    """
+    A chave anon do projeto. `SUPABASE_ANON_KEY` só é aceita se for do **mesmo**
+    projeto — rotacionar a chave pelo ambiente, sim; trocar de projeto por uma
+    variável esquecida, não.
+
+    Essa distinção é o bug que este arquivo já pagou caro: a anon key define
+    contra qual projeto o servidor verifica o login, o frontend loga no projeto
+    do código, e uma variável de um projeto antigo no deploy fazia o servidor
+    conferir assinatura com o chaveiro errado. O login terminava bem no Google e
+    voltava 401 — com a tela dizendo "projeto diferente" sobre uma configuração
+    que, no código, estava certa.
+    """
+    env = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+    if not env:
+        return SUPABASE_ANON_KEY_PADRAO
+    ref = _ref_da_anon(env)
+    if ref == PROJETO_REF:
+        return env
+    _ignorar_env("SUPABASE_ANON_KEY", ref or "(chave ilegível)")
+    return SUPABASE_ANON_KEY_PADRAO
 
 
 def supabase_url() -> str:
     """
-    URL do projeto de onde vêm as chaves de verificação.
-
-    Manda o `ref` da própria anon key, não `SUPABASE_URL`. Não é preciosismo:
-    a anon key é a que o navegador usa para logar, então é ela que define
-    contra qual projeto o usuário se autenticou. Buscar chave em outro projeto
-    seria conferir assinatura com o chaveiro errado — e uma variável esquecida
-    de um projeto antigo (ou apontada para um projeto de terceiro) viraria
-    exatamente isso.
-
-    `SUPABASE_URL` só entra quando não dá para derivar — instalação
-    self-hosted, em que a anon key não traz `ref`.
+    URL do projeto de onde vêm as chaves de verificação — sempre a de
+    `PROJETO_REF`. `SUPABASE_URL` de outro projeto é ignorada pelo mesmo motivo
+    da anon key.
     """
-    try:
-        ref = jwt.get_unverified_claims(anon_key()).get("ref")
-    except Exception:
-        ref = None
     env = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
-    if ref:
-        derivada = f"https://{ref}.supabase.co"
-        if env and ref not in env:
-            logger.warning(
-                "SUPABASE_URL (%s) não é o projeto da anon key (ref=%s); usando "
-                "o projeto da anon key para buscar as chaves de verificação.",
-                env, ref,
-            )
-        return derivada
-    return env
+    if env and PROJETO_REF not in env:
+        _ignorar_env("SUPABASE_URL", env)
+    return f"https://{PROJETO_REF}.supabase.co"
 
 
 # ── Chave pública embutida ───────────────────────────────────────────────────
@@ -137,22 +165,20 @@ JWKS_PADRAO = [
 
 
 def _ref_do_projeto_padrao() -> str:
-    try:
-        return jwt.get_unverified_claims(SUPABASE_ANON_KEY_PADRAO).get("ref") or ""
-    except Exception:
-        return ""
+    return _ref_da_anon(SUPABASE_ANON_KEY_PADRAO)
 
 
 def _jwks_embutido() -> list:
     """
     A chave embutida só vale para o projeto de onde ela veio.
 
-    Trocou a anon key para outro projeto e esqueceu daqui? Então esta chave não
-    é do projeto em uso, e continuar oferecendo-a só produziria um `kid` que
-    nunca casa — ruído em cima de um problema que já é confuso.
+    As três constantes do projeto (`PROJETO_REF`, anon key e este JWKS) são
+    editadas à mão e por isso podem sair de sincronia numa troca de projeto
+    feita pela metade. Se a anon key do código já não é a de `PROJETO_REF`,
+    continuar oferecendo esta chave só produziria um `kid` que nunca casa —
+    ruído em cima de um problema que já é confuso.
     """
-    ref = _ref_do_projeto_padrao()
-    return list(JWKS_PADRAO) if ref and ref in supabase_url() else []
+    return list(JWKS_PADRAO) if _ref_do_projeto_padrao() == PROJETO_REF else []
 
 
 # Cache do JWKS: uma busca por chave nova, não uma por requisição. O TTL curto
@@ -255,6 +281,18 @@ def secret_confere_com_projeto():
         return False
 
 
+def variaveis_de_outro_projeto() -> dict:
+    """
+    Variáveis de ambiente descartadas por serem de outro projeto: nome → o
+    projeto que elas indicavam. Reavalia antes de responder porque o registro é
+    efeito de quem lê as variáveis, e quem pergunta isso pode ser o primeiro a
+    olhar (o preflight roda antes do primeiro login).
+    """
+    anon_key()
+    supabase_url()
+    return dict(_env_ignoradas)
+
+
 def verificacao_por_jwks() -> bool:
     """Há chave pública em mãos? Então dá para validar login sem segredo."""
     return bool(_jwks())
@@ -269,25 +307,6 @@ def estado_das_chaves() -> dict:
         "kids": [c.get("kid") for c in chaves],
         "origem": _jwks_cache["origem"],     # rede | cache | embutida | vazio
         "erro": _jwks_cache["erro"],
-    }
-
-
-def is_demo_user(user_id: str) -> bool:
-    """User demo (efêmero, por navegador). UUIDs do Supabase nunca têm esse prefixo."""
-    return bool(user_id) and user_id.startswith(DEMO_USER_PREFIX)
-
-
-def is_demo_token(token: str) -> bool:
-    return bool(token) and token.startswith(DEMO_TOKEN_PREFIX)
-
-
-def demo_identity(token: str) -> dict:
-    """Cada token demo vira um user próprio — sessões não compartilham dados."""
-    suffix = token[len(DEMO_TOKEN_PREFIX):][:32] or "anon"
-    return {
-        "sub": f"{DEMO_USER_PREFIX}{suffix}",
-        "email": "demo@leadenricher.app",
-        "_demo": True,
     }
 
 
@@ -449,10 +468,7 @@ def decode_jwt(token: str) -> dict:
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Security(_security),
 ) -> dict:
-    token = credentials.credentials or ""
-    if demo_mode_enabled() and is_demo_token(token):
-        return demo_identity(token)
-    return decode_jwt(token)
+    return decode_jwt(credentials.credentials or "")
 
 
 # ── Diagnóstico ──────────────────────────────────────────────────────────────
@@ -529,12 +545,14 @@ def _veredito_do_token(v: Veredito, ref_token: str, ref_projeto: str,
     if ref_token and ref_projeto and ref_token != ref_projeto:
         return {
             "situacao": "projeto_diferente",
-            "resumo": f"O login foi feito no projeto Supabase '{ref_token}', mas o "
-                      f"servidor verifica contra o projeto '{ref_projeto}' (o da anon "
-                      "key). Nenhuma chave de um projeto valida token do outro.",
-            "como_resolver": "Deixe os dois iguais: a anon key em static/js/app.js "
-                             "(ou SUPABASE_ANON_KEY) precisa ser a do mesmo projeto "
-                             "em que o usuário faz login.",
+            "resumo": f"O login foi feito no projeto Supabase '{ref_token}', mas este "
+                      f"app é do projeto '{ref_projeto}'. Nenhuma chave de um projeto "
+                      "valida token do outro.",
+            "como_resolver": "O navegador está usando um app.js de outro projeto — "
+                             "quase sempre versão antiga em cache, ou sessão guardada "
+                             "de antes da troca. Saia, limpe os dados do site e entre "
+                             "de novo (Ctrl+Shift+R). Se persistir, confira se o "
+                             "deploy no ar é o commit atual.",
         }
 
     if v.codigo == "expirado":
@@ -622,12 +640,17 @@ def diagnostico(token: str = "") -> dict:
     token = (token or "").strip()
     estado_chaves = estado_das_chaves()
     ref_projeto = _ref_do_iss(supabase_url())
+    anon_de_env = anon_key() != SUPABASE_ANON_KEY_PADRAO
     relatorio = {
         "projeto": {
             "ref": ref_projeto,
             "url": supabase_url(),
-            "anon_key_de": "variável de ambiente" if os.getenv("SUPABASE_ANON_KEY")
+            "anon_key_de": "variável de ambiente" if anon_de_env
                            else "código (static/js/app.js)",
+            # Variável do deploy apontando para outro projeto: ela não afeta a
+            # verificação (é descartada), mas continua no painel confundindo
+            # quem for conferir. Sai nomeada para poder ser apagada.
+            "variaveis_ignoradas": variaveis_de_outro_projeto(),
         },
         "chaves_publicas": {
             "quantidade": estado_chaves["quantidade"],
@@ -640,23 +663,11 @@ def diagnostico(token: str = "") -> dict:
             "tamanho": len(jwt_secret()),
             "confere_com_o_projeto": secret_confere_com_projeto(),
         },
-        "demo_ligado": demo_mode_enabled(),
         "token": {"apresentado": bool(token)},
     }
 
     if not token:
         relatorio["veredito"] = _veredito_de_configuracao(estado_chaves)
-        return relatorio
-
-    if is_demo_token(token):
-        relatorio["token"]["tipo"] = "demo"
-        relatorio["veredito"] = {
-            "situacao": "demo" if demo_mode_enabled() else "demo_desligado",
-            "resumo": "Esta é uma sessão de demonstração, não um login real."
-                      + ("" if demo_mode_enabled() else " E o modo demo está desligado."),
-            "como_resolver": "Saia da demonstração e entre com um provedor para testar "
-                             "o login de verdade.",
-        }
         return relatorio
 
     v = avaliar_token(token)
@@ -688,11 +699,6 @@ def rate_limit_key(request: Request) -> str:
         return get_remote_address(request)
 
     token = auth[7:]
-    # Sessão demo tem identidade própria: sem isto, todos os visitantes demo
-    # dividem o balde do IP e um derruba o limite do outro.
-    if demo_mode_enabled() and is_demo_token(token):
-        return f"user:{demo_identity(token)['sub']}"
-
     if jwt_configured():
         try:
             payload = jwt.decode(

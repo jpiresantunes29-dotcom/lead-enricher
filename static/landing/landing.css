@@ -418,12 +418,10 @@ section > *{max-width:var(--max-w);margin-left:auto;margin-right:auto}
 @media(max-width:760px){.proof-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:480px){.proof-grid{grid-template-columns:1fr}}
 
-/* ── PRICING ── */
+/* ── ACESSO (Ato III) ── */
 .pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;align-items:stretch}
 .price{display:flex;flex-direction:column;gap:14px}
 .price .btn{margin-top:auto;justify-content:center}
-.price-val{font-size:34px;color:var(--text)}
-.price-val span{font-size:14px;color:var(--text-3)}
 .price-featured{border-color:rgba(59,130,246,.35);transform:scale(1.03);background:var(--surface-2)}
 .price-badge{font-size:11px;color:var(--brand);letter-spacing:.08em}
 /* Border-beam contínuo lento — único dourado permanente do Ato III (§5.10) */

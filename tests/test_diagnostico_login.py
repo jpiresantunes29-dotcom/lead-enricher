@@ -164,10 +164,83 @@ def test_chave_embutida_sustenta_a_verificacao_quando_a_busca_falha(monkeypatch)
 
 def test_chave_embutida_nao_vale_para_outro_projeto(monkeypatch):
     """
-    Apontou a anon key para outro projeto? Então a chave gravada aqui não é
+    As constantes do projeto são editadas à mão. Trocou a anon key do código
+    para outro projeto e esqueceu do JWKS? Então a chave gravada aqui não é
     dele, e oferecê-la só produziria um `kid` que nunca casa.
     """
     outra = jwt.encode({"iss": "supabase", "ref": "projetodiferente", "role": "anon"},
                        "qualquer", algorithm="HS256")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", outra)
+    monkeypatch.setattr(auth_mod, "SUPABASE_ANON_KEY_PADRAO", outra)
     assert auth_mod._jwks_embutido() == []
+
+
+# ── Um projeto só, e ele está no código ──────────────────────────────────────
+# O bug que fechou este ciclo: variável de um projeto antigo no ambiente do
+# deploy vencia o projeto do código. O frontend logava num projeto e o servidor
+# verificava contra outro — login perfeito no Google, 401 no /api/me, e a tela
+# acusando "projeto diferente" com o código todo certo.
+
+def _anon_de(ref: str) -> str:
+    return jwt.encode({"iss": "supabase", "ref": ref, "role": "anon"},
+                      "qualquer", algorithm="HS256")
+
+
+@pytest.fixture(autouse=True)
+def _sem_variaveis_ignoradas_de_outro_teste():
+    auth_mod._env_ignoradas.clear()
+    yield
+    auth_mod._env_ignoradas.clear()
+
+
+def test_anon_key_de_outro_projeto_no_ambiente_e_ignorada(monkeypatch):
+    monkeypatch.setenv("SUPABASE_ANON_KEY", _anon_de("projetoantigo"))
+
+    assert auth_mod.anon_key() == auth_mod.SUPABASE_ANON_KEY_PADRAO
+    assert auth_mod.supabase_url() == f"https://{auth_mod.PROJETO_REF}.supabase.co"
+    # E a chave pública do projeto continua de pé: o login segue funcionando.
+    assert auth_mod._jwks_embutido()
+    assert auth_mod.variaveis_de_outro_projeto()["SUPABASE_ANON_KEY"] == "projetoantigo"
+
+
+def test_anon_key_do_mesmo_projeto_no_ambiente_continua_valendo(monkeypatch):
+    """Rotacionar a chave pelo ambiente, sim — trocar de projeto, não."""
+    rotacionada = _anon_de(auth_mod.PROJETO_REF)
+    monkeypatch.setenv("SUPABASE_ANON_KEY", rotacionada)
+
+    assert auth_mod.anon_key() == rotacionada
+    assert auth_mod.variaveis_de_outro_projeto() == {}
+
+
+def test_supabase_url_de_outro_projeto_no_ambiente_e_ignorada(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://projetoantigo.supabase.co")
+
+    assert auth_mod.supabase_url() == f"https://{auth_mod.PROJETO_REF}.supabase.co"
+    assert "SUPABASE_URL" in auth_mod.variaveis_de_outro_projeto()
+
+
+def test_diagnostico_nomeia_a_variavel_que_precisa_ser_apagada(raw_client, monkeypatch):
+    """Ignorar em silêncio resolveria o login e deixaria a armadilha no painel:
+    a variável continua lá dizendo que o projeto é outro."""
+    monkeypatch.setenv("SUPABASE_ANON_KEY", _anon_de("projetoantigo"))
+    ignoradas = raw_client.get(ROTA).json()["projeto"]["variaveis_ignoradas"]
+    assert ignoradas == {"SUPABASE_ANON_KEY": "projetoantigo"}
+
+
+def test_front_e_back_apontam_para_o_mesmo_projeto():
+    """
+    A trava: o navegador loga no projeto de `static/js/app.js` e o servidor
+    verifica no projeto de `middleware/auth.py`. Se os dois divergirem, todo
+    login real vira 401 — e nenhum teste de unidade pega isso, porque cada lado
+    está certo sozinho.
+    """
+    from pathlib import Path
+    import re
+
+    app_js = (Path(__file__).resolve().parents[1] / "static/js/app.js").read_text(
+        encoding="utf-8")
+    url = re.search(r"_SB_URL\s*=\s*'([^']+)'", app_js).group(1)
+    anon = re.search(r"_SB_ANON\s*=\s*'([^']+)'", app_js).group(1)
+
+    assert url == f"https://{auth_mod.PROJETO_REF}.supabase.co"
+    assert anon == auth_mod.SUPABASE_ANON_KEY_PADRAO
+    assert auth_mod._ref_da_anon(anon) == auth_mod.PROJETO_REF

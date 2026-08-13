@@ -29,13 +29,14 @@
     <li><strong>Dados de contatos profissionais (decisores):</strong> nome, cargo e
     perfil profissional público, e-mails corporativos prováveis e telefone comercial,
     quando disponíveis em fontes públicas.</li>
-    <li><strong>Dados de uso:</strong> contagem de análises para controle de cota e
-    registros técnicos de acesso (logs).</li>
+    <li><strong>Dados de uso:</strong> registros técnicos de acesso (logs). Não há
+    medição de consumo: a plataforma não mantém contadores de análises nem de
+    créditos.</li>
   </ul>
 
   <h2>2. Bases legais</h2>
   <ul>
-    <li><strong>Execução de contrato</strong> (art. 7º, V) para dados de conta e cobrança.</li>
+    <li><strong>Execução de contrato</strong> (art. 7º, V) para os dados da conta.</li>
     <li><strong>Legítimo interesse</strong> (art. 7º, IX) para o tratamento de dados
     profissionais públicos com finalidade de prospecção B2B, respeitados os direitos do
     titular e o teste de balanceamento.</li>
@@ -43,8 +44,8 @@
 
   <h2>3. Compartilhamento</h2>
   <ul>
-    <li><strong>Operadores de infraestrutura:</strong> Vercel (hospedagem), Supabase
-    (banco de dados e autenticação) e Stripe (pagamentos).</li>
+    <li><strong>Operadores de infraestrutura:</strong> Vercel (hospedagem) e Supabase
+    (banco de dados e autenticação).</li>
     <li><strong>Integrações configuradas por você:</strong> ao ativar um webhook de CRM,
     os dados do lead são enviados ao endpoint que você indicou, sob sua responsabilidade
     como controlador desse fluxo.</li>

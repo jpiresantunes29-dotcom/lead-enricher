@@ -17,20 +17,12 @@ from models.schemas import (
     BatchCreateRequest, BatchCreateResponse, BatchProgressOut, BatchRunResponse,
 )
 from routers.auth import get_or_create_profile
-from routers.billing import _maybe_reset_quota
 from services import domain_list, jobs
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["lote"])
 limiter = Limiter(key_func=rate_limit_key)
-
-
-def _quota_restante(profile) -> int | None:
-    """None = ilimitado."""
-    if not profile.searches_limit or profile.searches_limit <= 0:
-        return None
-    return max(0, profile.searches_limit - (profile.searches_used or 0))
 
 
 @router.post("/batches", response_model=BatchCreateResponse)
@@ -43,9 +35,7 @@ def criar_lote(
 ):
     """Recebe domínios (lista ou texto/CSV colado) e enfileira um job por domínio."""
     user_id = current_user.get("sub")
-    profile = get_or_create_profile(db, user_id)
-    if _maybe_reset_quota(profile):
-        db.commit()
+    get_or_create_profile(db, user_id)
 
     brutos = list(body.domains or [])
     if body.text:
@@ -62,18 +52,12 @@ def criar_lote(
 
     ignorados = max(0, len(brutos) - len(dominios))
 
-    # O lote é criado inteiro mesmo sem cota para tudo: os primeiros rodam
-    # agora e o resto espera a renovação do ciclo, em vez de o usuário ter que
-    # montar a lista de novo. O aviso vai na resposta.
-    restante = _quota_restante(profile)
     batch_id, criados = jobs.create_batch(db, user_id, dominios)
 
     return BatchCreateResponse(
         batch_id=batch_id,
         total=len(criados),
         ignorados=ignorados,
-        quota_restante=restante,
-        cabe_na_quota=restante is None or restante >= len(criados),
         message=(
             f"{len(criados)} domínio(s) na fila."
             + (f" {ignorados} entrada(s) ignorada(s) por repetição ou formato." if ignorados else "")

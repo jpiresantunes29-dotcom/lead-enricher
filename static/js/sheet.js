@@ -423,12 +423,8 @@ async function runSheetQueue() {
   const ids = [..._sh.pendingIds];
   if (!ids.length) { shToast('Nenhuma linha pendente no filtro atual.'); return; }
 
-  const quota = _profile && _profile.searches_limit > 0
-    ? Math.max(_profile.searches_limit - _profile.searches_used, 0) : null;
-  const aviso = quota !== null && quota < ids.length
-    ? `\n\nVocê tem ${quota} busca(s) na cota e a fila tem ${ids.length}. Ela para quando a cota acabar.` : '';
   if (!confirm(`Enriquecer ${ids.length} empresa(s) com ${_sh.workers} em paralelo?` +
-    `\nCada uma consome 1 busca da cota e leva de 10 a 30 segundos.${aviso}`)) return;
+    `\nCada uma leva de 10 a 30 segundos.`)) return;
 
   _sh.queue = { running: true, cancel: false, done: 0, total: ids.length, ok: 0, fail: 0 };
   const bar = document.getElementById('sh-progress');
@@ -459,7 +455,6 @@ async function runSheetQueue() {
       for (let attempt = 0; attempt < 3 && !settled && !stopped; attempt++) {
         try {
           const resp = await authFetch(`/api/leads/${id}/enrich`, { method: 'POST' });
-          if (resp.status === 402) { stopped = 'cota'; break; }
           if (resp.status === 429) { await shSleep(4000 + attempt * 4000); continue; }
           const json = await resp.json().catch(() => ({}));
           if (resp.ok && json.data) {
@@ -487,11 +482,9 @@ async function runSheetQueue() {
 
   _sh.queue.running = false;
   if (bar) bar.style.display = 'none';
-  loadProfile();
   const q = _sh.queue;
-  const motivo = stopped === 'cota' ? ' A fila parou: cota de buscas esgotada.'
-    : stopped === 'auth' ? ' Sua sessão expirou.'
-      : _sh.queue.cancel ? ' Fila interrompida por você.' : '';
+  const motivo = stopped === 'auth' ? ' Sua sessão expirou.'
+    : _sh.queue.cancel ? ' Fila interrompida por você.' : '';
   shToast(`${q.ok} enriquecida(s), ${q.fail} sem dados.${motivo}`, stopped ? 8000 : 5000);
   loadSheet();
 }

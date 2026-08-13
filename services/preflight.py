@@ -10,7 +10,7 @@ Três severidades, e a diferença é o que se faz com elas:
 
   `impede`   sem isto o produto não funciona ou funciona errado. Não ligue.
   `perigoso` funciona, mas de um jeito que custa caro se der errado — meia
-             configuração do WhatsApp, demo aberto em produção.
+             configuração do WhatsApp, segredo de CRM em claro.
   `atencao`  funciona; alguma capacidade fica desligada, e é bom saber qual.
 
 Não decide nada sozinho: é chamado pelo boot (que falha em `impede`) e pela
@@ -21,10 +21,11 @@ from dataclasses import dataclass, field
 from typing import List, Optional
 
 from middleware.auth import (
-    demo_mode_enabled,
+    PROJETO_REF,
     estado_das_chaves,
     jwt_configured,
     secret_confere_com_projeto,
+    variaveis_de_outro_projeto,
     verificacao_por_jwks,
 )
 from models.database import ALEMBIC_HEAD, SessionLocal, schema_status
@@ -106,6 +107,23 @@ def _checar_fundacao(rel: Relatorio) -> None:
             "<projeto>.supabase.co/auth/v1/.well-known/jwks.json.",
         ))
 
+    # Variável do deploy apontando para outro projeto Supabase. Não quebra mais
+    # nada (o código descarta e usa o projeto dele), mas continua no painel
+    # dizendo o contrário de quem manda — e é o primeiro lugar em que alguém vai
+    # mexer no próximo problema de login.
+    ignoradas = variaveis_de_outro_projeto()
+    if ignoradas:
+        nomes = ", ".join(f"{nome} (aponta para '{valor}')"
+                          for nome, valor in sorted(ignoradas.items()))
+        rel.achados.append(Achado(
+            ATENCAO, "Variável de ambiente de outro projeto Supabase",
+            f"{nomes}. O app ignora e usa o projeto '{PROJETO_REF}', então o login "
+            "funciona; o risco é humano: quem abrir o painel vai ler que o projeto "
+            "é outro e mexer na configuração errada.",
+            "Apague essas variáveis do ambiente do deploy, ou corrija-as para o "
+            f"projeto {PROJETO_REF}.",
+        ))
+
     # Com chave pública publicada, o login se valida sozinho e o segredo legado
     # deixa de importar. Só quando não há JWKS é que ele vira o único caminho.
     if not verificacao_por_jwks():
@@ -124,7 +142,7 @@ def _checar_fundacao(rel: Relatorio) -> None:
                 IMPEDE, "SUPABASE_JWT_SECRET é de outro projeto Supabase",
                 "O login pelo Google termina bem e mesmo assim o app volta "
                 "deslogado: o token que o Supabase emite não passa na verificação "
-                "e toda rota autenticada responde 401. Só o modo demo funciona.",
+                "e toda rota autenticada responde 401.",
                 "Pegue o JWT Secret do MESMO projeto cuja anon key está em "
                 "static/js/app.js (Supabase > Settings > API > JWT Settings) e "
                 "atualize a variável no ambiente do deploy.",
@@ -141,14 +159,6 @@ def _checar_fundacao(rel: Relatorio) -> None:
                 "a legada, troque-a por uma assimétrica (ECC P-256): ela é "
                 "publicada no JWKS e o servidor passa a validar sem segredo.",
             ))
-
-    if rel.producao and demo_mode_enabled():
-        rel.achados.append(Achado(
-            PERIGOSO, "DEMO_MODE ligado em produção",
-            "Qualquer visitante recebe uma conta de demonstração no plano Pro, "
-            "sem cadastro — inclusive quem só achou o endereço.",
-            "Defina DEMO_MODE=0.",
-        ))
 
     if not _env("CRON_SECRET"):
         rel.achados.append(Achado(

@@ -67,6 +67,42 @@ Confira em `/health`: `schema_ok` precisa ser `true`. Se vier `false`, a lista
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
+### Qual projeto Supabase o app usa
+
+Um só, e ele está no código — `PROJETO_REF` em `middleware/auth.py`, ao lado da
+anon key e do JWKS do projeto; no navegador, `_SB_URL`/`_SB_ANON` em
+`static/js/app.js`. Hoje:
+[`sgfbplozrpjnsudoawpz`](https://supabase.com/dashboard/project/sgfbplozrpjnsudoawpz).
+Um teste (`test_front_e_back_apontam_para_o_mesmo_projeto`) impede que os dois
+lados divirjam.
+
+`SUPABASE_ANON_KEY` e `SUPABASE_URL` do ambiente **só são aceitas se forem do
+mesmo projeto** — servem para rotacionar a chave, não para trocar de projeto.
+Uma variável de outro projeto é descartada, aparece no log de boot, na
+conferência de prontidão e em `/api/auth/diagnostico`
+(`projeto.variaveis_ignoradas`). Antes disso ela vencia o código em silêncio: o
+navegador logava num projeto, o servidor verificava contra outro, e o login
+terminava bem no Google para voltar 401 — com a tela acusando "projeto
+diferente" sobre um código que estava certo.
+
+Trocar de projeto de verdade é editar as quatro constantes (as três do backend e
+as duas do app.js) e cadastrar as Redirect URLs do novo projeto.
+
+### As URLs de retorno precisam estar autorizadas
+
+Em **Authentication > URL Configuration**, `Redirect URLs` precisa conter cada
+origem em que o app roda, com o caminho `/app`:
+
+```
+http://localhost:8000/app
+https://<deploy>.vercel.app/app
+```
+
+Sem isso o Supabase descarta o `redirect_to` e manda a pessoa para a `Site URL`.
+O login termina bem no provedor e o navegador volta **sem credencial nenhuma** —
+nem sessão, nem erro. A tela detecta esse retorno vazio e diz qual URL cadastrar,
+mas a correção é aqui.
+
 ### Como o login é verificado
 
 O servidor confere a assinatura do token do Supabase por um de dois caminhos,

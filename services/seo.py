@@ -59,8 +59,8 @@ PAGES: dict[str, Page] = {
         og_title="Digite um domínio. Conheça a empresa inteira.",
         description=(
             "Digite o domínio e receba infraestrutura de e-mail, porte, setor, dados "
-            "de CNPJ e decisores com e-mail corporativo em segundos. 5 análises "
-            "grátis por mês, sem cartão."
+            "de CNPJ e decisores com e-mail corporativo em segundos. Acesso aberto, "
+            "sem cartão."
         ),
         priority="1.0",
         changefreq="weekly",
@@ -70,8 +70,8 @@ PAGES: dict[str, Page] = {
         template="termos.html",
         title="Termos de Uso — LeadEnricher",
         description=(
-            "Condições de uso do LeadEnricher: escopo do serviço, planos e cotas, "
-            "cancelamento, uso aceitável dos dados e limitação de responsabilidade."
+            "Condições de uso do LeadEnricher: escopo do serviço, uso aceitável dos "
+            "dados, encerramento da conta e limitação de responsabilidade."
         ),
         priority="0.3",
         changefreq="yearly",
@@ -197,9 +197,8 @@ FAQ: list[tuple[str, str]] = [
         "Como funciona a extensão para o LinkedIn?",
         "Você instala a extensão no Chrome ou Edge e conecta com um código gerado em "
         "Configurações. Nas páginas de perfil e de empresa ela mostra contato e dados "
-        "de CNPJ, e salva o lead no seu pipeline. Cada revelação consome 1 crédito — "
-        "5 no plano Free, 300 no Pro — e nada é cobrado quando não encontramos "
-        "contato ou quando a mesma pessoa é revelada de novo em 90 dias.",
+        "de CNPJ, e salva o lead no seu pipeline. Revelar contato é livre: não há "
+        "crédito nem limite de revelações.",
     ),
     (
         "E se a empresa não tiver website?",
@@ -207,22 +206,15 @@ FAQ: list[tuple[str, str]] = [
         "decisores via LinkedIn e buscadores. Sempre há alguma trilha.",
     ),
     (
-        "Como funciona a cota de análises?",
-        "Cada domínio novo analisado consome uma unidade da cota. Reabrir um lead já "
-        "analisado nos últimos 7 dias vem do cache e não consome nada. A cota renova "
-        "a cada ciclo de 30 dias e não é cumulativa.",
+        "Há limite de análises?",
+        "Não. Qualquer conta que entrar tem o produto inteiro: análise avulsa, lote, "
+        "planilha, extensão e conversas, sem cota nem contador de uso. Reabrir um "
+        "lead analisado nos últimos 7 dias vem do cache, sem refazer a coleta.",
     ),
     (
-        "Posso cancelar quando quiser?",
-        "Sim. O cancelamento é feito pelo portal de assinatura em Configurações, sem "
-        "contato com vendas, e vale até o fim do ciclo já pago. Não há multa nem "
-        "fidelidade.",
-    ),
-    (
-        "Emitem nota fiscal para empresa?",
-        "Sim. A cobrança é processada pela Stripe e o recibo fiscal é enviado por "
-        "e-mail a cada ciclo. Para faturamento com CNPJ, dados de cobrança e "
-        "condições específicas, fale com o time comercial.",
+        "Preciso pagar alguma coisa?",
+        "Não. Não há plano pago, plano gratuito nem cartão de crédito envolvido — "
+        "basta entrar com Google, Microsoft, GitHub ou Apple.",
     ),
 ]
 
@@ -315,30 +307,21 @@ def _software_application(base: str) -> dict:
             "Relatório DNS completo (MX, NS, SPF, DMARC, DKIM, hosts, ASN e RDAP)",
             "Decisores por cargo com e-mail corporativo e nota de confiança",
             "Dados públicos de CNPJ: razão social, porte, telefone e quadro societário",
-            "Extensão de navegador para LinkedIn com créditos de revelação",
+            "Extensão de navegador para LinkedIn com revelação de contato",
             "Follow-ups automáticos, pipeline kanban e dashboard comercial",
             "Exportação XLSX/CSV e envio para CRM por webhook assinado",
         ],
+        # Uma oferta só, sem preço: o acesso é aberto para qualquer conta que
+        # entrar. Declarar preço aqui seria contradizer a tela.
         "offers": [
             {
                 "@type": "Offer",
-                "name": "Free",
+                "name": "Acesso completo",
                 "price": "0",
                 "priceCurrency": "BRL",
                 "description": (
-                    "5 análises de empresa por mês, ficha completa com relatório DNS "
-                    "e 5 revelações de contato na extensão."
-                ),
-                "url": f"{base}/app",
-            },
-            {
-                "@type": "Offer",
-                "name": "Pro",
-                "price": "97",
-                "priceCurrency": "BRL",
-                "description": (
-                    "500 análises por mês, 300 revelações de contato, exportação "
-                    "XLSX/CSV, webhook para CRM e resumo executivo com IA."
+                    "Todas as funções liberadas para qualquer conta: análise de "
+                    "empresa, lote, planilha, extensão, exportação e envio ao CRM."
                 ),
                 "url": f"{base}/app",
             },

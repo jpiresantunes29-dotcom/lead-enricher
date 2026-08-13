@@ -14,13 +14,12 @@ from sqlalchemy.orm import Session
 
 from models.database import get_db, init_db, schema_status
 from middleware.auth import (
-    demo_mode_enabled,
     jwt_configured,
     rate_limit_key,
     secret_confere_com_projeto,
     verificacao_por_jwks,
 )
-from routers import enrichment, leads, auth, billing, export, activities, dashboard, integrations, crm_config
+from routers import enrichment, leads, auth, export, activities, dashboard, integrations, crm_config
 from routers import batch, extension, internal, privacy
 from routers import imports, sheet
 from routers import wa as wa_router
@@ -74,16 +73,16 @@ def _check_configuration() -> None:
                 "SUPABASE_JWT_SECRET está ausente ou curto demais (as rotas "
                 "autenticadas respondem 503)."
             )
-            if IS_PRODUCTION and not demo_mode_enabled():
+            if IS_PRODUCTION:
                 raise RuntimeError(message)
-            logger.warning("%s Modo demo=%s.", message, demo_mode_enabled())
+            logger.warning(message)
         elif secret_confere_com_projeto() is False:
             # Segredo presente e do projeto errado é o pior dos mundos: o boot
             # passa, o login termina bem e o app volta deslogado sem erro nenhum.
             logger.error(
                 "SUPABASE_JWT_SECRET não confere com o projeto Supabase do frontend: "
-                "todo login real será recusado com 401 (só o modo demo funciona). "
-                "Copie o JWT Secret do mesmo projeto da anon key em static/js/app.js."
+                "todo login será recusado com 401. Copie o JWT Secret do mesmo "
+                "projeto da anon key em static/js/app.js."
             )
         else:
             logger.warning(
@@ -92,13 +91,6 @@ def _check_configuration() -> None:
                 "de assinatura atual for um segredo compartilhado, todo login será "
                 "recusado — troque-a por uma assimétrica (ECC P-256)."
             )
-
-    if IS_PRODUCTION and demo_mode_enabled():
-        # Não é erro — é decisão consciente que precisa aparecer no log.
-        logger.warning(
-            "DEMO_MODE ligado em produção: qualquer visitante recebe uma conta "
-            "de demonstração. Defina DEMO_MODE=0 quando houver clientes reais."
-        )
 
     _check_whatsapp_configuration()
 
@@ -237,7 +229,6 @@ app.include_router(enrichment.router)
 app.include_router(leads.router)
 app.include_router(dns_intel_router.router)
 app.include_router(auth.router)
-app.include_router(billing.router)
 app.include_router(export.router)
 app.include_router(activities.router)
 app.include_router(dashboard.router)
@@ -282,7 +273,7 @@ def index(request: Request):
 
 @app.get("/app", response_class=HTMLResponse)
 def app_page(request: Request):
-    # Rota canônica do produto — redirects de auth e billing apontam para cá.
+    # Rota canônica do produto — o redirect do login aponta para cá.
     # Área logada não tem o que indexar: noindex no header e na meta tag.
     return templates.TemplateResponse(
         request,

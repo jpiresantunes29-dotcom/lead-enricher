@@ -9,9 +9,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from models.database import get_db, Lead, Activity, Profile, CRMConnection
+from models.database import get_db, Lead, Activity, CRMConnection
 from middleware.auth import get_current_user
-from routers.auth import get_or_create_profile
 from services import ai_insights, crypto
 from services.crm import webhook as crm_webhook
 from services.providers import hunter
@@ -26,17 +25,6 @@ def _get_user_lead(db: Session, lead_id: int, user_id: str) -> Lead:
     if not lead:
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
     return lead
-
-
-def _check_ai_plan(profile: Profile):
-    """IA é feature de plano pago (proposta §9). AI_ALLOW_FREE=1 libera em dev."""
-    if os.getenv("AI_ALLOW_FREE") == "1":
-        return
-    if profile.plan == "free":
-        raise HTTPException(
-            status_code=402,
-            detail="Insights de IA estão disponíveis nos planos Pro e Enterprise.",
-        )
 
 
 def _user_webhook(db: Session, user_id: str) -> CRMConnection | None:
@@ -79,9 +67,6 @@ def ai_summary(
         raise HTTPException(status_code=503, detail="IA não configurada (ANTHROPIC_API_KEY ausente).")
 
     user_id = current_user.get("sub")
-    profile = get_or_create_profile(db, user_id)
-    _check_ai_plan(profile)
-
     lead = _get_user_lead(db, lead_id, user_id)
     if lead.ai_summary and not force:
         return {"summary": lead.ai_summary, "cached": True}

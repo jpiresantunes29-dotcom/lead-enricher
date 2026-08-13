@@ -47,26 +47,18 @@ def utcnow() -> datetime:
 
 
 class Profile(Base):
+    """
+    A conta do usuário dentro do produto.
+
+    Não guarda plano, cota nem contador de uso: o acesso é aberto para qualquer
+    conta que entrar. O que sobra é a identidade — é ela que amarra leads,
+    atividades e conversas a um dono.
+    """
     __tablename__ = "profiles"
 
     id = Column(String(36), primary_key=True)  # UUID from Supabase Auth
-    plan = Column(String(20), nullable=False, default="free")
-    searches_used = Column(Integer, nullable=False, default=0)
-    searches_limit = Column(Integer, nullable=False, default=5)
-    # Créditos de revelação de contato (extensão) — medidor independente das buscas
-    reveals_used = Column(Integer, nullable=False, default=0)
-    reveals_limit = Column(Integer, nullable=False, default=5)
-    stripe_customer_id = Column(String(255), nullable=True)
-    quota_reset_at = Column(DateTime(timezone=True), nullable=True)  # próximo reset mensal
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
-
-class StripeEvent(Base):
-    __tablename__ = "stripe_events"
-
-    id = Column(String(255), primary_key=True)  # Stripe event ID — garante idempotência
-    processed_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class Lead(Base):
@@ -415,7 +407,13 @@ class EmailPattern(Base):
 
 
 class Reveal(Base):
-    """Ledger de créditos: quem revelou quem, quando e por qual caminho."""
+    """
+    Histórico de revelações: quem revelou quem, quando e por qual caminho.
+
+    Não é medidor de nada — a revelação é livre. Serve para a extensão saber que
+    aquela pessoa já foi buscada por este usuário (e mostrar isso na tela) e
+    para auditar de qual fonte cada contato veio.
+    """
     __tablename__ = "reveals"
     __table_args__ = (Index("ix_reveals_user_person", "user_id", "person_id"),)
 
@@ -423,7 +421,6 @@ class Reveal(Base):
     user_id = Column(String(36), nullable=False, index=True)
     person_id = Column(Integer, ForeignKey("persons.id"), nullable=False, index=True)
     kind = Column(String(20), default="both")     # email|phone|both
-    credits_charged = Column(Integer, default=0)
     found_email = Column(Boolean, default=False)
     found_phone = Column(Boolean, default=False)
     provider_chain = Column(JSON)                 # ["cache", "pattern+smtp", "cnpj"]
@@ -498,10 +495,10 @@ class Job(Base):
     kind = Column(String(20), nullable=False, default="enrich")
     payload = Column(JSON)                       # {"domain": "acme.com.br"}
     status = Column(String(20), nullable=False, default="queued", index=True)
-    # queued | running | done | failed | skipped (cache/cota)
+    # queued | running | done | failed
     attempts = Column(Integer, nullable=False, default=0)
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
-    result = Column(String(40), nullable=True)   # enriched | partial | cached | quota | failed
+    result = Column(String(40), nullable=True)   # enriched | partial | cached | failed
     error = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     started_at = Column(DateTime(timezone=True), nullable=True)
@@ -525,9 +522,10 @@ class ExtensionToken(Base):
 
 # Fichas que não devem aparecer para o usuário:
 #   failed  — a coleta rodou e não achou nada aproveitável
-#   pending — a busca foi cobrada e a coleta não chegou a terminar (timeout da
-#             função serverless, por exemplo). Serve de recibo: a próxima
-#             tentativa do mesmo domínio não cobra de novo.
+#   pending — a coleta começou e não chegou a terminar (timeout da função
+#             serverless, por exemplo). A ficha fica reservada: a próxima
+#             tentativa do mesmo domínio reaproveita a linha em vez de abrir
+#             uma segunda para a mesma empresa.
 HIDDEN_LEAD_STATUSES = ("failed", "pending")
 
 
@@ -677,7 +675,7 @@ class CRMConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "f3a7d9c1b204"
+ALEMBIC_HEAD = "a4c7e208d5f1"
 
 
 def _stamp_alembic_head() -> None:

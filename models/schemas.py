@@ -361,8 +361,6 @@ class ResolveResponse(BaseModel):
     known_pattern: bool = False
     likely_findable: bool = False
     already_revealed: bool = False
-    credits_cost: int = 1
-    credits_left: Optional[int] = None
     blocked: bool = False
     needs_domain: bool = False
 
@@ -402,8 +400,6 @@ class RevealResponse(BaseModel):
     emails: List[RevealedEmail] = []
     phones: List[RevealedPhone] = []
     company_phone: Optional[str] = None
-    credits_charged: int = 0
-    credits_left: Optional[int] = None
     from_cache: bool = False
     chain: List[str] = []
 
@@ -470,8 +466,6 @@ class BatchCreateResponse(BaseModel):
     batch_id: str
     total: int
     ignorados: int = 0
-    quota_restante: Optional[int] = None
-    cabe_na_quota: bool = True
     message: str
 
 
@@ -498,7 +492,6 @@ class BatchRunResponse(BaseModel):
     processed: int
     done: int
     failed: int
-    quota_reached: bool
     remaining: int
     elapsed_ms: int
     progresso: BatchProgressOut

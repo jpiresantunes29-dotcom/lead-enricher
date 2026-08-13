@@ -15,7 +15,6 @@ python-jose[cryptography]>=3.3.0
 # direto, e uma dependencia so transitiva some sem aviso quando a de cima muda.
 cryptography>=42.0.0
 psycopg2-binary>=2.9.0
-stripe>=11.0.0
 slowapi>=0.1.9
 # FastAPI exige isto para rotas com Form()/UploadFile (routers/imports.py) —
 # so vinha como dependencia opcional, ausente do ambiente serverless.

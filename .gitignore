@@ -8,3 +8,5 @@ htmlcov/
 lead_enricher.db
 
 .vercel
+.env*
+!.env.example

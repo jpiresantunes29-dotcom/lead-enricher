@@ -42,8 +42,8 @@ _JOB_RESERVE_SECONDS = 20.0
 # domínio que não existe falha igual nas três e vira "failed" rápido.
 MAX_ATTEMPTS = 3
 
-# Teto de domínios por lote. Protege a cota do usuário de um CSV colado por
-# engano e o banco de um lote gigante enfileirado de uma vez.
+# Teto de domínios por lote. Protege o banco (e o tempo de coleta) de um CSV
+# colado por engano e enfileirado inteiro de uma vez.
 MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "200"))
 
 # Depois de quanto tempo um job reservado é considerado abandonado. Precisa ser
@@ -64,8 +64,8 @@ def normalize_domains(raw: List[str], limit: int = MAX_BATCH_SIZE) -> List[str]:
     """
     Limpa, deduplica e corta a lista na ordem em que o usuário informou.
 
-    A ordem importa: quem colou 300 domínios e tem cota para 50 espera que os
-    50 processados sejam os 50 primeiros da lista dele.
+    A ordem importa: quem colou 300 domínios e vê o lote parar no teto espera
+    que os processados sejam os primeiros da lista dele.
     """
     seen = set()
     out = []
@@ -189,13 +189,7 @@ def run_job(db: Session, job: Job) -> str:
     job.lead_id = outcome.lead.id if outcome.lead else None
     job.error = outcome.error
 
-    if outcome.result == enrichment_service.RESULT_QUOTA:
-        # Não é erro do domínio: o lote inteiro para aqui até haver cota. Volta
-        # para a fila para que o usuário não perca a lista que montou.
-        job.status = STATUS_QUEUED
-        job.attempts = max(0, (job.attempts or 1) - 1)   # não gasta tentativa
-        job.started_at = None
-    elif outcome.result == enrichment_service.RESULT_ERROR and (job.attempts or 0) < MAX_ATTEMPTS:
+    if outcome.result == enrichment_service.RESULT_ERROR and (job.attempts or 0) < MAX_ATTEMPTS:
         job.status = STATUS_QUEUED                        # falha transitória
         job.started_at = None
     elif outcome.result == enrichment_service.RESULT_ERROR:
@@ -213,15 +207,14 @@ def run_pending(db: Session, budget_seconds: float = ROUND_BUDGET_SECONDS,
                 user_id: Optional[str] = None, batch_id: Optional[str] = None,
                 max_jobs: Optional[int] = None) -> dict:
     """
-    Processa jobs até acabar a fila, o orçamento de tempo ou a cota.
+    Processa jobs até acabar a fila ou o orçamento de tempo.
 
     Devolve o resumo da rodada — é o que a UI usa para decidir se chama outra.
     """
     started = time.monotonic()
     deadline = started + budget_seconds
     processed = 0
-    resumo = {"processed": 0, "done": 0, "failed": 0, "quota_reached": False,
-              "remaining": 0, "elapsed_ms": 0}
+    resumo = {"processed": 0, "done": 0, "failed": 0, "remaining": 0, "elapsed_ms": 0}
 
     # Antes de procurar trabalho novo, resgata o que ficou preso: sem isto o
     # lote encolhe a cada rodada que morre e nunca chega ao fim.
@@ -242,9 +235,6 @@ def run_pending(db: Session, budget_seconds: float = ROUND_BUDGET_SECONDS,
         result = run_job(db, job)
         processed += 1
 
-        if result == enrichment_service.RESULT_QUOTA:
-            resumo["quota_reached"] = True
-            break
         if result == enrichment_service.RESULT_ERROR and job.status == STATUS_FAILED:
             resumo["failed"] += 1
         elif job.status == STATUS_DONE:
@@ -255,8 +245,8 @@ def run_pending(db: Session, budget_seconds: float = ROUND_BUDGET_SECONDS,
     resumo["elapsed_ms"] = int((time.monotonic() - started) * 1000)
     if processed:
         logger.info(
-            "Rodada de jobs batch=%s user=%s processados=%d restantes=%d cota_esgotada=%s",
-            batch_id, user_id, processed, resumo["remaining"], resumo["quota_reached"],
+            "Rodada de jobs batch=%s user=%s processados=%d restantes=%d",
+            batch_id, user_id, processed, resumo["remaining"],
         )
     return resumo
 

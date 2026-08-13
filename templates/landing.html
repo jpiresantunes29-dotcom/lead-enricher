@@ -9,6 +9,15 @@
     // token no hash — encaminha para o app, que tem o client do Supabase.
     if (location.hash.includes('access_token') || location.search.includes('code=')) {
       location.replace('/app' + location.search + location.hash);
+    } else {
+      // Sem token e sem code, mas com um login iniciado agora há pouco: o
+      // Supabase descartou a URL de retorno e mandou a pessoa para a Site URL,
+      // que é esta página. Aqui não há client de auth para perceber isso — o
+      // /app tem, e é ele que sabe explicar o que fazer.
+      try {
+        var _pend = JSON.parse(localStorage.getItem('le_oauth_pendente') || 'null');
+        if (_pend && _pend.em && Date.now() - _pend.em < 120000) location.replace('/app');
+      } catch (e) {}
     }
   </script>
 
@@ -35,7 +44,7 @@
     <a href="#features">Recursos</a>
     <a href="#extension">Extensão</a>
     <a href="#personas">Para quem</a>
-    <a href="#pricing">Preços</a>
+    <a href="#acesso">Acesso</a>
     <a href="#faq">Perguntas</a>
   </nav>
   <a class="btn btn-brand" data-magnetic href="/app">Entrar</a>
@@ -60,7 +69,7 @@
                autocomplete="off" spellcheck="false" aria-label="Domínio para analisar" />
         <button class="btn btn-brand btn-sm" data-magnetic type="submit">Analisar →</button>
       </form>
-      <p class="hero-note mono" data-reveal>5 análises gratuitas por mês · sem cartão de crédito</p>
+      <p class="hero-note mono" data-reveal>acesso aberto · entre com Google, Microsoft, GitHub ou Apple · sem cartão</p>
       <div class="hero-badges" data-reveal>
         <span class="hero-badge">Fontes públicas · opt-out LGPD sem cadastro</span>
         <span class="hero-badge">Exportação XLSX/CSV e webhook assinado</span>
@@ -222,8 +231,8 @@
         <li>Só lê a página que você abriu — nunca navega nem clica sozinha</li>
       </ul>
       <p class="ext-note mono" data-reveal>
-        1 crédito = 1 pessoa revelada · nada é cobrado quando não encontramos
-        contato · repetir a mesma pessoa em 90 dias é grátis
+        revelação livre, sem contador · quem pediu remoção pela LGPD nunca é
+        exibido · o que não achamos, dizemos que não achamos
       </p>
     </div>
     <div class="ext-card mono" data-reveal aria-hidden="true">
@@ -231,8 +240,8 @@
       <div class="ext-row"><span>E-MAIL</span>m•••••@acme.com.br <em class="jv-ok">confiança 92</em></div>
       <div class="ext-row"><span>TELEFONE</span>(11) 3•••-•••• <em class="jv-dim">Receita Federal</em></div>
       <div class="ext-row"><span>EMPRESA</span>Acme Tecnologia · CNPJ ativo</div>
-      <div class="ext-cta">Revelar contato · 1 crédito</div>
-      <div class="ext-foot">Sem contato encontrado = sem crédito consumido</div>
+      <div class="ext-cta">Revelar contato</div>
+      <div class="ext-foot">Salva na sua pipeline com um clique</div>
     </div>
   </div>
 </section>
@@ -293,26 +302,26 @@
   </div>
 </section>
 
-<!-- ── ATO III · Pricing ── -->
-<section class="pricing" id="pricing" data-section="pricing">
-  <p class="eyebrow mono" data-reveal>// planos</p>
-  <h2 class="section-title" data-reveal>Comece grátis. Escale quando precisar.</h2>
+<!-- ── ATO III · Acesso ── -->
+<section class="pricing" id="acesso" data-section="acesso">
+  <p class="eyebrow mono" data-reveal>// acesso</p>
+  <h2 class="section-title" data-reveal>Entrou, está tudo aberto.</h2>
   <div class="pricing-grid">
     <article class="card price" data-reveal>
-      <h3>Free</h3><p class="price-val mono">R$ 0</p>
-      <p>5 análises de empresa por mês · ficha completa e relatório DNS · 5 revelações de contato na extensão</p>
-      <a class="btn btn-ghost" href="/app">Começar agora</a>
+      <h3>Análises de empresa</h3>
+      <p>Ficha completa, relatório DNS, decisores por cargo e dados de CNPJ. Quantas empresas você precisar analisar.</p>
+      <a class="btn btn-ghost" href="/app">Analisar uma empresa</a>
     </article>
     <article class="card price price-featured" data-reveal>
-      <span class="price-badge mono">mais popular</span>
-      <h3>Pro</h3><p class="price-val mono">R$ 97<span>/mês</span></p>
-      <p>500 análises por mês · 300 revelações de contato · exportação XLSX/CSV · webhook para CRM · resumo executivo com IA</p>
-      <a class="btn btn-brand" data-magnetic href="/app">Assinar Pro</a>
+      <span class="price-badge mono">sem cadastro pago</span>
+      <h3>Lote, planilha e extensão</h3>
+      <p>Lista colada, CSV ou .xlsx pela fila; a extensão revela contato nas páginas do LinkedIn. Sem contador de uso.</p>
+      <a class="btn btn-brand" data-magnetic href="/app">Entrar com o Google</a>
     </article>
     <article class="card price" data-reveal>
-      <h3>Enterprise</h3><p class="price-val mono">Sob consulta</p>
-      <p>Análises e revelações ilimitadas · faturamento com CNPJ · condições e prazos combinados com o time</p>
-      <a class="btn btn-ghost" href="mailto:jpires.antunes29@gmail.com?subject=LeadEnricher%20Enterprise">Falar com vendas</a>
+      <h3>Exportação e CRM</h3>
+      <p>XLSX/CSV e webhook assinado (HMAC) para Zapier, Make ou Power Automate — configurados por você, em Configurações.</p>
+      <a class="btn btn-ghost" href="/app#settings">Ver as integrações</a>
     </article>
   </div>
 </section>
@@ -325,7 +334,7 @@
     <div class="comp-col" data-reveal>
       <h3 style="color:#999">Base de contatos importada + planilha</h3>
       <ul class="comp-list">
-        <li style="opacity:.7"><strong>✗</strong> Assinatura cobrada em dólar, por usuário</li>
+        <li style="opacity:.7"><strong>✗</strong> Base comprada envelhece; o contato some e você não sabe</li>
         <li style="opacity:.7"><strong>✗</strong> Dados espalhados em planilha, sem histórico do contato</li>
         <li><strong>✗</strong> Sem CNPJ, quadro societário ou situação cadastral</li>
         <li style="opacity:.8"><strong>✗</strong> Infraestrutura de e-mail (MX, SPF, DMARC) por fora, na mão</li>
@@ -336,7 +345,7 @@
     <div class="comp-col comp-col--highlight" data-reveal>
       <h3 style="color:var(--brand-bright)">LeadEnricher</h3>
       <ul class="comp-list">
-        <li><strong>✓</strong> <strong>Grátis</strong> até 5 análises/mês · R$ 97/mês no Pro, em real</li>
+        <li><strong>✓</strong> Coleta feita na hora, das fontes públicas do próprio domínio</li>
         <li><strong>✓</strong> Lead, decisores e atividades no mesmo lugar, com timeline</li>
         <li><strong>✓</strong> CNPJ, sócios, porte e telefone das bases públicas da Receita</li>
         <li><strong>✓</strong> Relatório DNS completo com ASN, DKIM e titular do domínio</li>
@@ -370,7 +379,7 @@
            autocomplete="off" spellcheck="false" aria-label="Domínio para enriquecer" />
     <button class="btn btn-brand" data-magnetic type="submit">Analisar agora →</button>
   </form>
-  <p class="hero-note mono" data-reveal>5 análises gratuitas · sem cartão · sem senha</p>
+  <p class="hero-note mono" data-reveal>acesso aberto · sem cartão · sem senha</p>
 </section>
 
 <!-- ── FOOTER ── -->
@@ -380,7 +389,7 @@
     <nav class="footer-links" aria-label="Rodapé">
       <a href="#features">Recursos</a>
       <a href="#extension">Extensão</a>
-      <a href="#pricing">Preços</a>
+      <a href="#acesso">Acesso</a>
       <a href="/guias">Guias</a>
       <a href="/remover-meus-dados">Remover meus dados</a>
       <a href="/termos">Termos</a>

@@ -12,7 +12,6 @@ from services import enrichment_service
 from services.decision_finder import find_decision_makers
 from middleware.auth import get_current_user, rate_limit_key
 from routers.auth import get_or_create_profile
-from routers.billing import _maybe_reset_quota
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +37,9 @@ def enrich(
 
     user_id = current_user.get("sub")
     profile = get_or_create_profile(db, user_id)
-    if _maybe_reset_quota(profile):
-        # Persiste o reset mesmo em caminhos que não commitam depois (cache hit)
-        db.commit()
 
     outcome = enrichment_service.enrich_for_user(db, profile, body.domain)
 
-    if outcome.result == enrichment_service.RESULT_QUOTA:
-        raise HTTPException(status_code=402, detail=outcome.message)
     if outcome.result == enrichment_service.RESULT_ERROR:
         raise HTTPException(status_code=500, detail=outcome.message)
 
@@ -69,8 +63,7 @@ def enrich_existing_lead(
 
     É o que a fila da planilha chama, um lead por requisição: a coleta leva
     10–30 s e o maxDuration da função na Vercel é 60 s. O limite alto por
-    minuto existe para a fila rodar várias em paralelo; o freio real continua
-    sendo a cota do plano (uma busca por lead).
+    minuto existe para a fila rodar várias em paralelo.
     """
     user_id = current_user.get("sub")
     lead = db.query(Lead).filter(Lead.id == lead_id, Lead.user_id == user_id).first()
@@ -78,13 +71,9 @@ def enrich_existing_lead(
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
 
     profile = get_or_create_profile(db, user_id)
-    if _maybe_reset_quota(profile):
-        db.commit()
 
     outcome = enrichment_service.enrich_existing_lead(db, profile, lead)
 
-    if outcome.result == enrichment_service.RESULT_QUOTA:
-        raise HTTPException(status_code=402, detail=outcome.message)
     if outcome.error == "dominio_desconhecido":
         raise HTTPException(status_code=422, detail=outcome.message)
     if outcome.result == enrichment_service.RESULT_ERROR:

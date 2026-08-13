@@ -2,9 +2,9 @@
 API da extensão de navegador — o "Lusha brasileiro" do LeadEnricher.
 
 Princípios que valem para todos os endpoints:
-  - /resolve NUNCA cobra crédito e NUNCA faz rede pesada (é o que dá a
-    sensação de instantâneo ao abrir um perfil no LinkedIn)
-  - /reveal cobra no máximo 1 crédito, só quando encontra algo novo
+  - /resolve NUNCA faz rede pesada (é o que dá a sensação de instantâneo ao
+    abrir um perfil no LinkedIn)
+  - /reveal é livre: o que limita é o tempo da função, não uma cota
   - opt-out (LGPD) é verificado antes de gravar e antes de entregar
 """
 import hashlib
@@ -28,7 +28,6 @@ from models.schemas import (
     RevealRequest, RevealResponse, SaveRequest,
 )
 from routers.auth import get_or_create_profile
-from routers.billing import _maybe_reset_quota
 from services._utils import normalize_domain
 from services.people import company_lookup, optout, repository as repo, waterfall
 from services.people import email_patterns as ep
@@ -43,7 +42,7 @@ limiter = Limiter(key_func=rate_limit_key)
 _bearer = HTTPBearer()
 
 PAIR_CODE_TTL_MINUTES = 10
-REVEAL_GRACE_DAYS = 90        # revelar de novo dentro desse prazo é grátis
+REVEAL_GRACE_DAYS = 90        # janela em que a revelação anterior ainda conta
 REVEAL_BUDGET_SECONDS = 12.0  # teto de tempo do /reveal (Vercel corta em 60 s)
 
 
@@ -58,8 +57,8 @@ def get_ext_user(
     db: Session = Depends(get_db),
 ) -> dict:
     """
-    Aceita token da extensão (ext_...), JWT do Supabase ou sessão demo —
-    assim a mesma extensão funciona logada ou em modo de teste.
+    Aceita token da extensão (ext_...) ou o JWT do Supabase — assim a mesma
+    extensão funciona pareada por código ou com a sessão do navegador.
     """
     token = credentials.credentials or ""
     if token.startswith("ext_"):
@@ -134,25 +133,14 @@ def pair(request: Request, body: ExtensionPairRequest, db: Session = Depends(get
     return {"token": token, "device_label": entry.device_label}
 
 
-# ── Conta e créditos ─────────────────────────────────────────────────────────
-
-def _credits_left(profile: Profile) -> Optional[int]:
-    if profile.reveals_limit is None or profile.reveals_limit < 0:
-        return None  # ilimitado
-    return max(0, (profile.reveals_limit or 0) - (profile.reveals_used or 0))
-
+# ── Conta ────────────────────────────────────────────────────────────────────
 
 @router.get("/me")
 def me(db: Session = Depends(get_db), current_user: dict = Depends(get_ext_user)):
+    """Confirma o pareamento e diz de quais fontes extras a conta dispõe."""
     profile = get_or_create_profile(db, current_user.get("sub"))
-    if _maybe_reset_quota(profile):
-        db.commit()
     return {
-        "plan": profile.plan,
-        "credits_left": _credits_left(profile),
-        "credits_limit": profile.reveals_limit,
-        "searches_left": max(0, (profile.searches_limit or 0) - (profile.searches_used or 0)),
-        "quota_reset_at": profile.quota_reset_at.isoformat() if profile.quota_reset_at else None,
+        "user_id": profile.id,
         "premium_providers": configured_providers(),
     }
 
@@ -187,14 +175,14 @@ def resolve(
 ):
     """
     Identifica a pessoa da página aberta e mostra, mascarado, o que já sabemos.
-    Não consome crédito. Alvo: responder em menos de meio segundo.
+    Alvo: responder em menos de meio segundo.
     """
     user_id = current_user.get("sub")
-    profile = get_or_create_profile(db, user_id)
+    get_or_create_profile(db, user_id)
 
     slug = body.linkedin_slug or norm_slug(body.linkedin_url or "")
     if slug and optout.is_blocked(db, "linkedin", slug):
-        return ResolveResponse(blocked=True, credits_cost=0, credits_left=_credits_left(profile))
+        return ResolveResponse(blocked=True)
 
     title = body.title or extract_title(body.headline or "")
     company_name = body.company_name
@@ -234,7 +222,6 @@ def resolve(
             company_name=company_name,
             company_domain=domain,
             needs_domain=not domain,
-            credits_left=_credits_left(profile),
         )
 
     prev = waterfall.preview(db, person)
@@ -256,14 +243,12 @@ def resolve(
         known_pattern=prev["known_pattern"],
         likely_findable=prev["likely_findable"],
         already_revealed=already,
-        credits_cost=0 if already else 1,
-        credits_left=_credits_left(profile),
         blocked=prev["blocked"],
         needs_domain=not domain,
     )
 
 
-# ── Reveal (cobra, com todas as travas) ──────────────────────────────────────
+# ── Reveal (livre, com as travas de LGPD) ────────────────────────────────────
 
 def _recent_reveal(db: Session, user_id: str, person_id: int) -> Optional[Reveal]:
     cutoff = datetime.now(UTC) - timedelta(days=REVEAL_GRACE_DAYS)
@@ -284,9 +269,7 @@ def reveal(
     current_user: dict = Depends(get_ext_user),
 ):
     user_id = current_user.get("sub")
-    profile = get_or_create_profile(db, user_id)
-    if _maybe_reset_quota(profile):
-        db.commit()
+    get_or_create_profile(db, user_id)
 
     person = None
     if body.person_id:
@@ -299,14 +282,6 @@ def reveal(
     if body.company_domain and not person.company_domain:
         person.company_domain = normalize_domain(body.company_domain)
 
-    previous = _recent_reveal(db, user_id, person.id)
-    credits_left = _credits_left(profile)
-    if previous is None and credits_left is not None and credits_left <= 0:
-        raise HTTPException(
-            status_code=402,
-            detail="Créditos de revelação esgotados neste ciclo. Faça upgrade para continuar.",
-        )
-
     company = repo.get_company(db, person.company_domain) if person.company_domain else None
     result = waterfall.reveal(
         db, person, company=company, kind=body.kind, budget_seconds=REVEAL_BUDGET_SECONDS,
@@ -318,21 +293,14 @@ def reveal(
             success=False,
             message="Este contato pediu remoção da nossa base (LGPD) e não pode ser exibido.",
             person_id=person.id,
-            credits_left=credits_left,
         )
 
     found = result["found_email"] or result["found_phone"]
-    charged = 0
-    # Não cobra: (a) nada encontrado  (b) já revelado nos últimos 90 dias
-    if found and previous is None:
-        charged = 1
-        profile.reveals_used = (profile.reveals_used or 0) + 1
 
     db.add(Reveal(
         user_id=user_id,
         person_id=person.id,
         kind=body.kind,
-        credits_charged=charged,
         found_email=result["found_email"],
         found_phone=result["found_phone"],
         provider_chain=result["chain"],
@@ -349,9 +317,9 @@ def reveal(
     if found:
         message = "Contato revelado."
     elif person.company_domain:
-        message = "Não encontramos contato confiável para esta pessoa — nada foi cobrado."
+        message = "Não encontramos contato confiável para esta pessoa."
     else:
-        message = "Informe o site da empresa para conseguirmos montar o e-mail — nada foi cobrado."
+        message = "Informe o site da empresa para conseguirmos montar o e-mail."
 
     return RevealResponse(
         success=found,
@@ -364,8 +332,6 @@ def reveal(
         emails=result["emails"],
         phones=result["phones"],
         company_phone=company_phone,
-        credits_charged=charged,
-        credits_left=_credits_left(profile),
         from_cache=result["from_cache"],
         chain=result["chain"],
     )

@@ -31,30 +31,9 @@ let _pendingRoute=null;   // rota que o usuário tentou abrir antes de logar
 // Rota canônica do produto — precisa estar na allowlist de Redirect URLs do Supabase
 const _AUTH_REDIRECT=window.location.origin+'/app';
 
-// Demo mode: token local que o backend reconhece (DEMO_MODE=1)
-const _DEMO_KEY='le_demo_token';
-function _getDemoToken(){return localStorage.getItem(_DEMO_KEY);}
-function _setDemoToken(){
-  const t='demo-session-'+Math.random().toString(36).slice(2,12);
-  localStorage.setItem(_DEMO_KEY,t);return t;
-}
-function _clearDemoToken(){localStorage.removeItem(_DEMO_KEY);}
-function isDemoSession(){return !!_getDemoToken();}
-
 async function getToken(){
-  const demo=_getDemoToken();
-  if(demo)return demo;
   const {data}=await _sb.auth.getSession();
   return data.session?.access_token||null;
-}
-
-async function signInAsDemo(){
-  _setDemoToken();
-  closeAuthModal();
-  await loadProfile();
-  loadIntegrations();
-  if(_pendingRoute){const r=_pendingRoute;_pendingRoute=null;location.hash=r;}
-  else{applyRoute();focusSearch();}
 }
 
 async function authFetch(url,opts={}){
@@ -106,7 +85,7 @@ async function loadProfile(){
   if(resp.ok){
     _profile=await resp.json();
     clearAuthMsg();
-    updateQuotaUI();updateNavUser();loadTodayFollowupsCount();loadRecent();loadWaStatus();
+    updateNavUser();loadTodayFollowupsCount();loadRecent();loadWaStatus();
     return true;
   }
   let detalhe='';
@@ -167,26 +146,11 @@ async function loadWaStatus(){
   }catch(_){}
 }
 
-function updateQuotaUI(){
-  const el=document.getElementById('trial-counter');if(!el||!_profile)return;
-  const{searches_used,searches_limit,plan}=_profile;
-  if(plan==='enterprise'){el.style.display='none';return;}
-  const rem=searches_limit-searches_used;
-  el.style.display='block';
-  if(rem>0){
-    el.innerHTML='Restam <strong></strong> análises neste ciclo. Reabrir uma empresa dos últimos 7 dias não consome cota.';
-    el.querySelector('strong').textContent=`${rem} de ${searches_limit}`;
-  }
-  else el.innerHTML=`<strong>Sua cota deste ciclo acabou.</strong> <button onclick="startCheckout('pro')">Ver o plano Pro</button>`;
-}
-
-/* Rodapé da sidebar: quem está logado, em que plano e quanto da cota já foi. */
+/* Rodapé da sidebar: quem está logado neste navegador. */
 function updateNavUser(){
   const preauth=document.getElementById('header-preauth');
   const postauth=document.getElementById('header-postauth');
   if(!preauth)return;
-  const demo=isDemoSession();
-  document.body.classList.toggle('is-demo',demo&&!!_profile);
   if(!_profile){
     preauth.style.display='flex';
     if(postauth)postauth.style.display='none';
@@ -195,28 +159,10 @@ function updateNavUser(){
   preauth.style.display='none';
   if(postauth)postauth.style.display='flex';
 
-  const{searches_used=0,searches_limit=0,plan='free',email,quota_reset_at}=_profile;
-  const unlimited=plan==='enterprise'||searches_limit<0;
-  const mail=email||(demo?'Sessão de demonstração':'—');
+  const mail=_profile.email||'—';
   const set=(id,txt)=>{const el=document.getElementById(id);if(el)el.textContent=txt;};
   set('sb-avatar',(mail[0]||'•').toUpperCase());
   set('sb-user-mail',mail);
-  set('sb-user-plan',`Plano ${plan}`);
-  set('nav-quota',unlimited
-    ? 'Análises ilimitadas'
-    : `${searches_used} de ${searches_limit} análises`);
-  const reset=quota_reset_at?new Date(quota_reset_at):null;
-  set('sb-quota-reset',reset&&!unlimited
-    ? 'renova '+reset.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})
-    : '');
-  const fill=document.getElementById('sb-quota-fill');
-  if(fill){
-    const pct=unlimited?0:Math.min(100,Math.round((searches_used/Math.max(1,searches_limit))*100));
-    fill.style.width=pct+'%';
-    fill.classList.toggle('full',pct>=100);
-  }
-  const quotaBox=document.getElementById('sb-quota');
-  if(quotaBox)quotaBox.style.display=unlimited?'none':'block';
 }
 
 function openAuthModal(){document.getElementById('auth-modal').classList.add('open');checarProvedores();}
@@ -298,12 +244,42 @@ async function checarProvedores(){
   });
 }
 
+/* ══════ RETORNO DO PROVEDOR ══════
+   O caminho que some sem deixar rastro: o provedor autentica, o Supabase
+   devolve o navegador — e sem credencial nenhuma, nem erro. Acontece quando a
+   URL de retorno não está na allowlist de Redirect URLs do projeto: o Supabase
+   descarta o `redirect_to` e manda a pessoa para a Site URL, que pode até ser
+   esta mesma página. Da tela é indistinguível de "não cliquei em nada".
+
+   Por isso o clique fica anotado. Se o app recarregar sem sessão com a anotação
+   fresca, foi este caminho — e aí dá para dizer qual URL precisa ser cadastrada
+   em vez de deixar a pessoa clicando em Entrar para sempre. */
+const _OAUTH_PEND='le_oauth_pendente';
+const _OAUTH_PEND_MS=10*60*1000;   // depois disso é outra visita, não este retorno
+
+function _marcarLoginIniciado(nome){
+  try{localStorage.setItem(_OAUTH_PEND,JSON.stringify(
+    {em:Date.now(),volta:_AUTH_REDIRECT,provedor:nome}));}catch(_){}
+}
+function _limparLoginPendente(){try{localStorage.removeItem(_OAUTH_PEND);}catch(_){}}
+function _loginPendente(){
+  try{
+    const m=JSON.parse(localStorage.getItem(_OAUTH_PEND)||'null');
+    if(!m||!m.em||Date.now()-m.em>_OAUTH_PEND_MS){_limparLoginPendente();return null;}
+    return m;
+  }catch(_){_limparLoginPendente();return null;}
+}
+
 async function signInWithProvider(provider,nome){
   clearAuthMsg();
+  _marcarLoginIniciado(nome);
   const{error}=await _sb.auth.signInWithOAuth({provider,options:{redirectTo:_AUTH_REDIRECT}});
   // signInWithOAuth não lança: sem checar o `error`, provedor desabilitado vira
   // um clique que não faz absolutamente nada.
-  if(error)showAuthMsg(`Não foi possível abrir o login com ${nome}: ${error.message}`);
+  if(error){
+    _limparLoginPendente();
+    showAuthMsg(`Não foi possível abrir o login com ${nome}: ${error.message}`);
+  }
 }
 async function signInWithGoogle(){await signInWithProvider('google','Google');}
 async function signInWithGitHub(){await signInWithProvider('github','GitHub');}
@@ -325,11 +301,9 @@ function _erroDeRetornoOAuth(){
 }
 
 async function signOut(){
-  _clearDemoToken();
   await _sb.auth.signOut();
   _profile=null;_integr=null;currentLeadId=null;
   hideResults();hideError();
-  const tc=document.getElementById('trial-counter');if(tc)tc.style.display='none';
   const rg=document.getElementById('recent-grid');if(rg)rg.innerHTML='';
   const rb=document.getElementById('recent-block');if(rb)rb.style.display='none';
   updateNavUser();
@@ -337,35 +311,6 @@ async function signOut(){
   showView('search');
 }
 
-async function startCheckout(plan){
-  const token=await getToken();
-  if(!token){openAuthModal();return;}
-  // Sessão demo mora no localStorage deste navegador: assinar por ela
-  // significaria pagar por uma conta que some ao limpar o histórico.
-  if(isDemoSession()){closePaywall();openAuthModal();return;}
-  try{
-    const resp=await authFetch('/api/billing/checkout',{method:'POST',body:JSON.stringify({plan})});
-    const json=await resp.json();
-    if(resp.ok&&json.url){window.location.href=json.url;return;}
-    alert(json.detail||'Não foi possível iniciar a assinatura agora.');
-  }catch(e){if(e.message!=='not_authenticated')alert('Erro ao iniciar checkout.');}
-}
-
-function openPaywall(){
-  // Em demo o caminho não é o cartão: é criar a conta para não perder o que
-  // já foi pesquisado. O texto do modal muda junto com a ação.
-  const demo=isDemoSession();
-  const cta=document.getElementById('paywall-cta');
-  const text=document.getElementById('paywall-text');
-  if(cta){
-    cta.textContent=demo?'Criar conta gratuita →':'Assinar Pro — R$ 97/mês →';
-    cta.onclick=demo?function(){closePaywall();openAuthModal();}
-                    :function(){closePaywall();startCheckout('pro');};
-  }
-  if(text&&demo)text.textContent='Você está na demonstração — os dados ficam só neste navegador. Crie uma conta gratuita para guardar seus leads e liberar uma nova cota.';
-  document.getElementById('paywall-modal').classList.add('open');
-}
-function closePaywall(){document.getElementById('paywall-modal').classList.remove('open');}
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
@@ -417,7 +362,7 @@ const VIEW_META={
   },
   settings:{
     title:'Configurações',
-    sub:'Plano e uso do ciclo, integração com CRM, extensão do navegador e sessão.',
+    sub:'Sua conta, integração com CRM, extensão do navegador e sessão.',
   },
 };
 
@@ -525,17 +470,12 @@ async function enrich(){
   if(!domain){showError('Digite o domínio da empresa (ex: nubank.com.br).');return;}
   const token=await getToken();
   if(!token){openAuthModal();return;}
-  if(_profile&&_profile.searches_limit>0&&_profile.searches_used>=_profile.searches_limit){openPaywall();return;}
   setLoading(true);hideError();hideResults();startLoad();
   try{
     const resp=await authFetch('/api/enrich',{method:'POST',body:JSON.stringify({domain})});
     const json=await resp.json();
-    if(!resp.ok){
-      if(resp.status===402){openPaywall();return;}
-      showError(json.detail||'Erro ao enriquecer este domínio.');return;
-    }
+    if(!resp.ok){showError(json.detail||'Erro ao enriquecer este domínio.');return;}
     if(!json.success||!json.data){showError(json.message||'Não foi possível coletar dados.');return;}
-    loadProfile(); // recarrega cota do servidor — cache hit não consome busca
     renderResult(json.data);
     if(json.data.id)history.replaceState(null,'','#lead-'+json.data.id);
   }catch(e){
@@ -694,7 +634,7 @@ async function iniciarLote(){
 
     _loteId=json.batch_id;
     fb.className='set-feedback ok';
-    fb.textContent=json.message+(json.cabe_na_quota?'':` Atenção: sua cota cobre ${json.quota_restante} análise(s) neste ciclo; o restante fica na fila até a renovação.`);
+    fb.textContent=json.message;
     document.getElementById('lote-progress-panel').style.display='block';
     renderProgressoLote(json.progresso||{total:json.total,concluidos:0,na_fila:json.total,rodando:0,com_erro:0,finalizado:false,itens:[]});
     processarLote();
@@ -714,13 +654,6 @@ async function processarLote(){
       if(!resp.ok)break;
       const json=await resp.json();
       renderProgressoLote(json.progresso);
-      loadProfile();                       // a cota muda a cada rodada
-      if(json.quota_reached){
-        const fb=document.getElementById('lote-feedback');
-        fb.className='set-feedback err';
-        fb.textContent='Sua cota deste ciclo acabou. Os domínios restantes continuam na fila e retomam quando a cota renovar.';
-        break;
-      }
       if(json.progresso.finalizado||json.remaining===0)break;
     }
   }catch(_){ }
@@ -738,7 +671,7 @@ function pararLote(){
 
 const LOTE_RESULT_LABEL={
   enriched:['Enriquecido','ok'],partial:['Parcial','warn'],cached:['Já tínhamos','ok'],
-  failed:['Sem dados','warn'],error:['Erro','err'],quota:['Aguardando cota','warn'],
+  failed:['Sem dados','warn'],error:['Erro','err'],
 };
 
 function renderProgressoLote(p){
@@ -967,7 +900,6 @@ async function genAiSummary(force){
   try{
     const resp=await authFetch(`/api/leads/${currentLeadId}/ai-summary${force?'?force=true':''}`,{method:'POST'});
     const json=await resp.json();
-    if(resp.status===402){box.style.display='none';openPaywall();return;}
     if(!resp.ok){box.innerHTML=`<div class="ai-loading">${esc(json.detail||'Erro ao gerar resumo.')}</div>`;return;}
     box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo ${json.cached?'<small>(cacheado)</small>':''} <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(json.summary).replace(/\n/g,'<br/>')}</div>`;
   }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="ai-loading">Erro de conexão.</div>';}
@@ -2089,7 +2021,7 @@ async function loadSettings(){
     const me=meR.ok?await meR.json():_profile;
     const conns=connR.ok?await connR.json():[];
     if(me)_profile=me;
-    updateNavUser();updateQuotaUI();
+    updateNavUser();
     renderSettings(me,conns);
   }catch(e){
     if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
@@ -2098,22 +2030,6 @@ async function loadSettings(){
 
 function renderSettings(me,conns){
   const body=document.getElementById('settings-body');
-  const demo=isDemoSession();
-  const plan=me?.plan||'free';
-  const unlimited=plan==='enterprise'||(me?.searches_limit??0)<0;
-  const used=me?.searches_used??0,limit=me?.searches_limit??0;
-  const pctUsed=unlimited?0:Math.min(100,Math.round((used/Math.max(1,limit))*100));
-  const reset=me?.quota_reset_at?new Date(me.quota_reset_at).toLocaleDateString('pt-BR'):null;
-  // Créditos da extensão: medidor separado das análises de empresa
-  const revealsUsed=me?.reveals_used??0,revealsLimit=me?.reveals_limit??0;
-  const revealsUnlimited=revealsLimit<0;
-
-  const planActions=demo
-    ?`<p class="set-desc" style="margin:14px 0 0">Você está em <strong>modo demonstração</strong> — os dados desta sessão ficam restritos a este navegador. Crie uma conta para manter seus leads.</p>
-      <div class="set-actions"><button class="set-btn primary" onclick="signOut().then(()=>openAuthModal())">Criar conta gratuita</button></div>`
-    :plan==='free'
-    ?`<div class="set-actions"><button class="set-btn primary" onclick="startCheckout('pro')">Fazer upgrade — Pro R$ 97/mês</button></div>`
-    :`<div class="set-actions"><button class="set-btn ghost" onclick="openBillingPortal()">Gerenciar assinatura</button></div>`;
 
   const webhook=(conns||[]).find(c=>c.provider==='webhook');
   const connCard=webhook
@@ -2141,22 +2057,8 @@ function renderSettings(me,conns){
 
   body.innerHTML=`
     <div class="panel panel-pad">
-      ${head(IC_USER,'Conta e uso do ciclo','Quanto da sua cota já foi usada e quando ela renova. Uma análise é consumida por domínio novo; reabrir uma empresa dos últimos 7 dias é grátis.')}
-      <div class="set-row"><span class="set-lbl">E-mail</span><span class="set-val">${esc(me?.email||(demo?'sessão demo':'—'))}</span></div>
-      <div class="set-row"><span class="set-lbl">Plano</span><span class="set-val"><span class="plan-badge">${esc(plan)}</span></span></div>
-      <div class="set-row" style="display:block">
-        <span class="set-lbl">Análises de empresa</span>
-        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:6px">
-          <span class="set-val" style="text-align:left">${unlimited?'Ilimitadas':`${used} de ${limit} usadas`}</span>
-          ${reset&&!unlimited?`<span class="set-lbl">renova em ${reset}</span>`:''}
-        </div>
-        ${unlimited?'':`<div class="usage-track"><div class="usage-fill${pctUsed>=100?' full':''}" style="width:${pctUsed}%"></div></div>`}
-      </div>
-      <div class="set-row">
-        <span class="set-lbl">Revelações de contato (extensão)</span>
-        <span class="set-val">${revealsUnlimited?'ilimitadas':`${revealsUsed} de ${revealsLimit} usadas`}</span>
-      </div>
-      ${planActions}
+      ${head(IC_USER,'Conta','A conta com que você entrou neste navegador. Todas as funções do LeadEnricher — análises, lote, planilha, extensão e conversas — estão liberadas, sem limite de uso.')}
+      <div class="set-row"><span class="set-lbl">E-mail</span><span class="set-val">${esc(me?.email||'—')}</span></div>
     </div>
 
     <div class="panel panel-pad">
@@ -2179,7 +2081,7 @@ function renderSettings(me,conns){
     </div>
 
     <div class="panel panel-pad">
-      ${head(IC_EXT,'Extensão do navegador (LinkedIn)','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Cada revelação consome 1 crédito — <strong>e nada é cobrado quando não encontramos contato</strong>.')}
+      ${head(IC_EXT,'Extensão do navegador (LinkedIn)','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Revelar contato é livre — não há limite de revelações.')}
       <div class="set-actions">
         <button class="set-btn primary" onclick="generatePairCode()">Gerar código de pareamento</button>
         <span class="set-lbl">Válido por poucos minutos, uso único</span>
@@ -2246,16 +2148,6 @@ async function deleteCrmConn(provider){
   }catch(_){}
 }
 
-async function openBillingPortal(){
-  try{
-    const resp=await authFetch('/api/billing/portal',{method:'POST'});
-    const json=await resp.json();
-    if(resp.ok&&json.url)window.location.href=json.url;
-    else alert(json.detail||'Portal de assinatura indisponível no momento.');
-  }catch(e){if(e.message!=='not_authenticated')alert('Erro de conexão.');}
-}
-
-
 /* ══════ IMPORTAÇÃO DE PLANILHA ══════
    Sobe .xlsx/.csv, mostra o que foi reconhecido e cria as linhas como leads.
    A grade em si vive em sheet.js — aqui fica só o caminho até ela. */
@@ -2321,7 +2213,7 @@ async function uploadImportFile(file,sheet){
     console.log('uploadImportFile: json parseado', json.message?.substring(0,50));
     if(!resp.ok){
       if(resp.status===401||resp.status===403){
-        _clearDemoToken();renderImportDrop('Sua sessão expirou. Por favor, entre novamente.');
+        renderImportDrop('Sua sessão expirou. Por favor, entre novamente.');
         setTimeout(()=>location.reload(),2000);return;
       }
       renderImportDrop(json.detail||'Não consegui ler esta planilha.');return;
@@ -2419,8 +2311,6 @@ async function commitImport(){
 }
 
 function renderImportDone(result){
-  const quota=_profile&&_profile.searches_limit>0
-    ? Math.max(_profile.searches_limit-_profile.searches_used,0) : null;
   document.getElementById('import-body').innerHTML=`
     <div class="panel panel-pad imp-done">
       <div class="imp-done-ico">
@@ -2432,7 +2322,6 @@ function renderImportDone(result){
         A planilha completa já está no sistema, com todas as colunas do seu arquivo.
         O enriquecimento roda de lá e acrescenta site, LinkedIn, DNS/MX e telefone.
       </p>
-      <p class="imp-quota">${quota!==null?`Você tem ${quota} busca(s) na cota — cada empresa enriquecida consome 1.`:'Cada empresa enriquecida consome 1 busca da cota.'}</p>
       <div class="imp-done-actions">
         <button class="app-btn-primary" onclick="nav('sheet')">Abrir a planilha</button>
         <button class="ghost-btn" onclick="loadImport()">Importar outra</button>
@@ -2457,10 +2346,8 @@ async function enrichImportedLead(leadId,btn){
   if(btn){btn.disabled=true;btn.textContent='…';}
   try{
     const resp=await authFetch(`/api/leads/${leadId}/enrich`,{method:'POST'});
-    if(resp.status===402){openPaywall();return;}
     const json=await resp.json().catch(()=>({}));
     if(!resp.ok){alert(json.detail||'Erro ao enriquecer.');return;}
-    loadProfile();
     loadHistory();
   }catch(e){
     if(e.message!=='not_authenticated')alert('Erro de conexão.');
@@ -2529,9 +2416,10 @@ document.addEventListener('DOMContentLoaded',async()=>{
   // erro devolvido pelo provedor no retorno do OAuth
   const _erroOAuth=_erroDeRetornoOAuth();
 
-  // sessão existente (Supabase ou demo)
+  // sessão existente
   const{data:{session}}=await _sb.auth.getSession();
-  if(session||isDemoSession()){
+  if(session){
+    _limparLoginPendente();
     const ok=await loadProfile();
     loadIntegrations();
     applyRoute();
@@ -2541,11 +2429,31 @@ document.addEventListener('DOMContentLoaded',async()=>{
     applyRoute();   // rota protegida sem sessão → volta pra busca e abre login
     if(!_qDomain)focusSearch();
   }
-  if(_erroOAuth){showAuthMsg(`O provedor recusou o login: ${_erroOAuth}`);openAuthModal();}
+  if(_erroOAuth){
+    _limparLoginPendente();
+    showAuthMsg(`O provedor recusou o login: ${_erroOAuth}`);openAuthModal();
+  }else if(!session){
+    // Voltou do provedor sem credencial e sem erro: o retorno foi descartado
+    // antes de chegar aqui. Dizer isso na hora é a diferença entre uma
+    // configuração de dois minutos no painel e horas achando que o login
+    // "simplesmente não funciona".
+    const pend=_loginPendente();
+    if(pend){
+      _limparLoginPendente();
+      showAuthMsg(
+        `O login com ${pend.provedor||'o provedor'} foi concluído, mas o Supabase `
+        +'devolveu esta página sem credencial nenhuma. Isso acontece quando a URL '
+        +`de retorno não está autorizada no projeto: cadastre ${pend.volta} em `
+        +'Authentication > URL Configuration > Redirect URLs (e confira a Site URL) '
+        +`no projeto ${_SB_URL.replace('https://','').split('.')[0]}.`);
+      openAuthModal();
+    }
+  }
 
   // mudanças de auth (callback do OAuth)
   _sb.auth.onAuthStateChange(async(event,session)=>{
     if(session){
+      _limparLoginPendente();   // chegou credencial: o retorno não se perdeu
       const wasLoggedIn=!!_profile;
       const ok=await loadProfile();
       // Só fecha o modal quando o servidor aceitou a sessão: fechar antes
@@ -2557,15 +2465,9 @@ document.addEventListener('DOMContentLoaded',async()=>{
         if(_pendingRoute){const r=_pendingRoute;_pendingRoute=null;location.hash=r;}
         else{applyRoute();focusSearch();}
       }
-    }else if(!isDemoSession()){
+    }else{
       _profile=null;
       updateNavUser();
     }
   });
-
-  // retorno do Stripe
-  if(new URLSearchParams(window.location.search).get('upgraded')==='1'){
-    await loadProfile();
-    window.history.replaceState({},'',window.location.pathname+window.location.hash);
-  }
 });

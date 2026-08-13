@@ -13,10 +13,6 @@
     {
       "path": "/api/internal/wa/pending",
       "schedule": "0 10 * * *"
-    },
-    {
-      "path": "/api/internal/demo/cleanup",
-      "schedule": "30 4 * * *"
     }
   ]
 }

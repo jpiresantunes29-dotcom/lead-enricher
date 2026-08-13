@@ -104,13 +104,17 @@ def test_jwt_do_projeto_certo_nao_vira_achado(monkeypatch):
 
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "segredo-de-teste-com-tamanho-suficiente")
     # Chave "anon" assinada com esse segredo — o gabarito que a checagem usa.
+    # Vai na constante, não no ambiente: anon key de outro projeto vinda de
+    # variável é descartada de propósito (era ela que apontava o servidor para o
+    # projeto errado), então pelo ambiente este teste não conseguiria montar o
+    # cenário que quer testar.
     from jose import jwt as jose_jwt
     anon = jose_jwt.encode(
-        {"iss": "supabase", "ref": "projeto-x", "role": "anon"},
+        {"iss": "supabase", "ref": auth_mod.PROJETO_REF, "role": "anon"},
         "segredo-de-teste-com-tamanho-suficiente",
         algorithm="HS256",
     )
-    monkeypatch.setenv("SUPABASE_ANON_KEY", anon)
+    monkeypatch.setattr(auth_mod, "SUPABASE_ANON_KEY_PADRAO", anon)
     assert auth_mod.secret_confere_com_projeto() is True
     assert _achado(preflight.verificar(producao=True), "outro projeto Supabase") is None
 
