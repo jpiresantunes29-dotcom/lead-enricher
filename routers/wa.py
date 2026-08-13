@@ -269,6 +269,10 @@ def status_do_whatsapp(
         "template": bool(client.template_name()),
         "webhook_assinado": webhook.is_configured(),
         "faltando": client.missing_config(),
+        # A janela de horário vem junto para o botão da ficha já nascer apagado
+        # quando não dá para enviar. Descobrir a recusa só depois de confirmar
+        # um envio pago é o pior lugar possível para essa informação aparecer.
+        "janela": gate.janela_de_envio(),
         "aguardando": sum(1 for c in conversas if _aguardando_voce(c)),
         "total": db.query(Conversation).filter(
             Conversation.user_id == current_user.get("sub")

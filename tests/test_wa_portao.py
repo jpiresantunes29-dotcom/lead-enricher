@@ -272,6 +272,64 @@ def test_janela_de_servico_sem_fuso_disponivel_nega(monkeypatch):
     assert gate.service_window(COMERCIAL) == (False, False)
 
 
+# ── O que a recusa por horário conta ─────────────────────────────────────────
+# Recusar sem dizer quando volta manda o usuário adivinhar — e ele adivinha
+# clicando de novo. Estes testes seguram a parte da mensagem que é acionável.
+
+def test_recusa_por_horario_diz_quando_volta(db):
+    lead, conversa = _conversa(db)
+    decisao = gate.can_send(db, conversa, agora=MADRUGADA)
+    assert "volta a ser possível" in decisao.message
+    assert gate.faixa_de_envio() in decisao.message
+
+
+def test_recusa_de_abertura_tambem_diz_quando_volta(db):
+    lead, conversa = _conversa(db, janela_horas=None)
+    decisao = gate.can_start(db, lead, TELEFONE, conversa, agora=MADRUGADA)
+    assert decisao.reason == gate.DENY_QUIET_HOURS
+    assert "volta a ser possível" in decisao.message
+
+
+def test_proxima_abertura_cai_no_fim_do_silencio(db):
+    """Madrugada de terça: a próxima abertura é às 8h do mesmo dia."""
+    volta = gate.proxima_abertura(MADRUGADA)
+    assert volta is not None
+    assert volta.hour == gate.QUIET_END_HOUR
+    assert volta.date() == MADRUGADA.astimezone(volta.tzinfo).date()
+    assert gate.service_window(volta)[0] is True
+
+
+def test_janela_aberta_informa_quando_fecha_e_nao_quando_volta():
+    janela = gate.janela_de_envio(COMERCIAL)
+    assert janela["pode_enviar"] is True
+    assert janela["volta_em"] is None
+    assert "fecha" in janela["explicacao"]
+    assert janela["muda_em"]
+
+
+def test_janela_sem_fuso_se_declara_indeterminada(monkeypatch):
+    """
+    Sem fuso não há horário local que se possa afirmar. A tela precisa dizer
+    isso, e não "fora do horário" — que seria uma afirmação sobre uma hora que
+    o servidor não conhece.
+    """
+    monkeypatch.setattr(gate, "_zona", lambda: None)
+    janela = gate.janela_de_envio(COMERCIAL)
+    assert janela["pode_enviar"] is False
+    assert janela["indeterminado"] is True
+    assert janela["muda_em"] is None
+    assert "fuso" in janela["explicacao"] or "horário local" in janela["explicacao"]
+
+
+def test_configuracao_que_nunca_abre_nao_inventa_horario(monkeypatch):
+    """Busca sem resposta devolve None — não um horário plausível qualquer."""
+    monkeypatch.setattr(gate, "service_window", lambda agora=None: (False, False))
+    assert gate.proxima_abertura(MADRUGADA) is None
+    janela = gate.janela_de_envio(MADRUGADA)
+    assert janela["muda_em"] is None
+    assert "volta a ser possível" not in janela["explicacao"]
+
+
 # ── Casos degenerados ────────────────────────────────────────────────────────
 
 def test_conversa_sem_telefone_e_recusada(db):

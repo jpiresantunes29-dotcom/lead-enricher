@@ -67,6 +67,8 @@ _MOTIVOS = {
     DENY_OPTED_OUT: "Este número pediu para não receber mensagens.",
     DENY_WINDOW_CLOSED: "A janela de 24 horas desde a última mensagem do lead fechou.",
     DENY_QUIET_HOURS: "Fora do horário em que enviamos mensagens.",
+    # A frase acima é o motivo; `Decision.detail` completa com a faixa e a hora
+    # da retomada. Recusa que não diz quando volta manda o usuário adivinhar.
     DENY_NO_PHONE: "A conversa não tem número de destino.",
     DENY_LEAD_MISSING: "A empresa desta conversa não existe mais.",
     DENY_ALREADY_OPEN: (
@@ -93,16 +95,22 @@ class Decision:
     `allowed` sozinho não basta: quem chama precisa saber *por que* não, para
     mostrar na tela em vez de engolir o silêncio, e precisa saber se está fora
     do horário, porque aí a resposta permitida é curta.
+
+    `detail` é a parte que depende do instante — a hora em que a janela volta a
+    abrir, por exemplo. Fica fora de `_MOTIVOS` porque aquilo é dicionário de
+    códigos, e código não muda de sentido conforme o relógio.
     """
     allowed: bool
     reason: Optional[str] = None
     after_hours: bool = False
+    detail: Optional[str] = None
 
     @property
     def message(self) -> str:
         if self.allowed:
             return "Pode enviar."
-        return _MOTIVOS.get(self.reason or "", "Envio não autorizado.")
+        motivo = _MOTIVOS.get(self.reason or "", "Envio não autorizado.")
+        return f"{motivo} {self.detail}" if self.detail else motivo
 
 
 def _zona():
@@ -152,6 +160,142 @@ def service_window(agora: Optional[datetime] = None) -> tuple[bool, bool]:
         and _entre(local.timetz(), SERVICE_START_HOUR, SERVICE_END_HOUR)
     )
     return True, not comercial
+
+
+# ── Quando a janela muda de estado ───────────────────────────────────────────
+# Só serve para explicar: nenhuma decisão de envio sai daqui. O portão continua
+# respondendo sobre o instante atual — isto responde "e quando, então?".
+
+_DIAS = ("segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
+         "sexta-feira", "sábado", "domingo")
+
+# Oito dias cobrem qualquer combinação de silêncio noturno com fim de semana
+# fechado. Se a busca estourar, é porque a configuração fecha a janela para
+# sempre — e aí a resposta honesta é "não sei", não um horário inventado.
+_LIMITE_DE_BUSCA_HORAS = 24 * 8
+
+# O identificador IANA não é o nome que alguém usa para falar de hora. Sem
+# tradução conhecida, mostra o identificador cru: feio, mas verdadeiro.
+_NOMES_DE_FUSO = {"America/Sao_Paulo": "Brasília"}
+_NOME_DO_FUSO = _NOMES_DE_FUSO.get(TIMEZONE, TIMEZONE)
+
+_SEM_FUSO = (
+    "O servidor não conseguiu determinar o horário local "
+    f"({TIMEZONE}), então nada é enviado até isso ser corrigido — "
+    "enviar sem saber a hora do destinatário é o que queima o número."
+)
+
+
+def _proxima_virada(agora: Optional[datetime], alvo: bool) -> Optional[datetime]:
+    """
+    Primeira virada de hora, a partir de `agora`, em que `service_window`
+    passa a devolver `alvo`. Devolve no fuso do atendimento, ou `None` quando
+    o fuso não está disponível (aí não há horário local que se possa afirmar).
+    """
+    zona = _zona()
+    if zona is None:
+        return None
+
+    agora = agora or utcnow()
+    if agora.tzinfo is None:
+        agora = agora.replace(tzinfo=UTC)
+    momento = agora.astimezone(zona).replace(minute=0, second=0, microsecond=0)
+
+    for _ in range(_LIMITE_DE_BUSCA_HORAS):
+        momento += timedelta(hours=1)
+        if service_window(momento)[0] is alvo:
+            return momento
+    return None
+
+
+def proxima_abertura(agora: Optional[datetime] = None) -> Optional[datetime]:
+    """Quando o envio volta a ser permitido."""
+    return _proxima_virada(agora, True)
+
+
+def proximo_fechamento(agora: Optional[datetime] = None) -> Optional[datetime]:
+    """Quando o envio deixa de ser permitido."""
+    return _proxima_virada(agora, False)
+
+
+def _em_palavras(momento: datetime, agora: datetime) -> str:
+    """"amanhã às 8h" — a forma como alguém diria a hora, não um carimbo ISO."""
+    hora = f"{momento.hour}h" if momento.minute == 0 else momento.strftime("%Hh%M")
+    dias = (momento.date() - agora.date()).days
+    if dias == 0:
+        return f"hoje às {hora}"
+    if dias == 1:
+        return f"amanhã às {hora}"
+    return f"{_DIAS[momento.weekday()]}, {momento.strftime('%d/%m')}, às {hora}"
+
+
+def faixa_de_envio() -> str:
+    """A faixa configurada, em palavras — para a tela dizer a regra, não só o não."""
+    return f"{QUIET_END_HOUR}h às {QUIET_START_HOUR}h"
+
+
+def janela_de_envio(agora: Optional[datetime] = None) -> dict:
+    """
+    O estado da janela agora, pronto para a tela.
+
+    `muda_em` é o próximo instante em que esta resposta deixa de valer. A tela
+    guarda o resultado e o compara com o relógio dela: assim o botão não fica
+    dizendo "fora do horário" às nove da manhã só porque a aba está aberta
+    desde a madrugada, e mesmo assim a regra continua morando só aqui.
+    """
+    agora = agora or utcnow()
+    if agora.tzinfo is None:
+        agora = agora.replace(tzinfo=UTC)
+
+    pode, fora_do_horario = service_window(agora)
+    zona = _zona()
+    if zona is None:
+        return {
+            "pode_enviar": False,
+            "fora_do_horario": False,
+            "faixa": faixa_de_envio(),
+            "fuso": TIMEZONE,
+            "indeterminado": True,
+            "explicacao": _SEM_FUSO,
+            "volta_em": None,
+            "muda_em": None,
+        }
+
+    virada = proximo_fechamento(agora) if pode else proxima_abertura(agora)
+    local = agora.astimezone(zona)
+    quando = _em_palavras(virada, local) if virada else None
+
+    if pode:
+        explicacao = (
+            f"Enviamos das {faixa_de_envio()} (horário de {_NOME_DO_FUSO})."
+            + (f" Esta janela fecha {quando}." if quando else "")
+        )
+    else:
+        explicacao = (
+            f"Só enviamos das {faixa_de_envio()} (horário de {_NOME_DO_FUSO}) — "
+            "fora dessa faixa a mensagem chega em hora que faz o destinatário "
+            "marcar o número como spam, e número marcado é número restringido "
+            "pela Meta."
+            + (f" O envio volta a ser possível {quando}." if quando else "")
+        )
+
+    return {
+        "pode_enviar": pode,
+        "fora_do_horario": fora_do_horario,
+        "faixa": faixa_de_envio(),
+        "fuso": TIMEZONE,
+        "indeterminado": False,
+        "explicacao": explicacao,
+        "volta_em": quando if not pode else None,
+        "muda_em": virada.astimezone(UTC).isoformat() if virada else None,
+    }
+
+
+def _detalhe_do_horario(agora: Optional[datetime]) -> str:
+    """A metade da recusa que depende do relógio: a faixa e a hora da volta."""
+    if _zona() is None:
+        return _SEM_FUSO
+    return janela_de_envio(agora)["explicacao"]
 
 
 def _com_fuso(momento: datetime) -> datetime:
@@ -205,7 +349,7 @@ def can_start(db: Session, lead: Lead, phone_e164: str,
 
     pode, fora_do_horario = service_window(agora)
     if not pode:
-        return Decision(False, DENY_QUIET_HOURS)
+        return Decision(False, DENY_QUIET_HOURS, detail=_detalhe_do_horario(agora))
 
     if conversation is not None:
         if _janela_aberta(conversation, agora):
@@ -266,6 +410,6 @@ def can_send(db: Session, conversation: Conversation,
 
     pode, fora_do_horario = service_window(agora)
     if not pode:
-        return Decision(False, DENY_QUIET_HOURS)
+        return Decision(False, DENY_QUIET_HOURS, detail=_detalhe_do_horario(agora))
 
     return Decision(True, after_hours=fora_do_horario)

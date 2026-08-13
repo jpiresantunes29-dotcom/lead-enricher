@@ -100,6 +100,18 @@ _ACOES = {
 }
 
 
+def plano_para(intencao: str) -> Optional[dict]:
+    """
+    O que a tabela acima manda fazer com uma intenção.
+
+    Existe para o simulador (`services/wa/sandbox.py`) poder mostrar a mesma
+    decisão que a produção tomaria sem reimplementar a tabela — duas cópias da
+    regra virariam, na primeira mudança, um teste que aprova o que a produção
+    recusa.
+    """
+    return _ACOES.get(intencao)
+
+
 def _historico(db: Session, conversa: Conversation) -> list:
     mensagens = (
         db.query(WaMessage)
@@ -255,7 +267,11 @@ def _recusa_do_portao(db: Session, conversa: Conversation, decisao) -> Turno:
     virar pendência, senão o lead escreveu e ninguém nunca vai saber.
     """
     if decisao.reason == gate.DENY_QUIET_HOURS:
-        return Turno(NAO_FEZ_NADA, motivo="Fora do horário de envio; retomamos mais tarde.")
+        volta = gate.janela_de_envio().get("volta_em")
+        return Turno(NAO_FEZ_NADA, motivo=(
+            f"Fora do horário de envio; retomamos {volta}." if volta
+            else "Fora do horário de envio; retomamos mais tarde."
+        ))
     if decisao.reason == gate.DENY_AI_NOT_ACTIVE:
         # O humano já está com a conversa. Nada a fazer, e nada errado.
         return Turno(NAO_FEZ_NADA, motivo=decisao.message)
