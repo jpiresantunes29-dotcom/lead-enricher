@@ -23,12 +23,16 @@ login passar — o jeito é a chave ser assimétrica e vir pelo JWKS.
 """
 import logging
 import os
+import re
 import time
+from dataclasses import dataclass, field
+from typing import Optional
 
 import requests
 from fastapi import HTTPException, Request, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
+from jose.exceptions import ExpiredSignatureError
 from slowapi.util import get_remote_address
 
 logger = logging.getLogger(__name__)
@@ -107,11 +111,63 @@ def supabase_url() -> str:
     return env
 
 
+# ── Chave pública embutida ───────────────────────────────────────────────────
+# O JWKS do projeto, gravado aqui. É chave **pública**: confere assinatura, não
+# produz nenhuma. Publicá-la no código não expõe nada — ela já é servida aberta
+# em /auth/v1/.well-known/jwks.json.
+#
+# Existe porque a verificação do login não pode depender de uma chamada de rede
+# feita no meio da requisição. Em serverless cada instância fria busca o JWKS
+# de novo, e um único timeout de 5 segundos recusa o login de quem estava
+# entrando naquele instante — com 401, que na tela é idêntico a "chave errada".
+# A busca continua acontecendo e tem precedência: é ela que faz uma rotação de
+# chave entrar sozinha, sem redeploy. Isto aqui é só o piso, para o caso de a
+# busca falhar.
+JWKS_PADRAO = [
+    {
+        "alg": "ES256",
+        "crv": "P-256",
+        "kid": "f28bf17b-e28c-4c0e-9fbd-a50c3cb314ed",
+        "kty": "EC",
+        "use": "sig",
+        "x": "KN6v45NMn0v2prLBlwmll_4iy0okTckRTQCgujSeaNU",
+        "y": "HYMkOJWhbBiPtDcYyO-QDb46P_5r78m4oIdFFSS0MRA",
+    }
+]
+
+
+def _ref_do_projeto_padrao() -> str:
+    try:
+        return jwt.get_unverified_claims(SUPABASE_ANON_KEY_PADRAO).get("ref") or ""
+    except Exception:
+        return ""
+
+
+def _jwks_embutido() -> list:
+    """
+    A chave embutida só vale para o projeto de onde ela veio.
+
+    Trocou a anon key para outro projeto e esqueceu daqui? Então esta chave não
+    é do projeto em uso, e continuar oferecendo-a só produziria um `kid` que
+    nunca casa — ruído em cima de um problema que já é confuso.
+    """
+    ref = _ref_do_projeto_padrao()
+    return list(JWKS_PADRAO) if ref and ref in supabase_url() else []
+
+
 # Cache do JWKS: uma busca por chave nova, não uma por requisição. O TTL curto
 # é o que faz uma rotação de chave entrar sozinha, sem redeploy.
 _JWKS_TTL_SEGUNDOS = 600
 _JWKS_TTL_ERRO = 30
-_jwks_cache = {"em": 0.0, "chaves": []}
+# `origem` e `erro` não participam da verificação: são o que o diagnóstico lê
+# para dizer de onde veio a chave que recusou (ou aceitou) o token.
+_jwks_cache = {"em": 0.0, "chaves": [], "origem": "nao-buscado", "erro": None}
+
+
+def _guardar(chaves: list, origem: str, erro=None) -> list:
+    _jwks_cache["origem"] = origem
+    _jwks_cache["erro"] = None if erro is None else str(erro)[:200]
+    return chaves
 
 
 def _jwks(forcar: bool = False) -> list:
@@ -119,10 +175,10 @@ def _jwks(forcar: bool = False) -> list:
     if not forcar and _jwks_cache["chaves"] and agora - _jwks_cache["em"] < _JWKS_TTL_SEGUNDOS:
         return _jwks_cache["chaves"]
     if not forcar and not _jwks_cache["chaves"] and agora - _jwks_cache["em"] < _JWKS_TTL_ERRO:
-        return []
+        return _jwks_embutido()
     base = supabase_url()
     if not base:
-        return []
+        return _jwks_embutido()
     try:
         resp = requests.get(f"{base}/auth/v1/.well-known/jwks.json", timeout=5)
         resp.raise_for_status()
@@ -133,7 +189,9 @@ def _jwks(forcar: bool = False) -> list:
         # mãos, ela continua valendo — chave pública velha verifica igual.
         logger.warning("Não foi possível buscar o JWKS do Supabase: %s", erro)
         _jwks_cache["em"] = agora
-        return _jwks_cache["chaves"]
+        if _jwks_cache["chaves"]:
+            return _guardar(_jwks_cache["chaves"], "cache", erro)
+        return _guardar(_jwks_embutido(), "embutida", erro)
     if not chaves and _jwks_cache["chaves"]:
         # Resposta vazia com chave boa guardada: o JWKS do Supabase é servido
         # por borda, e durante uma rotação uma borda responde a lista nova e a
@@ -142,10 +200,15 @@ def _jwks(forcar: bool = False) -> list:
         logger.warning("JWKS voltou vazio; mantendo as %d chave(s) já conhecidas.",
                        len(_jwks_cache["chaves"]))
         _jwks_cache["em"] = agora
-        return _jwks_cache["chaves"]
+        return _guardar(_jwks_cache["chaves"], "cache")
+    if not chaves:
+        # Projeto que ainda assina com o segredo legado não publica chave
+        # nenhuma. Não é erro: é o outro caminho de verificação.
+        _jwks_cache["em"] = agora
+        return _guardar(_jwks_embutido(), "embutida" if _jwks_embutido() else "vazio")
     _jwks_cache["em"] = agora
     _jwks_cache["chaves"] = chaves
-    return chaves
+    return _guardar(chaves, "rede")
 
 
 def _chave_publica(kid: str):
@@ -193,8 +256,20 @@ def secret_confere_com_projeto():
 
 
 def verificacao_por_jwks() -> bool:
-    """O projeto publica chave pública? Então dá para validar login sem segredo."""
+    """Há chave pública em mãos? Então dá para validar login sem segredo."""
     return bool(_jwks())
+
+
+def estado_das_chaves() -> dict:
+    """De onde veio o chaveiro em uso — o que a conferência de prontidão e o
+    diagnóstico leem para explicar uma recusa."""
+    chaves = _jwks()
+    return {
+        "quantidade": len(chaves),
+        "kids": [c.get("kid") for c in chaves],
+        "origem": _jwks_cache["origem"],     # rede | cache | embutida | vazio
+        "erro": _jwks_cache["erro"],
+    }
 
 
 def is_demo_user(user_id: str) -> bool:
@@ -240,15 +315,50 @@ def _origem_do_token(token: str) -> str:
 _ALGS_JWKS = {"EC": ["ES256"], "RSA": ["RS256"], "OKP": ["EdDSA"]}
 
 
-def decode_jwt(token: str) -> dict:
+@dataclass
+class Veredito:
     """
-    Valida um JWT do Supabase. Levanta HTTPException em qualquer caminho que
-    não seja "assinatura conferida com chave real".
+    O resultado de examinar um token, com o motivo em português.
+
+    `codigo` é para o programa decidir (401 x 503, o que a tela sugere);
+    `detalhe` é a frase que a pessoa lê. Os dois saem do **mesmo** exame que
+    autentica de verdade — um diagnóstico que refaz a conta por conta própria
+    acaba discordando do que o login faz, e aí o texto na tela vira mais um
+    palpite para conferir.
+    """
+    ok: bool
+    codigo: str                        # ok | ilegivel | sem_chave | expirado |
+                                       # assinatura | sem_sub
+    detalhe: str
+    via: str = "-"                     # jwks | segredo | -
+    kid: Optional[str] = None
+    alg: Optional[str] = None
+    payload: Optional[dict] = field(default=None, repr=False)
+
+
+def _kid_para_texto(kid) -> str:
+    """
+    O `kid` vem do token, que é de quem chama. Só sai em mensagem depois de
+    passar por aqui — texto de terceiro não entra em resposta nossa cru.
+    """
+    if not kid:
+        return "(sem kid)"
+    kid = str(kid)[:48]
+    return kid if re.fullmatch(r"[A-Za-z0-9._:-]+", kid) else "(kid ilegível)"
+
+
+def avaliar_token(token: str) -> Veredito:
+    """
+    Examina o token e diz o que aconteceu. Não levanta exceção: quem chama
+    decide o que fazer com a recusa (autenticação levanta 401/503; diagnóstico
+    escreve na tela).
     """
     try:
-        kid = jwt.get_unverified_header(token).get("kid")
+        header = jwt.get_unverified_header(token)
     except Exception:
-        raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
+        return Veredito(False, "ilegivel",
+                        "O que veio no cabeçalho Authorization não é um JWT legível.")
+    kid, alg = header.get("kid"), header.get("alg")
 
     chave = _chave_publica(kid)
     if chave is not None:
@@ -258,21 +368,25 @@ def decode_jwt(token: str) -> dict:
             algs = [chave["alg"]]
         try:
             payload = jwt.decode(token, chave, algorithms=algs, options={"verify_aud": False})
+        except ExpiredSignatureError:
+            return Veredito(False, "expirado", "A sessão expirou.", "jwks", kid, alg)
         except JWTError as erro:
-            logger.warning("JWT recusado (JWKS): %s — %s",
-                           type(erro).__name__, _origem_do_token(token))
-            raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
+            return Veredito(
+                False, "assinatura",
+                f"A assinatura não confere com a chave pública {_kid_para_texto(kid)} "
+                f"publicada pelo projeto ({type(erro).__name__}).",
+                "jwks", kid, alg,
+            )
     else:
         if not jwt_configured():
             # Nunca cair para decode com segredo fraco/vazio: seria aceitar token
             # forjado. Erro de servidor, não do cliente.
-            logger.error(
-                "Sem chave para verificar o token: o JWKS do projeto não tem o "
-                "kid=%s e SUPABASE_JWT_SECRET está ausente ou curto demais.", kid,
-            )
-            raise HTTPException(
-                status_code=503,
-                detail="Autenticação indisponível: servidor sem chave de verificação configurada.",
+            return Veredito(
+                False, "sem_chave",
+                f"O servidor não tem com o que conferir este token: o JWKS do "
+                f"projeto não traz a chave {_kid_para_texto(kid)} e "
+                f"SUPABASE_JWT_SECRET está ausente ou curto demais.",
+                "-", kid, alg,
             )
         try:
             payload = jwt.decode(
@@ -281,28 +395,55 @@ def decode_jwt(token: str) -> dict:
                 algorithms=["HS256"],
                 options={"verify_aud": False},
             )
+        except ExpiredSignatureError:
+            return Veredito(False, "expirado", "A sessão expirou.", "segredo", kid, alg)
         except JWTError as erro:
-            # O motivo precisa aparecer no log: "assinatura não confere" e "token
-            # expirado" pedem ações opostas, e da tela os dois chegam como o
-            # mesmo 401 mudo.
-            logger.warning("JWT recusado (segredo legado): %s — %s",
-                           type(erro).__name__, _origem_do_token(token))
-            if kid:
-                # Assinatura de uma signing key que o JWKS não publica: chave
-                # atual é um segredo compartilhado, e esse material o Supabase
-                # não entrega. Nenhum valor de SUPABASE_JWT_SECRET resolve.
-                logger.error(
-                    "O token foi assinado pela signing key kid=%s, que não está "
-                    "no JWKS do projeto — sinal de chave atual do tipo 'segredo "
-                    "compartilhado', cujo material não é extraível do Supabase. "
-                    "Troque a chave de assinatura do projeto para assimétrica "
-                    "(ECC P-256) para que ela seja publicada no JWKS.", kid,
-                )
-            raise HTTPException(status_code=401, detail="Token inválido ou expirado.")
+            return Veredito(
+                False, "assinatura",
+                f"A assinatura não confere com o SUPABASE_JWT_SECRET configurado "
+                f"({type(erro).__name__}).",
+                "segredo", kid, alg,
+            )
 
     if not payload.get("sub"):
-        raise HTTPException(status_code=401, detail="Token inválido.")
-    return payload
+        return Veredito(False, "sem_sub", "O token não diz de quem é (sem `sub`).",
+                        "jwks" if chave is not None else "segredo", kid, alg)
+    return Veredito(True, "ok", "Token verificado.",
+                    "jwks" if chave is not None else "segredo", kid, alg, payload)
+
+
+def decode_jwt(token: str) -> dict:
+    """
+    Valida um JWT do Supabase. Levanta HTTPException em qualquer caminho que
+    não seja "assinatura conferida com chave real".
+    """
+    v = avaliar_token(token)
+    if v.ok:
+        return v.payload
+
+    if v.codigo == "sem_chave":
+        logger.error("%s (%s)", v.detalhe, _origem_do_token(token))
+        raise HTTPException(
+            status_code=503,
+            detail="Autenticação indisponível: servidor sem chave de verificação "
+                   "configurada. Abra /api/auth/diagnostico para ver o que falta.",
+        )
+
+    # O motivo precisa aparecer no log: "assinatura não confere" e "token
+    # expirado" pedem ações opostas, e da tela os dois chegam como o mesmo 401.
+    logger.warning("JWT recusado (%s, via %s): %s — %s",
+                   v.codigo, v.via, v.detalhe, _origem_do_token(token))
+    if v.codigo == "assinatura" and v.via == "segredo" and v.kid:
+        # Assinatura de uma signing key que o JWKS não publica: chave atual é
+        # um segredo compartilhado, e esse material o Supabase não entrega.
+        # Nenhum valor de SUPABASE_JWT_SECRET resolve.
+        logger.error(
+            "O token foi assinado pela signing key kid=%s, que não está no JWKS "
+            "do projeto — sinal de chave atual do tipo 'segredo compartilhado', "
+            "cujo material não é extraível do Supabase. Troque a chave de "
+            "assinatura do projeto para assimétrica (ECC P-256).", v.kid,
+        )
+    raise HTTPException(status_code=401, detail=v.detalhe)
 
 
 def get_current_user(
@@ -312,6 +453,229 @@ def get_current_user(
     if demo_mode_enabled() and is_demo_token(token):
         return demo_identity(token)
     return decode_jwt(token)
+
+
+# ── Diagnóstico ──────────────────────────────────────────────────────────────
+# Um 401 no login tem cinco causas plausíveis e todas produzem exatamente a
+# mesma tela. Antes disto o único lugar com a resposta era o log do servidor —
+# que em serverless significa abrir o painel do deploy, achar a invocação certa
+# e ler. Na prática ninguém lê, e a pessoa troca variáveis no escuro por horas.
+#
+# O que sai daqui é o que o próprio verificador acabou de fazer, mais o estado
+# das duas fontes de chave. Nada de segredo: do `SUPABASE_JWT_SECRET` só saem
+# "existe?" e o tamanho.
+
+def _claims_sem_verificar(token: str) -> dict:
+    try:
+        return jwt.get_unverified_claims(token)
+    except Exception:
+        return {}
+
+
+def _ref_do_iss(iss: str) -> str:
+    """`https://xxxx.supabase.co/auth/v1` → `xxxx`."""
+    achado = re.search(r"https://([a-z0-9]+)\.supabase\.co", iss or "")
+    return achado.group(1) if achado else ""
+
+
+def _veredito_de_configuracao(estado_chaves: dict) -> dict:
+    """Sem token para examinar, ainda dá para dizer se o servidor tem com o que
+    verificar um login quando ele chegar."""
+    if estado_chaves["quantidade"]:
+        return {
+            "situacao": "sem_token",
+            "resumo": "Nenhuma credencial foi apresentada, mas o servidor tem "
+                      f"{estado_chaves['quantidade']} chave(s) pública(s) do projeto "
+                      "para verificar o login.",
+            "como_resolver": "Entre com o provedor e repita este diagnóstico se o "
+                             "login ainda for recusado.",
+        }
+    if jwt_configured():
+        return {
+            "situacao": "sem_token",
+            "resumo": "Nenhuma credencial foi apresentada. O projeto não publica "
+                      "chave pública; a verificação depende do SUPABASE_JWT_SECRET, "
+                      "que está configurado."
+                      + ("" if secret_confere_com_projeto() is not False else
+                         " ATENÇÃO: esse segredo NÃO é o do projeto desta anon key."),
+            "como_resolver": "Entre com o provedor e repita este diagnóstico se o "
+                             "login ainda for recusado.",
+        }
+    return {
+        "situacao": "servidor_sem_chave",
+        "resumo": "O servidor não tem nenhuma forma de verificar login: o projeto "
+                  "não publica chave pública e não há SUPABASE_JWT_SECRET.",
+        "como_resolver": "No Supabase, em JWT Keys, troque a chave de assinatura "
+                         "para assimétrica (ECC P-256) — ela é publicada e dispensa "
+                         "segredo no deploy. Ou defina SUPABASE_JWT_SECRET nas "
+                         "variáveis de ambiente do deploy.",
+    }
+
+
+def _veredito_do_token(v: Veredito, ref_token: str, ref_projeto: str,
+                       estado_chaves: dict) -> dict:
+    if v.ok:
+        return {
+            "situacao": "ok",
+            "resumo": f"Token verificado pela {'chave pública do projeto' if v.via == 'jwks' else 'chave (JWT secret) configurada'}.",
+            "como_resolver": "Nada a fazer: a autenticação está funcionando.",
+        }
+
+    if v.codigo == "ilegivel":
+        return {"situacao": "token_ilegivel", "resumo": v.detalhe,
+                "como_resolver": "Saia e entre de novo para o navegador pedir uma "
+                                 "credencial nova."}
+
+    if ref_token and ref_projeto and ref_token != ref_projeto:
+        return {
+            "situacao": "projeto_diferente",
+            "resumo": f"O login foi feito no projeto Supabase '{ref_token}', mas o "
+                      f"servidor verifica contra o projeto '{ref_projeto}' (o da anon "
+                      "key). Nenhuma chave de um projeto valida token do outro.",
+            "como_resolver": "Deixe os dois iguais: a anon key em static/js/app.js "
+                             "(ou SUPABASE_ANON_KEY) precisa ser a do mesmo projeto "
+                             "em que o usuário faz login.",
+        }
+
+    if v.codigo == "expirado":
+        return {"situacao": "expirado",
+                "resumo": "A credencial apresentada está expirada.",
+                "como_resolver": "Saia e entre de novo. Se acontecer sempre, "
+                                 "verifique o relógio do servidor."}
+
+    if v.codigo == "sem_chave":
+        return {
+            "situacao": "servidor_sem_chave",
+            "resumo": v.detalhe,
+            "como_resolver": (
+                "O token foi assinado por uma signing key que o JWKS do projeto não "
+                f"publica ({_kid_para_texto(v.kid)}). No Supabase, em JWT Keys, "
+                "troque a chave atual por uma assimétrica (ECC P-256): ela passa a "
+                "ser publicada e o servidor verifica sozinho. Alternativa: definir "
+                "SUPABASE_JWT_SECRET no ambiente do deploy — só funciona se a chave "
+                "atual ainda for o segredo legado."
+                + (f" A busca do JWKS também está falhando: {estado_chaves['erro']}."
+                   if estado_chaves["erro"] else "")
+            ),
+        }
+
+    if v.codigo == "assinatura" and v.via == "jwks":
+        return {
+            "situacao": "assinatura_nao_confere",
+            "resumo": v.detalhe,
+            "como_resolver": "A credencial não foi emitida pela chave que o projeto "
+                             "publica. Saia e entre de novo; se persistir, houve "
+                             "rotação de chave e o cache do servidor está velho "
+                             "(passa sozinho em até 10 minutos).",
+        }
+
+    if v.codigo == "assinatura" and v.via == "segredo":
+        confere = secret_confere_com_projeto()
+        if v.kid:
+            return {
+                "situacao": "chave_de_assinatura_nao_publicada",
+                "resumo": f"O token foi assinado pela signing key "
+                          f"{_kid_para_texto(v.kid)}, que não está entre as "
+                          f"{estado_chaves['quantidade']} chave(s) que o servidor "
+                          "conhece — então ele tentou o JWT secret legado, e a "
+                          "assinatura não confere com ele.",
+                "como_resolver": (
+                    (f"A busca do JWKS está falhando ({estado_chaves['erro']}), então "
+                     "o servidor pode simplesmente não estar enxergando a chave certa; "
+                     "libere a saída de rede do deploy para o Supabase. "
+                     if estado_chaves["erro"] else "")
+                    + "Se a rede está bem, a chave atual do projeto é do tipo 'segredo "
+                      "compartilhado' — esse material o Supabase não entrega, e nenhum "
+                      "valor de SUPABASE_JWT_SECRET resolve. Em JWT Keys, troque a "
+                      "chave atual por uma assimétrica (ECC P-256)."
+                ),
+            }
+        if confere is False:
+            return {
+                "situacao": "segredo_de_outro_projeto",
+                "resumo": "O SUPABASE_JWT_SECRET configurado é de outro projeto: ele "
+                          "não valida nem a anon key deste. Todo login real vira 401.",
+                "como_resolver": "Copie o JWT Secret do MESMO projeto da anon key "
+                                 "(Supabase > Settings > API > JWT Settings) e atualize "
+                                 "a variável no ambiente do deploy — e só nele; mudar "
+                                 "o .env local não muda o que está no ar.",
+            }
+        return {
+            "situacao": "assinatura_nao_confere",
+            "resumo": v.detalhe,
+            "como_resolver": "O segredo confere com o projeto, mas não com este token. "
+                             "Saia e entre de novo; se persistir, o projeto trocou de "
+                             "chave de assinatura e o segredo legado deixou de valer.",
+        }
+
+    return {"situacao": v.codigo, "resumo": v.detalhe,
+            "como_resolver": "Saia e entre de novo."}
+
+
+def diagnostico(token: str = "") -> dict:
+    """
+    Por que este token foi (ou seria) recusado, com o que fazer a respeito.
+
+    Aceita token vazio: sem credencial, relata o estado das chaves do servidor,
+    que já responde "dá para logar aqui?".
+    """
+    token = (token or "").strip()
+    estado_chaves = estado_das_chaves()
+    ref_projeto = _ref_do_iss(supabase_url())
+    relatorio = {
+        "projeto": {
+            "ref": ref_projeto,
+            "url": supabase_url(),
+            "anon_key_de": "variável de ambiente" if os.getenv("SUPABASE_ANON_KEY")
+                           else "código (static/js/app.js)",
+        },
+        "chaves_publicas": {
+            "quantidade": estado_chaves["quantidade"],
+            "kids": estado_chaves["kids"],
+            "origem": estado_chaves["origem"],
+            "erro_na_busca": estado_chaves["erro"],
+        },
+        "segredo_legado": {
+            "configurado": jwt_configured(),
+            "tamanho": len(jwt_secret()),
+            "confere_com_o_projeto": secret_confere_com_projeto(),
+        },
+        "demo_ligado": demo_mode_enabled(),
+        "token": {"apresentado": bool(token)},
+    }
+
+    if not token:
+        relatorio["veredito"] = _veredito_de_configuracao(estado_chaves)
+        return relatorio
+
+    if is_demo_token(token):
+        relatorio["token"]["tipo"] = "demo"
+        relatorio["veredito"] = {
+            "situacao": "demo" if demo_mode_enabled() else "demo_desligado",
+            "resumo": "Esta é uma sessão de demonstração, não um login real."
+                      + ("" if demo_mode_enabled() else " E o modo demo está desligado."),
+            "como_resolver": "Saia da demonstração e entre com um provedor para testar "
+                             "o login de verdade.",
+        }
+        return relatorio
+
+    v = avaliar_token(token)
+    claims = _claims_sem_verificar(token)
+    ref_token = _ref_do_iss(claims.get("iss", ""))
+    relatorio["token"].update({
+        "tipo": "supabase",
+        "alg": v.alg,
+        "kid": _kid_para_texto(v.kid),
+        "kid_esta_no_jwks": bool(v.kid) and v.kid in estado_chaves["kids"],
+        "emissor": claims.get("iss"),
+        "projeto_do_token": ref_token,
+        "expira_em": claims.get("exp"),
+        "verificado": v.ok,
+        "verificado_por": v.via,
+        "motivo": v.detalhe,
+    })
+    relatorio["veredito"] = _veredito_do_token(v, ref_token, ref_projeto, estado_chaves)
+    return relatorio
 
 
 def rate_limit_key(request: Request) -> str:

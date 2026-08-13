@@ -22,6 +22,7 @@ from typing import List, Optional
 
 from middleware.auth import (
     demo_mode_enabled,
+    estado_das_chaves,
     jwt_configured,
     secret_confere_com_projeto,
     verificacao_por_jwks,
@@ -88,6 +89,21 @@ def _checar_fundacao(rel: Relatorio) -> None:
             f"Cada clique que tocar o que falta responde 500. Ausente: {faltando}.",
             f"Rode `alembic upgrade head` no banco de produção "
             f"(a revisão atual é {ALEMBIC_HEAD}).",
+        ))
+
+    # A chave pública do projeto está gravada no código como piso, então a
+    # verificação continua de pé quando a busca falha. Silenciar isso seria
+    # ruim: a rede quebrada só apareceria numa rotação de chave, meses depois,
+    # como um 401 sem explicação.
+    chaves = estado_das_chaves()
+    if chaves["origem"] == "embutida" and chaves["erro"]:
+        rel.achados.append(Achado(
+            ATENCAO, "O deploy não consegue buscar as chaves públicas do Supabase",
+            "O login funciona pela chave pública embutida no código, mas uma "
+            "rotação de chave no projeto passaria despercebida — e aí todo login "
+            f"vira 401. A busca falhou com: {chaves['erro']}.",
+            "Confira a saída de rede do deploy para "
+            "<projeto>.supabase.co/auth/v1/.well-known/jwks.json.",
         ))
 
     # Com chave pública publicada, o login se valida sozinho e o segredo legado

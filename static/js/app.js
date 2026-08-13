@@ -68,10 +68,25 @@ async function authFetch(url,opts={}){
    deslogado sem explicar nada — o usuário fica clicando em Entrar para sempre. */
 function _motivoRecusa(status,detalhe){
   if(status===401)return 'O provedor autenticou você, mas o servidor recusou a credencial (401). '
-    +'É configuração de chave do projeto Supabase, não erro seu — o log do servidor traz o motivo exato.';
+    +(detalhe||'');
   if(status===503)return 'O servidor está sem chave para verificar o login. '
     +'Nenhum login real é aceito enquanto isso não for configurado.';
   return `O servidor recusou a sessão (HTTP ${status}).`+(detalhe?` ${detalhe}`:'');
+}
+
+/* Pergunta ao servidor POR QUE a credencial foi recusada. As causas possíveis
+   (segredo de outro projeto, chave de assinatura não publicada, projeto
+   trocado, sessão expirada, deploy sem variável) chegam à tela como o mesmo
+   401 — só o servidor sabe diferenciar, e mandar a pessoa ler o log de uma
+   função serverless é o mesmo que não dizer nada. */
+async function _diagnosticoDeLogin(){
+  try{
+    const token=await getToken();
+    const resp=await fetch('/api/auth/diagnostico',
+      {headers:token?{Authorization:`Bearer ${token}`}:{}});
+    if(!resp.ok)return null;
+    return await resp.json();
+  }catch(_){return null;}
 }
 
 /* Carrega o perfil. Devolve true só quando o servidor aceitou a sessão — quem
@@ -99,6 +114,9 @@ async function loadProfile(){
   _profile=null;updateNavUser();
   showAuthMsg(_motivoRecusa(resp.status,detalhe),'err',true);
   openAuthModal();
+  // O diagnóstico vem depois porque é uma segunda ida ao servidor: a mensagem
+  // curta aparece na hora e ganha o motivo exato assim que ele chega.
+  _diagnosticoDeLogin().then(d=>{if(d)mostrarDiagnosticoDeLogin(d);});
   return false;
 }
 
@@ -221,6 +239,41 @@ function showAuthMsg(texto,tipo='err',comRetentativa=false){
 function clearAuthMsg(){
   const el=document.getElementById('auth-msg');if(!el)return;
   el.textContent='';el.style.display='none';
+}
+
+/* Escreve na tela o motivo exato da recusa e o que fazer, com os dados
+   técnicos dobrados logo abaixo — é o que se cola numa conversa com quem
+   administra o projeto Supabase, em vez de descrever de memória. */
+function mostrarDiagnosticoDeLogin(d){
+  const el=document.getElementById('auth-msg');if(!el||!d||!d.veredito)return;
+  if(d.veredito.situacao==='ok')return;   // /api/me já teria passado
+  const antigo=el.querySelector('.auth-diag');if(antigo)antigo.remove();
+
+  const cx=document.createElement('span');cx.className='auth-diag';
+  const motivo=document.createElement('span');
+  motivo.className='auth-diag-motivo';
+  motivo.textContent=d.veredito.resumo;
+  const acao=document.createElement('span');
+  acao.className='auth-diag-acao';
+  acao.textContent=d.veredito.como_resolver;
+
+  const det=document.createElement('details');det.className='auth-diag-tec';
+  const sum=document.createElement('summary');sum.textContent='Dados técnicos';
+  const pre=document.createElement('pre');pre.textContent=JSON.stringify(d,null,2);
+  const copiar=document.createElement('button');
+  copiar.type='button';copiar.className='auth-retry-btn';copiar.textContent='Copiar';
+  copiar.onclick=()=>{
+    navigator.clipboard.writeText(JSON.stringify(d,null,2))
+      .then(()=>{copiar.textContent='Copiado';})
+      .catch(()=>{copiar.textContent='Não foi possível copiar';});
+  };
+  det.append(sum,pre,copiar);
+  cx.append(motivo,acao,det);
+  // Antes do "Tentar de novo": o botão é a última coisa a fazer depois de ler,
+  // e no meio do texto ele parte a explicação em duas.
+  const retentar=document.getElementById('auth-retry');
+  if(retentar)el.insertBefore(cx,retentar);
+  else el.appendChild(cx);
 }
 
 /* Quais provedores estão realmente ligados no projeto Supabase. Botão de
