@@ -774,31 +774,105 @@ body{
 .cell-cancel:hover{color:var(--text-2);border-color:var(--text-3)}
 .sub-err{color:var(--err)}
 
-/* ── Conversas de WhatsApp ──
-   Duas colunas: a lista à esquerda, a conversa à direita. Em tela estreita
-   viram uma coluna só, com a conversa embaixo da lista. */
+/* ══════════════════════════════════════════════════════════════════
+   Conversas de WhatsApp
+   Estrutura de cliente de mensagens: lista à esquerda, conversa à
+   direita, dentro de um mesmo cartão. A paleta continua sendo a do
+   app — um painel verde-escuro embutido numa tela clara pareceria
+   um iframe do WhatsApp, não uma tela do produto.
+   ══════════════════════════════════════════════════════════════════ */
 .cv-wrap{
-  display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:14px;
-  align-items:start;
+  display:grid;grid-template-columns:minmax(280px,360px) 1fr;
+  height:calc(100vh - 260px);min-height:520px;
+  background:var(--bg-2);border:1px solid var(--border);border-radius:12px;
+  overflow:hidden;box-shadow:var(--shadow-sm);
 }
-@media (max-width:900px){.cv-wrap{grid-template-columns:1fr}}
 
-.cv-list{
-  display:flex;flex-direction:column;gap:8px;
-  max-height:70vh;overflow-y:auto;
+/* ── Coluna esquerda ── */
+/* `min-height:0` em toda coluna de grid que rola por dentro: sem isso o item
+   cresce até o tamanho do conteúdo, estoura o cartão e o `overflow:hidden` do
+   pai corta justamente o que fica embaixo — a caixa de escrever. */
+.cv-side{
+  display:flex;flex-direction:column;min-width:0;min-height:0;
+  border-right:1px solid var(--border);background:var(--bg-2);
 }
+.cv-side-head{padding:12px 14px 10px;border-bottom:1px solid var(--border)}
+.cv-search{position:relative}
+.cv-search svg{
+  position:absolute;left:11px;top:50%;transform:translateY(-50%);
+  width:15px;height:15px;color:var(--text-3);pointer-events:none;
+}
+.cv-search input{
+  width:100%;font-family:inherit;font-size:13px;color:var(--text);
+  background:var(--surface);border:1px solid transparent;border-radius:8px;
+  padding:9px 12px 9px 33px;
+}
+.cv-search input:focus{
+  outline:none;background:var(--bg-2);border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(29,78,216,.1);
+}
+.cv-filters{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
+.cv-filter{
+  font-size:11.5px;font-weight:600;color:var(--text-2);
+  background:var(--surface);border:1px solid transparent;
+  border-radius:20px;padding:4px 11px;cursor:pointer;white-space:nowrap;
+}
+.cv-filter:hover{border-color:var(--border-2)}
+.cv-filter.on{background:var(--accent-bg);border-color:var(--accent-border);color:var(--accent)}
+.cv-filter-n{opacity:.65;margin-left:3px}
+
+.cv-list{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
+.cv-nada{padding:26px 18px;text-align:center;font-size:12.5px;color:var(--text-3);line-height:1.6}
+
+/* Item da lista: avatar, nome + prévia, hora + sinais. */
 .cv-card{
-  display:flex;flex-direction:column;gap:4px;text-align:left;
-  background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
-  padding:12px 14px;cursor:pointer;width:100%;
+  display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center;
+  width:100%;text-align:left;padding:10px 14px;cursor:pointer;
+  border-bottom:1px solid var(--border);
 }
-.cv-card:hover{border-color:var(--accent-border);background:var(--surface)}
-.cv-card.aberta{border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.09)}
-.cv-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
-.cv-card-nome{font-size:14px;font-weight:700;color:var(--text)}
-.cv-card-quem{font-size:12px;color:var(--text-2)}
-.cv-card-previa{font-size:12.5px;color:var(--text-2);line-height:1.5}
-.cv-card-sub{font-size:11.5px;color:var(--text-3)}
+.cv-card:hover{background:var(--surface)}
+.cv-card.aberta{background:var(--accent-bg)}
+.cv-card-mid{min-width:0;display:flex;flex-direction:column;gap:2px}
+.cv-card-nome{
+  font-size:13.5px;font-weight:600;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.cv-card-previa{
+  font-size:12.5px;color:var(--text-2);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  display:flex;align-items:center;gap:4px;
+}
+.cv-card-previa .cv-tick{flex-shrink:0}
+.cv-card-end{
+  display:flex;flex-direction:column;align-items:flex-end;gap:4px;
+  flex-shrink:0;
+}
+.cv-card-hora{font-size:11px;color:var(--text-3);white-space:nowrap}
+.cv-card.pendente .cv-card-hora{color:var(--warn);font-weight:600}
+.cv-card-quem{font-size:11.5px;color:var(--text-3)}
+
+/* Avatar: iniciais em fundo derivado do nome. Sem foto porque a Meta não
+   entrega a foto de perfil do contato pela Cloud API — inventar uma seria
+   mostrar um rosto que não é o da pessoa. */
+.cv-av{
+  width:40px;height:40px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Plus Jakarta Sans',sans-serif;font-size:14px;font-weight:700;
+  color:#fff;letter-spacing:.02em;user-select:none;
+}
+.cv-av.g{width:34px;height:34px;font-size:12.5px}
+
+/* Bolinha de estado no canto do avatar — a cor repete a do selo. */
+.cv-av-wrap{position:relative;flex-shrink:0}
+.cv-av-dot{
+  position:absolute;right:-1px;bottom:-1px;width:12px;height:12px;
+  border-radius:50%;border:2px solid var(--bg-2);
+}
+.cv-av-dot.ativa{background:var(--ok)}
+.cv-av-dot.aguardando{background:var(--warn)}
+.cv-av-dot.assumida{background:var(--info)}
+.cv-av-dot.pausada{background:var(--err)}
+.cv-av-dot.encerrada{background:var(--text-3)}
 
 /* O selo é o elemento mais importante da tela: diz quem está respondendo. */
 .cv-selo{
@@ -813,62 +887,202 @@ body{
 .cv-selo.pausada{background:var(--err-bg);color:var(--err);border:1px solid var(--err-border)}
 .cv-selo.encerrada{background:var(--surface);color:var(--text-3);border:1px solid var(--border)}
 
+/* ── Coluna direita: a conversa ── */
 .cv-panel{
-  background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
-  display:flex;flex-direction:column;min-height:340px;
+  display:flex;flex-direction:column;min-width:0;min-height:0;
+  background:var(--surface);
 }
-.cv-empty{padding:48px 24px;text-align:center;color:var(--text-3)}
+.cv-empty{
+  margin:auto;padding:40px 30px;text-align:center;max-width:380px;
+  display:flex;flex-direction:column;align-items:center;gap:10px;
+}
+.cv-empty svg{width:52px;height:52px;color:var(--border-2)}
+.cv-empty strong{font-size:14.5px;color:var(--text-2);font-weight:600}
+.cv-empty span{font-size:12.5px;color:var(--text-3);line-height:1.6}
+
 .cv-head{
-  display:flex;align-items:center;justify-content:space-between;gap:12px;
-  padding:14px 18px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:11px;flex-shrink:0;
+  padding:9px 16px;border-bottom:1px solid var(--border);background:var(--bg-2);
 }
-.cv-head-nome{font-size:15px;font-weight:700}
-.cv-head-sub{font-size:12px;color:var(--text-3);margin-top:2px}
-.cv-explica{padding:10px 18px 0;font-size:12.5px;color:var(--text-2)}
+.cv-head-txt{flex:1;min-width:0}
+.cv-head-nome{
+  font-size:14px;font-weight:600;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.cv-head-sub{font-size:11.5px;color:var(--text-3);margin-top:1px}
+.cv-head-sub .mono{font-family:var(--mono);font-size:11px}
+
+/* A faixa de estado fica embaixo do cabeçalho, não dentro dele: é a frase que
+   diz quem está respondendo agora, e ela precisa caber inteira. */
+.cv-explica{
+  flex-shrink:0;padding:8px 16px;font-size:12px;line-height:1.5;
+  color:var(--text-2);background:var(--bg-2);
+  border-bottom:1px solid var(--border);
+}
 .cv-motivo{color:var(--text-3);font-style:italic}
-.cv-acoes{display:flex;gap:7px;flex-wrap:wrap;padding:10px 18px}
+.cv-acoes{
+  display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;
+  padding:8px 16px;background:var(--bg-2);border-bottom:1px solid var(--border);
+}
 .cv-btn{
-  font-size:12.5px;font-weight:600;color:var(--text-2);cursor:pointer;
+  font-size:12px;font-weight:600;color:var(--text-2);cursor:pointer;
   background:var(--surface);border:1px solid var(--border);
-  border-radius:7px;padding:7px 13px;
+  border-radius:7px;padding:6px 12px;
 }
 .cv-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
 .cv-btn.destaque{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .cv-btn.destaque:hover{background:var(--accent-h);color:var(--accent-ink)}
 
+/* Área das mensagens. O quadriculado discreto é o que dá a leitura de "papel
+   de parede de conversa" sem precisar de imagem nem de verde. */
 .cv-msgs{
-  flex:1;display:flex;flex-direction:column;gap:10px;
-  padding:14px 18px;max-height:44vh;overflow-y:auto;
-  border-top:1px solid var(--border);
+  flex:1;min-height:0;display:flex;flex-direction:column;gap:2px;
+  padding:16px 18px 20px;overflow-y:auto;overflow-x:hidden;
+  background:
+    linear-gradient(var(--surface),var(--surface)),
+    repeating-linear-gradient(45deg,rgba(15,23,42,.018) 0 2px,transparent 2px 9px);
+  background-blend-mode:normal;
 }
-.cv-msg{display:flex;flex-direction:column;gap:3px;max-width:78%}
-.cv-msg.in{align-self:flex-start}
+.cv-day{
+  align-self:center;margin:10px 0 8px;
+  font-size:11px;font-weight:600;color:var(--text-3);letter-spacing:.03em;
+  background:var(--bg-2);border:1px solid var(--border);
+  border-radius:14px;padding:3px 12px;box-shadow:var(--shadow-sm);
+}
+
+/* Bolha. `max-width` em ch para a linha não passar do confortável de leitura. */
+.cv-msg{display:flex;flex-direction:column;max-width:min(64ch,76%);margin-top:6px}
+.cv-msg.seguida{margin-top:2px}
+.cv-msg.in{align-self:flex-start;align-items:flex-start}
 .cv-msg.out{align-self:flex-end;align-items:flex-end}
 .cv-msg-bolha{
-  font-size:13.5px;line-height:1.55;padding:9px 13px;border-radius:12px;
-  background:var(--surface);border:1px solid var(--border);color:var(--text);
+  position:relative;font-size:13.5px;line-height:1.5;color:var(--text);
+  padding:7px 11px 6px;border-radius:9px;
+  box-shadow:0 1px 1px rgba(15,23,42,.07);
+  white-space:pre-wrap;overflow-wrap:anywhere;
 }
-.cv-msg.out .cv-msg-bolha{background:var(--accent-bg);border-color:var(--accent-border)}
-.cv-msg-meta{font-size:11px;color:var(--text-3)}
-.cv-msg-vazio{font-size:12.5px;color:var(--text-3);text-align:center;padding:20px}
+.cv-msg.in .cv-msg-bolha{background:var(--bg-2);border-top-left-radius:3px}
+.cv-msg.out .cv-msg-bolha{background:var(--accent-bg);border-top-right-radius:3px}
+.cv-msg.seguida .cv-msg-bolha{border-radius:9px}
+/* Bico da bolha, só na primeira de cada sequência. */
+.cv-msg:not(.seguida) .cv-msg-bolha::before{
+  content:'';position:absolute;top:0;width:9px;height:9px;
+}
+.cv-msg.in:not(.seguida) .cv-msg-bolha::before{
+  left:-7px;background:var(--bg-2);
+  clip-path:polygon(100% 0,100% 100%,0 0);
+}
+.cv-msg.out:not(.seguida) .cv-msg-bolha::before{
+  right:-7px;background:var(--accent-bg);
+  clip-path:polygon(0 0,100% 0,0 100%);
+}
+.cv-msg-tmpl{font-style:italic;color:var(--text-2)}
 
-.cv-reply{display:flex;gap:8px;padding:12px 18px;border-top:1px solid var(--border)}
+/* Rodapé da bolha: quem escreveu, a hora e o tique. Fica dentro da bolha,
+   alinhado à direita, como em qualquer cliente de mensagem. */
+.cv-msg-meta{
+  display:flex;align-items:center;justify-content:flex-end;gap:4px;
+  margin-top:2px;font-size:10.5px;color:var(--text-3);white-space:nowrap;
+}
+.cv-autor{font-weight:600;letter-spacing:.02em}
+.cv-autor.ia{color:var(--accent)}
+.cv-tick{display:inline-flex;align-items:center;color:var(--text-3)}
+.cv-tick svg{width:15px;height:11px}
+.cv-tick.lida{color:var(--info)}
+.cv-tick.falhou{color:var(--err)}
+.cv-msg-vazio{
+  margin:auto;font-size:12.5px;color:var(--text-3);text-align:center;
+  line-height:1.6;max-width:320px;
+}
+
+/* "Digitando…" — os três pontos que dizem que a IA está escrevendo agora. */
+.cv-typing{
+  align-self:flex-start;margin-top:6px;display:flex;align-items:center;gap:8px;
+  background:var(--bg-2);border-radius:9px;border-top-left-radius:3px;
+  padding:9px 13px;box-shadow:0 1px 1px rgba(15,23,42,.07);
+}
+.cv-typing-txt{font-size:11.5px;color:var(--text-3)}
+.cv-dots{display:inline-flex;gap:3px}
+.cv-dots i{
+  width:6px;height:6px;border-radius:50%;background:var(--text-3);
+  animation:cvdot 1.3s infinite ease-in-out;
+}
+.cv-dots i:nth-child(2){animation-delay:.18s}
+.cv-dots i:nth-child(3){animation-delay:.36s}
+@keyframes cvdot{0%,60%,100%{opacity:.28;transform:translateY(0)}30%{opacity:1;transform:translateY(-3px)}}
+@media (prefers-reduced-motion:reduce){.cv-dots i{animation:none;opacity:.6}}
+
+/* ── Caixa de escrever ── */
+.cv-reply{
+  display:flex;gap:8px;align-items:flex-end;flex-shrink:0;
+  padding:10px 14px;background:var(--bg-2);border-top:1px solid var(--border);
+}
 .cv-reply.off{
-  font-size:12.5px;color:var(--text-3);background:var(--surface);
-  border-radius:0 0 10px 10px;
+  display:block;font-size:12.5px;color:var(--text-3);line-height:1.6;
+  padding:14px 16px;
 }
 .cv-textarea{
-  flex:1;font-family:inherit;font-size:13.5px;color:var(--text);resize:vertical;
-  background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:9px 11px;
+  flex:1;font-family:inherit;font-size:13.5px;line-height:1.5;color:var(--text);
+  resize:none;max-height:132px;
+  background:var(--surface);border:1px solid transparent;border-radius:9px;
+  padding:10px 12px;
 }
-.cv-textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.1)}
+.cv-textarea:focus{
+  outline:none;background:var(--bg-2);border-color:var(--accent);
+  box-shadow:0 0 0 3px rgba(29,78,216,.1);
+}
+.cv-icon-btn{
+  flex-shrink:0;width:38px;height:38px;border-radius:9px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:18px;line-height:1;color:var(--text-3);
+  border:1px solid transparent;background:transparent;cursor:pointer;
+}
+.cv-icon-btn:hover{background:var(--surface);color:var(--text-2)}
+.cv-icon-btn.on{background:var(--accent-bg);color:var(--accent)}
 .cv-send{
-  align-self:flex-end;font-size:13px;font-weight:600;cursor:pointer;
-  background:var(--accent);color:var(--accent-ink);border:1px solid var(--accent);
-  border-radius:8px;padding:9px 18px;
+  flex-shrink:0;width:38px;height:38px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--accent);color:var(--accent-ink);border:none;cursor:pointer;
 }
+.cv-send svg{width:17px;height:17px}
 .cv-send:hover{background:var(--accent-h)}
-.cv-reply-sub{padding:0 18px 12px;font-size:11.5px;color:var(--text-3)}
+.cv-send:disabled{background:var(--border-2);cursor:not-allowed}
+.cv-reply-sub{
+  flex-shrink:0;padding:0 16px 9px;font-size:11px;color:var(--text-3);
+  background:var(--bg-2);line-height:1.5;
+}
+
+/* Paleta de emoji: uma grade fixa dos que se usa numa conversa comercial.
+   Não é um seletor completo de propósito — 3.600 emoji num popup são um
+   problema de rolagem, e a conversa aqui é de trabalho. */
+.cv-emojis{
+  flex-shrink:0;display:none;flex-wrap:wrap;gap:2px;
+  padding:8px 14px;background:var(--bg-2);border-top:1px solid var(--border);
+  max-height:132px;overflow-y:auto;
+}
+.cv-emojis.aberta{display:flex}
+.cv-emojis button{
+  width:32px;height:32px;border-radius:7px;font-size:18px;line-height:1;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+}
+.cv-emojis button:hover{background:var(--surface)}
+
+/* Em tela estreita vira uma coluna só: a lista sai da frente quando há uma
+   conversa aberta, como num celular. */
+@media (max-width:860px){
+  .cv-wrap{grid-template-columns:1fr;height:calc(100vh - 200px)}
+  .cv-side{border-right:none;border-bottom:1px solid var(--border)}
+  .cv-wrap.lendo .cv-side{display:none}
+  .cv-wrap:not(.lendo) .cv-panel{display:none}
+}
+/* A base fica **depois** do media query, e o `display:flex` volta num media
+   query próprio: as duas regras têm a mesma especificidade, então a última a
+   aparecer no arquivo é a que vale. Na ordem inversa, o botão de voltar some
+   justamente onde ele é a única saída — no celular, com a lista escondida. */
+.cv-voltar{display:none;align-items:center;justify-content:center;
+  width:30px;height:30px;border-radius:7px;color:var(--text-2);flex-shrink:0}
+.cv-voltar:hover{background:var(--surface)}
+@media (max-width:860px){.cv-voltar{display:flex}}
 
 /* Números do período, acima da lista */
 .cv-metrics{
@@ -906,6 +1120,122 @@ body{
   background:var(--bg-2);border:1px solid var(--warn-border);
   border-radius:4px;padding:1px 5px;margin-right:4px;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+   Simulador da IA
+   O mesmo chat da tela de conversas, com um painel ao lado mostrando
+   o que a IA entendeu de cada mensagem. O chat sozinho não responde
+   à pergunta que traz alguém aqui — "por que ela respondeu isso?".
+   ══════════════════════════════════════════════════════════════════ */
+.sim-top{
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
+  padding:11px 14px;margin-bottom:12px;
+}
+.sim-top-lbl{font-size:12px;font-weight:600;color:var(--text-2)}
+.sim-top input{
+  font-family:inherit;font-size:12.5px;color:var(--text);width:210px;
+  background:var(--surface);border:1px solid var(--border);border-radius:7px;
+  padding:6px 10px;
+}
+.sim-top input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.1)}
+.sim-top-sep{flex:1}
+.sim-chip{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:11.5px;font-weight:600;border-radius:20px;padding:4px 11px;
+}
+.sim-chip.ok{background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
+.sim-chip.off{background:var(--err-bg);color:var(--err);border:1px solid var(--err-border)}
+.sim-chip.neutro{background:var(--surface);color:var(--text-2);border:1px solid var(--border)}
+.sim-chip code{font-family:var(--mono);font-size:11px}
+
+.sim-wrap{
+  display:grid;grid-template-columns:1fr minmax(280px,360px);
+  height:calc(100vh - 320px);min-height:480px;
+  background:var(--bg-2);border:1px solid var(--border);border-radius:12px;
+  overflow:hidden;box-shadow:var(--shadow-sm);
+}
+@media (max-width:1000px){.sim-wrap{grid-template-columns:1fr;height:auto}}
+.sim-chat{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface)}
+@media (max-width:1000px){.sim-chat{height:60vh}}
+
+/* Sugestões: uma frase típica por intenção. Existem para o teste cobrir os
+   nove caminhos sem a pessoa ter que inventar como um lead escreveria. */
+/* Uma faixa de uma linha que rola na horizontal, e não uma grade que quebra:
+   empilhadas, as nove sugestões comiam um terço da altura do chat — e a
+   altura do chat é o que se veio ver aqui. */
+.sim-sug{
+  flex-shrink:0;padding:8px 14px 9px;
+  background:var(--bg-2);border-top:1px solid var(--border);
+}
+.sim-sug-lbl{display:block;font-size:11px;color:var(--text-3);margin-bottom:6px}
+.sim-sug-row{
+  display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;
+  scrollbar-width:thin;
+}
+.sim-sug button{
+  flex-shrink:0;white-space:nowrap;
+  font-size:11.5px;color:var(--text-2);cursor:pointer;
+  background:var(--surface);border:1px solid var(--border);
+  border-radius:20px;padding:5px 11px;
+}
+.sim-sug button:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+
+/* ── Raio-x ── */
+.sim-xray{
+  display:flex;flex-direction:column;min-width:0;min-height:0;
+  border-left:1px solid var(--border);background:var(--bg-2);
+}
+@media (max-width:1000px){.sim-xray{border-left:none;border-top:1px solid var(--border)}}
+.sim-xray-head{
+  flex-shrink:0;padding:12px 15px;border-bottom:1px solid var(--border);
+}
+.sim-xray-head strong{font-size:13px;font-weight:700;display:block}
+.sim-xray-head span{font-size:11.5px;color:var(--text-3);line-height:1.5;display:block;margin-top:3px}
+.sim-xray-body{flex:1;min-height:0;overflow-y:auto;padding:12px 15px;display:flex;flex-direction:column;gap:10px}
+.sim-xray-vazio{margin:auto;font-size:12px;color:var(--text-3);text-align:center;line-height:1.6}
+
+.sim-turno{
+  border:1px solid var(--border);border-radius:9px;overflow:hidden;
+  background:var(--bg-2);
+}
+.sim-turno.atual{border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.08)}
+.sim-turno-top{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:8px 11px;background:var(--surface);border-bottom:1px solid var(--border);
+}
+.sim-acao{font-size:11px;font-weight:700;letter-spacing:.03em;border-radius:5px;padding:2px 7px}
+.sim-acao.respondeu{background:var(--ok-bg);color:var(--ok)}
+.sim-acao.chamou_humano{background:var(--warn-bg);color:var(--warn)}
+.sim-acao.encerrou{background:var(--err-bg);color:var(--err)}
+.sim-acao.nao_enviou{background:var(--surface-2);color:var(--text-2)}
+.sim-ms{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.sim-turno-body{padding:10px 11px;display:flex;flex-direction:column;gap:8px}
+.sim-linha{display:flex;justify-content:space-between;gap:10px;font-size:12px}
+.sim-linha dt{color:var(--text-3)}
+.sim-linha dd{color:var(--text);font-weight:600;text-align:right}
+.sim-intencao{
+  font-family:var(--mono);font-size:11px;background:var(--surface);
+  border:1px solid var(--border);border-radius:4px;padding:1px 6px;
+}
+
+/* Barra de confiança: o corte aparece como um risco, porque o número sozinho
+   não diz que 0,68 reprova e 0,71 aprova. */
+.sim-conf{display:flex;flex-direction:column;gap:4px}
+.sim-conf-topo{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-3)}
+.sim-conf-topo b{color:var(--text);font-variant-numeric:tabular-nums}
+.sim-conf-track{position:relative;height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden}
+.sim-conf-fill{height:100%;border-radius:3px;background:var(--ok)}
+.sim-conf-fill.baixa{background:var(--warn)}
+.sim-conf-corte{
+  position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--text-2);opacity:.55;
+}
+.sim-conf-nota{font-size:11px;color:var(--text-3);line-height:1.5}
+.sim-motivo{
+  font-size:11.5px;line-height:1.55;color:var(--text-2);
+  background:var(--surface);border-radius:7px;padding:8px 10px;
+}
+.sim-motivo.erro{background:var(--err-bg);color:var(--err)}
 
 /* ── Registro de ligação ── */
 .call-section{padding:22px 26px;border-top:1px solid var(--border);background:var(--surface)}

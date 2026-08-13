@@ -314,7 +314,7 @@ async function signOut(){
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
-const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','conversas','history','settings'];
+const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','conversas','simulador','history','settings'];
 
 function nav(route){
   if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
@@ -355,6 +355,10 @@ const VIEW_META={
   conversas:{
     title:'Conversas de WhatsApp',
     sub:'O que cada lead respondeu e quem está respondendo por você. Assumir cala a automação na hora.',
+  },
+  simulador:{
+    title:'Simulador da IA',
+    sub:'Converse como se fosse o lead e veja a IA decidir em tempo real. Nada é enviado e nenhum lead real é tocado.',
   },
   history:{
     title:'Histórico de leads',
@@ -405,6 +409,7 @@ function applyRoute(){
   else if(h==='pipeline')loadPipeline();
   else if(h==='followups')loadFollowups();
   else if(h==='conversas')loadConversas();
+  else if(h==='simulador')loadSimulador();
   else if(h==='history')loadHistory();
   else if(h==='settings')loadSettings();
 }
@@ -1059,26 +1064,7 @@ function renderResult(data){
     <div class="ai-box" id="ai-box" style="display:none"></div>
     <div id="timeline-box" style="display:none"></div>
   </div>`;
-  // Barra de ações: quando a integração não está configurada o botão continua
-  // visível, em estado apagado, dizendo o que falta — some não ensina nada.
-  const integ=_integr||{};
-  document.getElementById('lead-actions').innerHTML=[
-    '<span class="la-lbl">Ações do lead</span>',
-    integ.ai
-      ? `<button class="la-btn" onclick="genAiSummary()" title="Gera um resumo executivo desta empresa com IA">${IC_SPARK} Resumo com IA</button>`
-      : `<span class="la-btn off" title="Disponível quando a chave de IA está configurada no servidor">${IC_SPARK} Resumo com IA</span>`,
-    integ.crm_webhook
-      ? `<button class="la-btn accent" onclick="pushToCrm()" title="Envia este lead ao webhook configurado em Configurações">${IC_PUSH} Enviar ao CRM</button>`
-      : `<span class="la-btn off" onclick="nav('settings')" title="Configure um webhook em Configurações para habilitar" style="cursor:pointer">${IC_PUSH} Enviar ao CRM · configurar</span>`,
-    // Primeiro contato: pago e irreversível. Fica visível sempre — apagado e
-    // explicando o que falta quando não dá para usar.
-    _waStatus&&_waStatus.configurado
-      ? (data.phone
-          ? `<button class="la-btn" onclick="iniciarWhatsapp()" title="Envia o convite aprovado para ${esc(data.phone)}. A Meta cobra por esta mensagem.">${IC_CHAT} Iniciar contato por WhatsApp</button>`
-          : `<span class="la-btn off" title="Informe o telefone na ficha para poder enviar o convite">${IC_CHAT} WhatsApp · informe o telefone</span>`)
-      : `<span class="la-btn off" title="Falta configurar as credenciais da Meta no servidor">${IC_CHAT} WhatsApp · não configurado</span>`,
-    `<button class="la-btn" onclick="openExportModal()" title="Baixar seus leads em Excel ou CSV">${IC_DOWN} Exportar leads</button>`,
-  ].filter(Boolean).join('');
+  renderLeadActions(data);
   if(data.ai_summary){
     const box=document.getElementById('ai-box');
     box.style.display='block';
@@ -1135,6 +1121,20 @@ function atualizarBadgeConversas(st){
   else badge.style.display='none';
 }
 
+/* Por que a automação está calada agora. Sem isto a tela parece quebrada: as
+   conversas estão lá, o lead escreveu e nada acontece. */
+function avisoHorarioHtml(st){
+  if(!st.configurado)return '';
+  const j=janelaWa();
+  if(!j||j.pode_enviar)return '';
+  return `<div class="cv-warn">
+      <strong>${j.indeterminado?'Horário indeterminado no servidor.':'Fora do horário de envio.'}</strong>
+      ${esc(j.explicacao)}
+      Responder à mão nas conversas abertas continua liberado — esta trava vale
+      para o convite pago e para a resposta automática.
+    </div>`;
+}
+
 function renderConversas(){
   const root=document.getElementById('conversas-body');
   if(!root)return;
@@ -1149,22 +1149,132 @@ function renderConversas(){
       ${st.webhook_assinado?'':'<br/>Falta também <code>WHATSAPP_APP_SECRET</code> — sem ele o recebimento é recusado.'}
     </div>`;
 
+  // Caixa fixa: fica no HTML mesmo vazia, para o recarregamento de 15 s poder
+  // preenchê-la quando a janela virar, sem redesenhar a tela inteira.
+  const horario=`<div id="cv-aviso-horario">${avisoHorarioHtml(st)}</div>`;
+
   if(!_conversas.length){
-    root.innerHTML=`${aviso}<div class="empty-state-box">
+    root.innerHTML=`${aviso}${horario}<div class="empty-state-box">
       <div class="empty-icon">${IC_CHAT}</div>
       <div class="empty-title">Nenhuma conversa ainda</div>
       <div class="empty-sub">Abra a ficha de um lead e clique em <strong>Iniciar contato por WhatsApp</strong>.
-      O primeiro convite parte de você; a partir da resposta do lead, a automação assume dentro das regras.</div>
+      O primeiro convite parte de você; a partir da resposta do lead, a automação assume dentro das regras.<br/><br/>
+      Para ver a IA respondendo antes de gastar um convite, use o
+      <button class="btn-link" onclick="nav('simulador')">Simulador da IA</button>.</div>
     </div>`;
     return;
   }
 
-  const cards=_conversas.map(c=>cardConversa(c)).join('');
-  root.innerHTML=`${aviso}${faixaMetricas()}<div class="cv-wrap">
-    <aside class="cv-list" id="cv-list">${cards}</aside>
+  // Recarga do polling: a tela já está montada. Redesenhar tudo apagaria o
+  // texto que está sendo digitado e tiraria o foco da busca a cada 15 s — só
+  // a lista e a conversa aberta precisam de notícia nova.
+  if(document.getElementById('cv-wrap')){
+    const caixa=document.getElementById('cv-aviso-horario');
+    if(caixa)caixa.innerHTML=avisoHorarioHtml(st);
+    _redesenharLista();
+    if(_conversaAberta)abrirConversa(_conversaAberta,true);
+    return;
+  }
+
+  root.innerHTML=`${aviso}${horario}${faixaMetricas()}
+  <div class="cv-wrap${_conversaAberta?' lendo':''}" id="cv-wrap">
+    <aside class="cv-side">
+      <div class="cv-side-head">
+        <div class="cv-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="cv-busca" placeholder="Buscar empresa, contato ou número"
+                 autocomplete="off" aria-label="Buscar conversa" value="${esc(_cvBusca)}"
+                 oninput="filtrarConversas(this.value)" />
+        </div>
+        <div class="cv-filters" id="cv-filters">${filtrosConversas()}</div>
+      </div>
+      <div class="cv-list" id="cv-list">${listaConversas()}</div>
+    </aside>
     <section class="cv-panel" id="cv-panel">${painelVazio()}</section>
   </div>`;
   if(_conversaAberta)abrirConversa(_conversaAberta,true);
+}
+
+/* ══════ LISTA: busca e filtros ══════
+   Filtrar no navegador e não no servidor é deliberado: a lista já vem inteira
+   (teto de 200) e um ida-e-volta por tecla digitada deixaria a busca lenta
+   justamente na conversa que a pessoa está tentando achar. */
+let _cvBusca='';
+let _cvFiltro='todas';
+
+const _CV_FILTROS=[
+  {id:'todas',rotulo:'Todas',teste:()=>true},
+  {id:'aguardando',rotulo:'Aguardando você',teste:c=>c.aguardando_voce},
+  {id:'ia',rotulo:'IA ativa',teste:c=>c.ai_status==='AI_ACTIVE'},
+  {id:'abertas',rotulo:'Janela aberta',teste:c=>c.janela_aberta},
+];
+
+function filtrosConversas(){
+  return _CV_FILTROS.map(f=>{
+    const n=_conversas.filter(f.teste).length;
+    if(f.id!=='todas'&&!n)return '';   // filtro sem nada para mostrar não aparece
+    return `<button type="button" class="cv-filter${_cvFiltro===f.id?' on':''}"
+      onclick="filtroConversas('${f.id}')" title="Mostrar só estas conversas">
+      ${f.rotulo}<span class="cv-filter-n">${n}</span></button>`;
+  }).join('');
+}
+
+function conversasVisiveis(){
+  const f=(_CV_FILTROS.find(x=>x.id===_cvFiltro)||_CV_FILTROS[0]).teste;
+  const q=_cvBusca.trim().toLowerCase();
+  return _conversas.filter(c=>{
+    if(!f(c))return false;
+    if(!q)return true;
+    return [c.company_name,c.contato,c.phone_e164,c.last_message_body]
+      .some(v=>(v||'').toLowerCase().includes(q));
+  });
+}
+
+function listaConversas(){
+  const visiveis=conversasVisiveis();
+  if(!visiveis.length){
+    return `<div class="cv-nada">${_cvBusca||_cvFiltro!=='todas'
+      ? 'Nenhuma conversa com esse filtro.'
+      : 'Nenhuma conversa ainda.'}</div>`;
+  }
+  return visiveis.map(cardConversa).join('');
+}
+
+function _redesenharLista(){
+  const lista=document.getElementById('cv-list');
+  const filtros=document.getElementById('cv-filters');
+  if(lista)lista.innerHTML=listaConversas();
+  if(filtros)filtros.innerHTML=filtrosConversas();
+}
+
+function filtrarConversas(valor){_cvBusca=valor||'';_redesenharLista();}
+function filtroConversas(id){_cvFiltro=id;_redesenharLista();}
+
+/* ══════ AVATAR ══════
+   Iniciais sobre uma cor derivada do nome. A Cloud API da Meta não entrega a
+   foto de perfil do contato, e pôr um rosto genérico no lugar seria mostrar
+   alguém que não é a pessoa. A cor é estável para o mesmo nome — é o que
+   permite reconhecer a conversa de relance. */
+const _AV_CORES=['#1D4ED8','#0F766E','#7C3AED','#B45309','#BE123C','#0E7490','#4D7C0F','#9333EA'];
+
+function _avCor(txt){
+  let h=0;
+  for(let i=0;i<(txt||'').length;i++)h=(h*31+txt.charCodeAt(i))>>>0;
+  return _AV_CORES[h%_AV_CORES.length];
+}
+
+function _avIniciais(txt){
+  const partes=(txt||'?').trim().split(/\s+/).filter(Boolean);
+  if(!partes.length)return '?';
+  if(partes.length===1)return partes[0].slice(0,2).toUpperCase();
+  return (partes[0][0]+partes[partes.length-1][0]).toUpperCase();
+}
+
+function avatarHtml(nome,tom,pequeno){
+  const dot=tom?`<span class="cv-av-dot ${esc(tom)}" title="${esc(tom)}"></span>`:'';
+  return `<span class="cv-av-wrap">
+    <span class="cv-av${pequeno?' g':''}" style="background:${_avCor(nome)}" aria-hidden="true">${esc(_avIniciais(nome))}</span>
+    ${dot}</span>`;
 }
 
 /* Números do período. Cada um traz embaixo o que ele significa — número solto
@@ -1201,26 +1311,55 @@ function faixaMetricas(){
 
 function painelVazio(){
   return `<div class="cv-empty">
-    <div class="empty-icon">${IC_CHAT}</div>
-    <div class="empty-title">Escolha uma conversa</div>
-    <div class="empty-sub">Clique num card à esquerda para ler as mensagens e assumir quando quiser.</div>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+    <strong>Escolha uma conversa</strong>
+    <span>Clique num contato à esquerda para ler as mensagens, ver quem está
+    respondendo e assumir quando quiser.</span>
   </div>`;
 }
 
 function cardConversa(c){
-  const nome=esc(c.company_name||'Empresa');
-  const quem=c.contato?`<span class="cv-card-quem">${esc(c.contato)}</span>`:'';
-  const previa=c.last_message_body?esc(c.last_message_body.slice(0,90)):'—';
+  const nome=c.company_name||'Empresa';
   const ativo=_conversaAberta===c.id?' aberta':'';
-  return `<button type="button" class="cv-card${ativo}" onclick="abrirConversa(${c.id})" title="Abrir a conversa com ${nome}">
-    <div class="cv-card-top">
-      <span class="cv-card-nome">${nome}</span>
+  const pendente=c.aguardando_voce?' pendente':'';
+  // A prévia repete o tique quando a última mensagem foi nossa: é como se sabe,
+  // sem abrir, se o que você mandou chegou.
+  const tique=c.last_outbound_at&&(!c.last_inbound_at||new Date(c.last_outbound_at)>new Date(c.last_inbound_at))
+    ? tickHtml('delivered') : '';
+  const previa=c.last_message_body?esc(c.last_message_body.slice(0,80)):'Nenhuma mensagem ainda';
+  const quando=_horaCurta(c.last_inbound_at||c.last_outbound_at||c.updated_at);
+  return `<button type="button" class="cv-card${ativo}${pendente}" onclick="abrirConversa(${c.id})"
+    title="${esc(nome)} — ${esc(c.selo.explicacao)}">
+    ${avatarHtml(nome,c.selo.tom)}
+    <span class="cv-card-mid">
+      <span class="cv-card-nome">${esc(nome)}</span>
+      <span class="cv-card-previa">${tique}${previa}</span>
+    </span>
+    <span class="cv-card-end">
+      <span class="cv-card-hora">${esc(quando)}</span>
       <span class="cv-selo ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
-    </div>
-    ${quem}
-    <div class="cv-card-previa">${previa}</div>
-    <div class="cv-card-sub">${esc(c.selo.explicacao)}</div>
+    </span>
   </button>`;
+}
+
+/* ══════ TIQUES DE ENTREGA ══════
+   Um risco = saiu daqui. Dois = a Meta entregou. Dois em azul = o lead abriu.
+   Vermelho = falhou. É o único lugar da tela que diz se a mensagem chegou, e
+   `status` vem do webhook de confirmação da Meta — quando ela não confirma, o
+   tique fica no estágio em que parou, que é a verdade. */
+function tickHtml(status){
+  if(!status)return '';
+  if(status==='failed'){
+    return `<span class="cv-tick falhou" title="A Meta não conseguiu entregar">
+      <svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="5" y1="3" x2="13" y2="9"/><line x1="13" y1="3" x2="5" y2="9"/></svg></span>`;
+  }
+  const duplo=status==='delivered'||status==='read';
+  const lida=status==='read';
+  const titulo=lida?'Lida pelo lead':duplo?'Entregue no aparelho':'Enviada';
+  const segundo=duplo?'<polyline points="9 7.2 12 10 17.4 3.2"/>':'';
+  return `<span class="cv-tick${lida?' lida':''}" title="${titulo}">
+    <svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="1 7.2 4 10 11 2.6"/>${segundo}</svg></span>`;
 }
 
 async function abrirConversa(id,silencioso){
@@ -1236,51 +1375,209 @@ async function abrirConversa(id,silencioso){
   }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
 }
 
+/* ══════ O CHAT ══════
+   Mensagens agrupadas por dia e por autor, como em qualquer cliente de
+   conversa. O agrupamento não é enfeite: sem ele, cinco frases seguidas da
+   mesma pessoa viram cinco blocos com cinco assinaturas repetidas. */
+function bolhasDaConversa(mensagens){
+  if(!mensagens.length){
+    return `<div class="cv-msg-vazio">Nenhuma mensagem trocada ainda.<br/>
+      O convite foi enviado — a conversa começa quando o lead responder.</div>`;
+  }
+  let dia='',autorAnterior='';
+  return mensagens.map(m=>{
+    const lado=m.direction==='in'?'in':'out';
+    const autor=m.direction==='in'?'Lead':(m.sent_by==='ai'?'IA':'Você');
+    const d=new Date(m.created_at);
+    const diaMsg=isNaN(d)?'':d.toDateString();
+    let sep='';
+    if(diaMsg&&diaMsg!==dia){
+      sep=`<div class="cv-day">${esc(_diaLabel(d))}</div>`;
+      dia=diaMsg;autorAnterior='';
+    }
+    const seguida=autor===autorAnterior?' seguida':'';
+    autorAnterior=autor;
+
+    const corpo=m.type==='template'
+      ? `<span class="cv-msg-tmpl">Convite de abertura enviado${m.template_name?` (template ${esc(m.template_name)})`:''}</span>`
+      : esc(m.body||'');
+    // Só a saída leva tique: mensagem que chegou já chegou, por definição.
+    const tique=lado==='out'?tickHtml(m.status):'';
+    const quemIA=m.sent_by==='ai'?' ia':'';
+    return `${sep}<div class="cv-msg ${lado}${seguida}">
+      <div class="cv-msg-bolha">${corpo}
+        <div class="cv-msg-meta">
+          <span class="cv-autor${quemIA}">${autor}</span>
+          <span>${esc(_horaCurta(m.created_at))}</span>${tique}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* "IA está escrevendo…" — aparece quando o lead falou por último e a automação
+   ainda está com a conversa. É inferência, não um evento da Meta, então a
+   frase diz o que está acontecendo em vez de imitar o "digitando" do
+   WhatsApp: prometer que alguém digita quando ninguém digita seria mentir. */
+function digitandoHtml(c,ultima){
+  if(c.ai_status!=='AI_ACTIVE')return '';
+  if(!ultima||ultima.direction!=='in')return '';
+  return `<div class="cv-typing" role="status">
+    <span class="cv-dots"><i></i><i></i><i></i></span>
+    <span class="cv-typing-txt">A IA está preparando a resposta</span>
+  </div>`;
+}
+
 function renderPainelConversa(det){
   const painel=document.getElementById('cv-panel');
   if(!painel)return;
   const c=det.card;
-  const msgs=(det.messages||[]).map(m=>{
-    const lado=m.direction==='in'?'in':'out';
-    const autor=m.direction==='in'?'Lead':(m.sent_by==='ai'?'IA':'Você');
-    const corpo=m.type==='template'
-      ? `<em>Convite enviado (template ${esc(m.template_name||'')})</em>`
-      : esc(m.body||'');
-    return `<div class="cv-msg ${lado}">
-      <div class="cv-msg-bolha">${corpo}</div>
-      <div class="cv-msg-meta">${autor} · ${_fmtQuando(m.created_at)}${m.status?` · ${esc(m.status)}`:''}</div>
-    </div>`;
-  }).join('')||'<div class="cv-msg-vazio">Nenhuma mensagem trocada ainda.</div>';
+  const mensagens=det.messages||[];
+  const nome=c.company_name||'Empresa';
+
+  // O painel é remontado a cada recarga do polling. Sem guardar isto, a
+  // resposta pela metade some do campo enquanto a pessoa escreve, e a rolagem
+  // volta ao fim no meio da leitura do histórico.
+  const rascunho=document.getElementById('cv-texto')?.value||'';
+  const colado=estaNoFim('cv-msgs');
+  const emojisAbertos=!!document.getElementById('cv-emojis')?.classList.contains('aberta');
 
   // A janela de 24h é regra da Meta: fora dela, o campo de resposta aparece
   // desabilitado explicando o porquê — em vez de sumir ou dar erro no envio.
   const podeResponder=c.janela_aberta&&(_waStatus||{}).configurado;
   const caixa=podeResponder
-    ? `<div class="cv-reply">
-         <textarea id="cv-texto" class="cv-textarea" rows="2" placeholder="Escreva sua resposta…" aria-label="Sua resposta"></textarea>
-         <button type="button" class="cv-send" onclick="enviarResposta(${c.id})">Enviar</button>
+    ? `<div class="cv-emojis" id="cv-emojis">${paletaEmoji('cv-texto')}</div>
+       <div class="cv-reply">
+         <button type="button" class="cv-icon-btn" id="cv-emoji-btn"
+                 onclick="alternarEmojis('cv-emojis','cv-emoji-btn')"
+                 title="Inserir um emoji no texto" aria-label="Emoji">☺</button>
+         <textarea id="cv-texto" class="cv-textarea" rows="1"
+                   placeholder="Escreva sua resposta…" aria-label="Sua resposta"
+                   oninput="autoCrescer(this)"
+                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarResposta(${c.id})}"></textarea>
+         <button type="button" class="cv-send" onclick="enviarResposta(${c.id})"
+                 title="Enviar (Enter)" aria-label="Enviar">
+           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z"/></svg>
+         </button>
        </div>
-       <div class="cv-reply-sub" id="cv-msg">Responder aqui assume a conversa: a automação para de responder por você.</div>`
+       <div class="cv-reply-sub" id="cv-msg">Enter envia, Shift+Enter quebra a linha.
+         Responder aqui assume a conversa: a automação para de responder por você.</div>`
     : `<div class="cv-reply off">
-         <span>${c.janela_aberta?'WhatsApp não está configurado neste servidor.'
-           :'A janela de 24 horas fechou. Só um novo convite (cobrado) reabre a conversa.'}</span>
+         ${c.janela_aberta
+           ? 'WhatsApp não está configurado neste servidor, então nada pode ser enviado por aqui.'
+           : 'A janela de 24 horas fechou. Dentro dela a resposta é livre e gratuita; fora dela, só um novo convite (cobrado pela Meta) reabre a conversa.'}
        </div>`;
 
   painel.innerHTML=`
     <div class="cv-head">
-      <div>
-        <div class="cv-head-nome">${esc(c.company_name||'Empresa')}</div>
+      <button type="button" class="cv-voltar" onclick="voltarParaLista()" title="Voltar para a lista" aria-label="Voltar">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
+      ${avatarHtml(nome,c.selo.tom,true)}
+      <div class="cv-head-txt">
+        <div class="cv-head-nome">${esc(nome)}</div>
         <div class="cv-head-sub">${esc(c.contato||'Contato não identificado')} · <span class="mono">${esc(c.phone_e164)}</span></div>
       </div>
       <span class="cv-selo grande ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
     </div>
     <div class="cv-explica">${esc(c.selo.explicacao)}${c.handoff_reason?` <span class="cv-motivo">${esc(c.handoff_reason)}</span>`:''}</div>
     <div class="cv-acoes">${botoesConversa(c)}</div>
-    <div class="cv-msgs">${msgs}</div>
+    <div class="cv-msgs" id="cv-msgs">${bolhasDaConversa(mensagens)}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
     ${caixa}`;
+
   document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
   const card=document.querySelector(`.cv-card[onclick="abrirConversa(${c.id})"]`);
   if(card)card.classList.add('aberta');
+  document.getElementById('cv-wrap')?.classList.add('lendo');
+
+  const campo=document.getElementById('cv-texto');
+  if(campo&&rascunho){campo.value=rascunho;autoCrescer(campo);}
+  if(emojisAbertos){
+    document.getElementById('cv-emojis')?.classList.add('aberta');
+    document.getElementById('cv-emoji-btn')?.classList.add('on');
+  }
+  if(colado)irParaOFim('cv-msgs');
+}
+
+function voltarParaLista(){
+  _conversaAberta=null;
+  document.getElementById('cv-wrap')?.classList.remove('lendo');
+  const painel=document.getElementById('cv-panel');
+  if(painel)painel.innerHTML=painelVazio();
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+}
+
+/* ══════ PEÇAS COMPARTILHADAS COM O SIMULADOR ══════ */
+
+/* Rolagem: a conversa abre no fim, onde está a mensagem nova. Só rola sozinho
+   quando o usuário já estava no fim — puxar a tela de quem está lendo o
+   histórico é a forma mais rápida de fazer alguém perder a linha. */
+function irParaOFim(id,suave){
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.scrollTo({top:el.scrollHeight,behavior:suave?'smooth':'auto'});
+}
+function estaNoFim(id,folga){
+  const el=document.getElementById(id);
+  if(!el)return true;
+  return el.scrollHeight-el.scrollTop-el.clientHeight<(folga||120);
+}
+
+/* A caixa cresce com o texto até o teto do CSS — dois cliques a menos do que
+   arrastar a alça de redimensionar a cada mensagem longa. */
+function autoCrescer(el){
+  if(!el)return;
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,132)+'px';
+}
+
+/* Emoji: uma grade curta dos que se usa numa conversa comercial. Um seletor
+   completo seria 3.600 símbolos com busca — trabalho de sobra para o que aqui
+   é um atalho. */
+const _EMOJIS=['👍','🙏','✅','❌','😀','🙂','😉','😅','🤝','👋','💬','📞','📅','⏰','📎','📄','💰','🚀','⭐','❤️','🔥','👏','🎯','📊'];
+
+function paletaEmoji(alvoId){
+  return _EMOJIS.map(e=>`<button type="button" onclick="inserirEmoji('${alvoId}','${e}')"
+    title="Inserir ${e}" aria-label="Emoji ${e}">${e}</button>`).join('');
+}
+
+function alternarEmojis(paletaId,botaoId){
+  document.getElementById(paletaId)?.classList.toggle('aberta');
+  document.getElementById(botaoId)?.classList.toggle('on');
+}
+
+function inserirEmoji(alvoId,emoji){
+  const el=document.getElementById(alvoId);
+  if(!el)return;
+  const i=el.selectionStart??el.value.length;
+  const j=el.selectionEnd??i;
+  el.value=el.value.slice(0,i)+emoji+el.value.slice(j);
+  el.selectionStart=el.selectionEnd=i+emoji.length;
+  el.focus();autoCrescer(el);
+}
+
+/* Hoje / Ontem / a data. O separador existe para a hora solta da bolha não
+   ficar ambígua entre "14:20 de hoje" e "14:20 da semana passada". */
+function _diaLabel(d){
+  const hoje=new Date(),ontem=new Date();ontem.setDate(hoje.getDate()-1);
+  if(d.toDateString()===hoje.toDateString())return 'Hoje';
+  if(d.toDateString()===ontem.toDateString())return 'Ontem';
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:
+    d.getFullYear()===hoje.getFullYear()?undefined:'numeric'});
+}
+
+/* Na lista: hora se foi hoje, "Ontem", o dia da semana na última semana, data
+   depois disso — a mesma escala de qualquer app de mensagem. */
+function _horaCurta(iso){
+  if(!iso)return '';
+  const d=iso instanceof Date?iso:new Date(iso);
+  if(isNaN(d))return '';
+  const hoje=new Date(),ontem=new Date();ontem.setDate(hoje.getDate()-1);
+  if(d.toDateString()===hoje.toDateString())
+    return d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  if(d.toDateString()===ontem.toDateString())return 'Ontem';
+  if((hoje-d)/86400000<7)return d.toLocaleDateString('pt-BR',{weekday:'short'}).replace('.','');
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
 }
 
 /* "Assumir agora" aparece sempre — é a saída de emergência, e saída de
@@ -1310,26 +1607,388 @@ async function enviarResposta(id){
   const texto=(campo&&campo.value||'').trim();
   if(!texto){campo&&campo.focus();return;}
   msg.className='cv-reply-sub';msg.textContent='Enviando…';
+  // Limpa o campo antes da resposta do servidor: se der erro, o texto volta
+  // logo abaixo — e enquanto isso ninguém manda a mesma frase duas vezes por
+  // achar que o primeiro Enter não pegou.
+  campo.value='';autoCrescer(campo);
   try{
     const resp=await authFetch(`/api/wa/conversations/${id}/reply`,{method:'POST',body:JSON.stringify({texto})});
     const json=await resp.json();
-    if(!resp.ok){msg.className='cv-reply-sub sub-err';msg.textContent=json.detail||'Não foi possível enviar.';return;}
+    if(!resp.ok){
+      campo.value=texto;autoCrescer(campo);
+      msg.className='cv-reply-sub sub-err';msg.textContent=json.detail||'Não foi possível enviar.';
+      return;
+    }
     renderPainelConversa(json);
+    irParaOFim('cv-msgs',true);
     loadConversas();
-  }catch(_){msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão. A mensagem não foi enviada.';}
+  }catch(_){
+    campo.value=texto;autoCrescer(campo);
+    msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão. A mensagem não foi enviada.';
+  }
 }
 
-function _fmtQuando(iso){
-  if(!iso)return '';
-  const d=new Date(iso);
-  if(isNaN(d))return '';
-  return d.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+/* ════════════════════════════════════════════════════════════════
+   SIMULADOR DA IA
+   A mesma conversa que o lead teria, sem nada sair para a Meta e sem
+   tocar num lead real. Ao lado do chat, o raio-x: o que a IA
+   classificou, com quanta confiança e qual regra decidiu o resto.
+   O chat sozinho mostra a resposta; ele não mostra o porquê — que é
+   o que se precisa saber antes de deixar isto falando com clientes.
+   ════════════════════════════════════════════════════════════════ */
+
+let _simStatus=null;
+let _simSessao=null;
+let _simOcupado=false;   // um turno por vez: dois em paralelo bagunçam o histórico
+
+/* Uma frase típica por intenção. Existem para o teste percorrer os nove
+   caminhos sem a pessoa ter que adivinhar como um lead escreveria cada um. */
+const _SIM_SUGESTOES=[
+  {txt:'Sou eu mesmo, pode falar',esperado:'CONFIRMOU_PESSOA'},
+  {txt:'O que exatamente vocês fazem?',esperado:'CONVERSANDO'},
+  {txt:'Prefiro falar com uma pessoa, não com robô',esperado:'QUER_HUMANO'},
+  {txt:'Quanto custa? Me manda uma proposta',esperado:'NEGOCIANDO'},
+  {txt:'Não sou eu quem cuida disso aqui',esperado:'PESSOA_ERRADA'},
+  {txt:'Já somos clientes de vocês',esperado:'JA_E_CLIENTE'},
+  {txt:'Não quero mais receber mensagens',esperado:'PEDIU_PARAR'},
+  {txt:'Vocês emitem nota fiscal avulsa em Manaus?',esperado:'FORA_DA_BASE'},
+  {txt:'ok',esperado:'AMBIGUO'},
+];
+
+const _SIM_ACAO_LBL={
+  respondeu:'Respondeu',
+  chamou_humano:'Chamou você',
+  encerrou:'Encerrou',
+  nao_enviou:'Não enviou',
+};
+
+async function loadSimulador(){
+  const root=document.getElementById('simulador-body');
+  if(!root)return;
+  if(!_simSessao)root.innerHTML='<div class="muted-box">Carregando o simulador…</div>';
+  try{
+    const [st,sess]=await Promise.all([
+      authFetch('/api/wa/sandbox/status').then(r=>r.ok?r.json():null),
+      authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null),
+    ]);
+    _simStatus=st;_simSessao=sess||{empresa:'',mensagens:[],turnos:[]};
+    renderSimulador();
+  }catch(_){
+    root.innerHTML='<div class="muted-box">Não foi possível carregar o simulador.</div>';
+  }
+}
+
+function renderSimulador(){
+  const root=document.getElementById('simulador-body');
+  if(!root)return;
+  const st=_simStatus||{};
+  const s=_simSessao||{mensagens:[],turnos:[]};
+
+  // Sem chave de IA nada aqui funciona. Dizer isso em cima, com o nome da
+  // variável, evita a descoberta pelo caminho longo — mandar uma mensagem e
+  // receber "chamou você" sem entender por quê.
+  const aviso=st.ia_configurada?'':`<div class="cv-warn">
+    <strong>A IA não está configurada neste servidor.</strong>
+    Toda mensagem enviada aqui vai cair em "chamou você", que é o
+    comportamento correto quando não há como classificar.
+    <span class="cv-vars"><code>ANTHROPIC_API_KEY</code></span></div>`;
+
+  const horario=st.pode_enviar_agora
+    ? (st.fora_do_horario
+        ? '<span class="sim-chip neutro" title="Fora do horário comercial a IA responde em uma frase só">Fora do expediente · resposta curta</span>'
+        : '<span class="sim-chip ok">Horário comercial</span>')
+    : '<span class="sim-chip neutro" title="Neste horário a produção ficaria calada; o simulador ignora a trava para você poder testar">Horário de silêncio · trava ignorada</span>';
+
+  root.innerHTML=`${aviso}
+  <div class="sim-top">
+    <span class="sim-top-lbl">Empresa do lead fictício</span>
+    <input id="sim-empresa" value="${esc(s.empresa||'')}" placeholder="Empresa Exemplo Ltda"
+           aria-label="Nome da empresa fictícia"
+           title="Este nome vai no prompt, igual ao de um lead real" />
+    <button class="cv-btn" onclick="reiniciarSimulador()"
+            title="Apaga a conversa de teste e começa outra">Recomeçar</button>
+    <span class="sim-top-sep"></span>
+    ${st.ia_configurada
+      ? `<span class="sim-chip ok" title="Modelo que classifica e redige">IA ativa · <code>${esc(st.modelo||'')}</code></span>`
+      : '<span class="sim-chip off">IA desligada</span>'}
+    ${horario}
+  </div>
+
+  <div class="sim-wrap">
+    <section class="sim-chat">
+      <div class="cv-msgs" id="sim-msgs">${bolhasDoSimulador(s.mensagens)}</div>
+      <div class="sim-sug">
+        <span class="sim-sug-lbl">Mensagens de teste — uma por intenção que a IA sabe classificar (role para ver todas):</span>
+        <div class="sim-sug-row">
+          ${_SIM_SUGESTOES.map((x,i)=>`<button type="button" onclick="usarSugestao(${i})"
+            title="Deveria ser classificada como ${x.esperado}">${esc(x.txt)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="cv-emojis" id="sim-emojis">${paletaEmoji('sim-texto')}</div>
+      <div class="cv-reply">
+        <button type="button" class="cv-icon-btn" id="sim-emoji-btn"
+                onclick="alternarEmojis('sim-emojis','sim-emoji-btn')"
+                title="Inserir um emoji" aria-label="Emoji">☺</button>
+        <textarea id="sim-texto" class="cv-textarea" rows="1"
+                  placeholder="Escreva como se fosse o lead…" aria-label="Mensagem do lead fictício"
+                  oninput="autoCrescer(this)"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarNoSimulador()}"></textarea>
+        <button type="button" class="cv-send" id="sim-send" onclick="enviarNoSimulador()"
+                title="Enviar como o lead (Enter)" aria-label="Enviar">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z"/></svg>
+        </button>
+      </div>
+      <div class="cv-reply-sub" id="sim-msg">Você escreve como o <strong>lead</strong>; quem responde é a IA.
+        Nada é enviado para a Meta e nenhum lead real é tocado.</div>
+    </section>
+
+    <aside class="sim-xray">
+      <div class="sim-xray-head">
+        <strong>O que a IA entendeu</strong>
+        <span>Um bloco por mensagem sua, do mais recente para o mais antigo.
+        A regra que transforma a intenção em ação é a mesma da produção.</span>
+      </div>
+      <div class="sim-xray-body" id="sim-xray">${raioX(s.turnos)}</div>
+    </aside>
+  </div>`;
+  irParaOFim('sim-msgs');
+}
+
+/* As bolhas do simulador usam as mesmas classes do chat real de propósito: o
+   que se está testando é o que o lead veria, e uma tela de teste com aparência
+   própria testaria outra coisa. */
+function bolhasDoSimulador(mensagens){
+  if(!mensagens||!mensagens.length){
+    return `<div class="cv-msg-vazio">Escreva a primeira mensagem como se fosse o lead.<br/>
+      A IA vai classificar e decidir se responde ou se passa a conversa para você.</div>`;
+  }
+  let autorAnterior='';
+  return mensagens.map(m=>{
+    const lado=m.direction==='in'?'in':'out';
+    const autor=m.direction==='in'?'Lead':'IA';
+    const seguida=autor===autorAnterior?' seguida':'';
+    autorAnterior=autor;
+    const quando=new Date((m.created_at||0)*1000);
+    return `<div class="cv-msg ${lado}${seguida}">
+      <div class="cv-msg-bolha">${esc(m.body||'')}
+        <div class="cv-msg-meta">
+          <span class="cv-autor${lado==='out'?' ia':''}">${autor}</span>
+          <span>${esc(_horaCurta(quando))}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function raioX(turnos){
+  if(!turnos||!turnos.length){
+    return `<div class="sim-xray-vazio">Ainda não há turno para mostrar.<br/>
+      Mande uma mensagem ao lado.</div>`;
+  }
+  return turnos.slice().reverse().map((t,i)=>blocoTurno(t,i===0)).join('');
+}
+
+function blocoTurno(t,atual){
+  const corte=(_simStatus&&_simStatus.confianca_minima)||0.7;
+  const pct=Math.round((t.confianca||0)*100);
+  const baixa=!t.confiavel?' baixa':'';
+  // A barra mostra o corte como um risco porque o número sozinho não explica
+  // por que 68% reprova e 71% aprova.
+  const conf=t.intencao?`<div class="sim-conf">
+    <div class="sim-conf-topo"><span>Confiança</span><b>${pct}%</b></div>
+    <div class="sim-conf-track">
+      <div class="sim-conf-fill${baixa}" style="width:${pct}%"></div>
+      <div class="sim-conf-corte" style="left:${Math.round(corte*100)}%"
+           title="Corte de ${Math.round(corte*100)}%"></div>
+    </div>
+    <div class="sim-conf-nota">${t.confiavel
+      ? `Acima do corte de ${Math.round(corte*100)}% — a classificação vale.`
+      : `Abaixo do corte de ${Math.round(corte*100)}% — a leitura é descartada e a conversa passa para você.`}</div>
+  </div>`:'';
+
+  return `<div class="sim-turno${atual?' atual':''}">
+    <div class="sim-turno-top">
+      <span class="sim-acao ${esc(t.acao)}">${esc(_SIM_ACAO_LBL[t.acao]||t.acao)}</span>
+      <span class="sim-ms">${t.ms||0} ms</span>
+    </div>
+    <div class="sim-turno-body">
+      <dl class="sim-linha">
+        <dt>Intenção</dt>
+        <dd><span class="sim-intencao">${esc(t.intencao||'—')}</span></dd>
+      </dl>
+      ${conf}
+      ${t.fora_do_horario?'<div class="sim-motivo">Fora do expediente: o rascunho foi pedido em modo curto, de uma frase só.</div>':''}
+      ${t.motivo?`<div class="sim-motivo${t.erro?' erro':''}">${esc(t.motivo)}</div>`:''}
+    </div>
+  </div>`;
+}
+
+function usarSugestao(i){
+  const s=_SIM_SUGESTOES[i];
+  if(!s)return;
+  const campo=document.getElementById('sim-texto');
+  if(!campo)return;
+  campo.value=s.txt;autoCrescer(campo);campo.focus();
+  enviarNoSimulador();
+}
+
+async function enviarNoSimulador(){
+  if(_simOcupado)return;
+  const campo=document.getElementById('sim-texto');
+  const msg=document.getElementById('sim-msg');
+  const texto=(campo&&campo.value||'').trim();
+  if(!texto){campo&&campo.focus();return;}
+
+  _simOcupado=true;
+  document.getElementById('sim-send')?.setAttribute('disabled','');
+  campo.value='';autoCrescer(campo);
+
+  // A mensagem do lead entra na hora e o "digitando" aparece embaixo dela: é o
+  // que faz a espera pela IA parecer uma conversa em vez de um formulário
+  // travado. O que vier do servidor substitui isto.
+  _simSessao.mensagens.push({direction:'in',body:texto,created_at:Date.now()/1000});
+  const area=document.getElementById('sim-msgs');
+  if(area){
+    area.innerHTML=bolhasDoSimulador(_simSessao.mensagens)
+      +`<div class="cv-typing"><span class="cv-dots"><i></i><i></i><i></i></span>
+        <span class="cv-typing-txt">A IA está lendo e decidindo…</span></div>`;
+    irParaOFim('sim-msgs',true);
+  }
+  msg.className='cv-reply-sub';msg.textContent='Aguardando a IA…';
+
+  try{
+    const resp=await authFetch('/api/wa/sandbox/message',
+      {method:'POST',body:JSON.stringify({texto,ignorar_horario:true})});
+    const turno=await resp.json();
+    if(!resp.ok){
+      msg.className='cv-reply-sub sub-err';
+      msg.textContent=turno.detail||'Não foi possível falar com o simulador.';
+      campo.value=texto;autoCrescer(campo);
+    }else{
+      // Recarrega a sessão do servidor em vez de remendar a local: ele é quem
+      // sabe o que entrou no histórico que a IA vai ler no próximo turno.
+      const sess=await authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null);
+      if(sess)_simSessao=sess;
+      const area2=document.getElementById('sim-msgs');
+      if(area2)area2.innerHTML=bolhasDoSimulador(_simSessao.mensagens);
+      const xray=document.getElementById('sim-xray');
+      if(xray)xray.innerHTML=raioX(_simSessao.turnos);
+      msg.className='cv-reply-sub';
+      msg.innerHTML=_resumoDoTurno(turno);
+      irParaOFim('sim-msgs',true);
+    }
+  }catch(_){
+    msg.className='cv-reply-sub sub-err';
+    msg.textContent='Erro de conexão com o simulador.';
+    campo.value=texto;autoCrescer(campo);
+  }finally{
+    _simOcupado=false;
+    document.getElementById('sim-send')?.removeAttribute('disabled');
+    // O "digitando" some junto com o desbloqueio, mesmo quando deu erro.
+    const area3=document.getElementById('sim-msgs');
+    if(area3)area3.querySelector('.cv-typing')?.remove();
+  }
+}
+
+/* A frase embaixo da caixa: o que teria acontecido de verdade. */
+function _resumoDoTurno(t){
+  if(t.acao==='respondeu')
+    return `A IA respondeu sozinha. Em produção esta mensagem teria saído para o lead.`;
+  if(t.acao==='encerrou')
+    return `A conversa seria <strong>encerrada</strong> e nada mais sairia por ela.`;
+  if(t.acao==='nao_enviou')
+    return `Nada seria enviado agora.`;
+  return `A automação <strong>passaria a conversa para você</strong> — ela não responde nestes casos.`;
+}
+
+async function reiniciarSimulador(){
+  const empresa=document.getElementById('sim-empresa')?.value||'';
+  try{
+    const resp=await authFetch('/api/wa/sandbox/reset',
+      {method:'POST',body:JSON.stringify({empresa})});
+    if(!resp.ok){alert('Não foi possível recomeçar.');return;}
+    _simSessao=await resp.json();
+    renderSimulador();
+  }catch(_){alert('Erro de conexão.');}
 }
 
 /* ══════ INICIAR CONTATO A PARTIR DA FICHA ══════
    O primeiro convite é a ação paga e irreversível do produto: chega no celular
    de uma pessoa e a Meta cobra por ela. Por isso pede confirmação explícita e
    mostra para qual número vai. */
+
+/* Barra de ações da ficha. Fica em função separada porque o estado do WhatsApp
+   pode mudar com a ficha aberta (a janela de horário vira de hora em hora) e a
+   barra precisa ser redesenhada sem recarregar a ficha inteira. */
+function renderLeadActions(data){
+  const alvo=document.getElementById('lead-actions');
+  if(!alvo)return;
+  // Quando a integração não está configurada o botão continua visível, em
+  // estado apagado, dizendo o que falta — some não ensina nada.
+  const integ=_integr||{};
+  alvo.innerHTML=[
+    '<span class="la-lbl">Ações do lead</span>',
+    integ.ai
+      ? `<button class="la-btn" onclick="genAiSummary()" title="Gera um resumo executivo desta empresa com IA">${IC_SPARK} Resumo com IA</button>`
+      : `<span class="la-btn off" title="Disponível quando a chave de IA está configurada no servidor">${IC_SPARK} Resumo com IA</span>`,
+    integ.crm_webhook
+      ? `<button class="la-btn accent" onclick="pushToCrm()" title="Envia este lead ao webhook configurado em Configurações">${IC_PUSH} Enviar ao CRM</button>`
+      : `<span class="la-btn off" onclick="nav('settings')" title="Configure um webhook em Configurações para habilitar" style="cursor:pointer">${IC_PUSH} Enviar ao CRM · configurar</span>`,
+    botaoWhatsappHtml(data),
+    `<button class="la-btn" onclick="openExportModal()" title="Baixar seus leads em Excel ou CSV">${IC_DOWN} Exportar leads</button>`,
+  ].filter(Boolean).join('');
+}
+
+/* A janela de horário como o servidor a descreveu, ou `null` quando a resposta
+   guardada já venceu.
+
+   `muda_em` é o instante em que aquela resposta deixa de valer. Comparar com o
+   relógio do navegador só serve para saber que ela envelheceu — a regra
+   continua morando inteira no portão, no servidor. Enquanto a resposta nova não
+   chega, a tela não afirma nada sobre horário: prefere deixar o botão ativo e
+   ouvir o "não" do servidor a apagá-lo por um palpite. */
+let _waJanelaCarregando=false;
+function janelaWa(){
+  const j=_waStatus&&_waStatus.janela;
+  if(!j)return null;
+  if(j.muda_em&&Date.now()>=Date.parse(j.muda_em)){
+    if(!_waJanelaCarregando){
+      _waJanelaCarregando=true;
+      loadWaStatus().finally(()=>{
+        _waJanelaCarregando=false;
+        if(currentLeadData)renderLeadActions(currentLeadData);
+      });
+    }
+    return null;
+  }
+  return j;
+}
+
+/* O botão do primeiro contato, nos seus quatro estados possíveis. Fora do
+   horário ele aparece apagado dizendo quando volta, em vez de aceitar o clique,
+   pedir confirmação de um envio cobrado e só então recusar. */
+function botaoWhatsappHtml(data){
+  if(!(_waStatus&&_waStatus.configurado))
+    return `<span class="la-btn off" title="Falta configurar as credenciais da Meta no servidor">${IC_CHAT} WhatsApp · não configurado</span>`;
+  if(!data.phone)
+    return `<span class="la-btn off" title="Informe o telefone na ficha para poder enviar o convite">${IC_CHAT} WhatsApp · informe o telefone</span>`;
+
+  const j=janelaWa();
+  if(j&&!j.pode_enviar){
+    const rotulo=j.indeterminado
+      ? 'WhatsApp · horário indeterminado no servidor'
+      : (j.volta_em?`WhatsApp · fora do horário · volta ${j.volta_em}`
+                   :'WhatsApp · fora do horário');
+    return `<span class="la-btn off" title="${esc(j.explicacao)}">${IC_CHAT} ${esc(rotulo)}</span>`;
+  }
+
+  // Dentro da faixa de envio, mas fora do comercial: o convite sai igual; o que
+  // muda é o tamanho da resposta automática, se o lead responder agora.
+  const ressalva=j&&j.fora_do_horario
+    ? ' Fora do horário comercial: o convite sai normalmente, mas a resposta automática vem em uma frase só.'
+    : '';
+  return `<button class="la-btn" onclick="iniciarWhatsapp()" title="Envia o convite aprovado para ${esc(data.phone)}. A Meta cobra por esta mensagem.${esc(ressalva)}">${IC_CHAT} Iniciar contato por WhatsApp</button>`;
+}
 
 async function iniciarWhatsapp(){
   if(!currentLeadId||!currentLeadData)return;
@@ -1346,7 +2005,14 @@ async function iniciarWhatsapp(){
   try{
     const resp=await authFetch('/api/wa/start',{method:'POST',body:JSON.stringify({lead_id:currentLeadId})});
     const json=await resp.json();
-    if(!resp.ok){alert(json.detail||'Não foi possível iniciar a conversa.');return;}
+    if(!resp.ok){
+      alert(json.detail||'Não foi possível iniciar a conversa.');
+      // O portão é quem manda: se ele recusou, o que a tela sabia sobre a
+      // janela está velho. Recarrega para o botão passar a mostrar o motivo em
+      // vez de continuar convidando para o mesmo clique.
+      if(resp.status===409)loadWaStatus().finally(()=>{if(currentLeadData)renderLeadActions(currentLeadData);});
+      return;
+    }
     nav('conversas');
   }catch(_){alert('Erro de conexão.');}
 }

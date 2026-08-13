@@ -9,7 +9,7 @@
   <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=23" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=27" />
 </head>
 <body class="app-body">
 
@@ -79,6 +79,13 @@
         <span class="nav-desc">WhatsApp com os leads</span>
       </span>
       <span id="nav-wa-count" class="nav-badge" style="display:none" title="Conversas esperando você responder"></span>
+    </button>
+    <button class="app-nav-btn" data-route="simulador" onclick="nav('simulador')" title="Conversar com a IA sem gastar mensagem e sem tocar num lead real">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1H7a3 3 0 0 0-3 3v2H3v3h1v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2h1v-3h-1V9a3 3 0 0 0-3-3h-2V5a3 3 0 0 0-3-3z"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Simulador da IA</span>
+        <span class="nav-desc">Testar sem enviar nada</span>
+      </span>
     </button>
 
     <p class="sb-group">Análise</p>
@@ -354,6 +361,13 @@
     <div id="conversas-body"></div>
   </section>
 
+  <!-- ── VIEW: SIMULADOR DA IA ──
+       Mesma conversa que o lead veria, sem nada sair para a Meta. A sessão
+       vive na memória do servidor: é teste, não histórico. -->
+  <section class="view view--wide" id="view-simulador">
+    <div id="simulador-body"></div>
+  </section>
+
   <!-- ── VIEW: HISTÓRICO ── -->
   <section class="view view--wide" id="view-history">
     <div class="view-note" id="history-count"></div>
@@ -469,7 +483,7 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=28"></script>
+<script src="/static/js/app.js?v=30"></script>
 {# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
    com edição célula a célula e teclado próprio. #}
 <script src="/static/js/sheet.js?v=23"></script>

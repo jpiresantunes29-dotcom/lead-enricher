@@ -609,3 +609,63 @@ class SheetRowCreate(BaseModel):
 
 class SheetRowsDelete(BaseModel):
     ids: List[int]
+
+
+# ── Simulador da IA de WhatsApp ──────────────────────────────────────────────
+# A conversa de teste não existe no banco: estes modelos descrevem uma sessão
+# em memória (services/wa/sandbox.py), e por isso nenhum deles tem `id`.
+
+class SandboxStatus(BaseModel):
+    """O que o simulador consegue fazer agora, e o que falta para funcionar."""
+    ia_configurada: bool
+    modelo: Optional[str] = None
+    confianca_minima: float
+    intencoes: List[str] = []
+    dentro_do_horario: bool = False   # horário comercial: resposta completa
+    pode_enviar_agora: bool = False   # fora disto a produção ficaria calada
+    fora_do_horario: bool = False     # responde, mas em uma frase só
+
+
+class SandboxMessageOut(BaseModel):
+    """Uma mensagem da conversa de teste. `created_at` é epoch em segundos."""
+    direction: str
+    body: str
+    created_at: float
+    sent_by: Optional[str] = None
+    intent_detected: Optional[str] = None
+
+
+class SandboxTurn(BaseModel):
+    """
+    O raio-x de um turno: o que a IA entendeu e o que se decidiu com isso.
+
+    É o que o simulador entrega além do chat. A conversa qualquer um vê; a
+    intenção classificada, a confiança e a regra que ligou uma à outra não
+    aparecem em lugar nenhum do produto.
+    """
+    acao: str                          # respondeu | chamou_humano | encerrou | nao_enviou
+    intencao: Optional[str] = None
+    confianca: float = 0.0
+    confiavel: bool = False
+    texto: Optional[str] = None
+    motivo: Optional[str] = None
+    erro: Optional[str] = None
+    fora_do_horario: bool = False
+    ms: int = 0
+
+
+class SandboxSession(BaseModel):
+    empresa: str
+    mensagens: List[SandboxMessageOut] = []
+    turnos: List[SandboxTurn] = []
+
+
+class SandboxMessageRequest(BaseModel):
+    texto: str
+    # A trava de madrugada é da produção. Quem configura a IA às 23h precisa
+    # poder testá-la às 23h — a tela continua mostrando o que a trava faria.
+    ignorar_horario: bool = True
+
+
+class SandboxResetRequest(BaseModel):
+    empresa: Optional[str] = None

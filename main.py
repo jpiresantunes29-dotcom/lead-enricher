@@ -23,6 +23,7 @@ from routers import enrichment, leads, auth, export, activities, dashboard, inte
 from routers import batch, extension, internal, privacy
 from routers import imports, sheet
 from routers import wa as wa_router
+from routers import wa_sandbox as wa_sandbox_router
 from routers import dns_intel as dns_intel_router
 from routers import seo as seo_router
 from services import guides, seo
@@ -243,6 +244,7 @@ app.include_router(seo_router.router)
 app.include_router(imports.router)
 app.include_router(sheet.router)
 app.include_router(wa_router.router)
+app.include_router(wa_sandbox_router.router)
 
 
 @app.get("/health", tags=["meta"])
