@@ -10,6 +10,7 @@ import pytest
 
 from tests.test_api import client, clean_db  # noqa: F401
 
+from middleware import auth as auth_mod
 from services import preflight
 
 
@@ -23,7 +24,10 @@ def ambiente_limpo(monkeypatch):
                 "SUPABASE_ANON_KEY"):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "x" * 40)
-    monkeypatch.setenv("DEMO_MODE", "0")
+    # O registro de variáveis descartadas é global e sobrevive ao teste que o
+    # encheu: sem limpar, um arquivo rodado antes deste faz aparecer um achado
+    # de "outro projeto Supabase" que não veio deste ambiente.
+    auth_mod._env_ignoradas.clear()
 
 
 def _titulos(rel, severidade=None):
@@ -129,17 +133,6 @@ def test_producao_com_sqlite_impede(monkeypatch):
 def test_sqlite_em_desenvolvimento_nao_e_problema(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "sqlite:///./lead_enricher.db")
     assert _achado(preflight.verificar(producao=False), "SQLite") is None
-
-
-def test_demo_aberto_em_producao_e_perigoso(monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "1")
-    a = _achado(preflight.verificar(producao=True), "DEMO_MODE")
-    assert a.severidade == preflight.PERIGOSO
-
-
-def test_demo_em_desenvolvimento_e_silencioso(monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "1")
-    assert _achado(preflight.verificar(producao=False), "DEMO_MODE") is None
 
 
 # ── WhatsApp: o caso perigoso é meio ligado ──────────────────────────────────

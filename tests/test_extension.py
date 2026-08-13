@@ -8,7 +8,7 @@ from unittest.mock import patch
 from tests.test_api import client, clean_db, _Session  # noqa: F401
 
 from main import app
-from models.database import Person, Profile, Reveal
+from models.database import Person, Reveal
 from routers.extension import get_ext_user
 from services.people import optout, repository as repo
 
@@ -78,16 +78,16 @@ def test_token_da_extensao_autentica_as_rotas(client):
 
     resp = client.get("/api/extension/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
-    assert resp.json()["credits_left"] == 5   # plano free
+    assert resp.json()["user_id"] == FAKE_USER["sub"]
 
 
 def test_rotas_exigem_autenticacao(client):
     assert client.get("/api/extension/me").status_code == 403
 
 
-# ── resolve: rápido e sem cobrar ─────────────────────────────────────────────
+# ── resolve: rápido e sem rede pesada ────────────────────────────────────────
 
-def test_resolve_cria_pessoa_e_nao_cobra(ext_client):
+def test_resolve_cria_pessoa(ext_client):
     resp = _resolve(ext_client)
     assert resp.status_code == 200
     data = resp.json()
@@ -95,12 +95,9 @@ def test_resolve_cria_pessoa_e_nao_cobra(ext_client):
     assert data["full_name"] == "João Silva"
     assert data["company_domain"] == "acme.com"
     assert data["seniority"] in ("c_level", "founder")
-    assert data["credits_cost"] == 1          # o que custaria revelar
-    assert data["credits_left"] == 5          # nada foi consumido
 
     db = _Session()
     try:
-        assert db.query(Profile).filter(Profile.id == FAKE_USER["sub"]).first().reveals_used == 0
         assert db.query(Person).count() == 1
     finally:
         db.close()
@@ -135,9 +132,9 @@ def test_resolve_de_pessoa_com_optout(ext_client):
     assert data["person_id"] is None
 
 
-# ── reveal: cobrança ─────────────────────────────────────────────────────────
+# ── reveal ───────────────────────────────────────────────────────────────────
 
-def test_reveal_cobra_um_credito_quando_encontra(ext_client):
+def test_reveal_entrega_contato_quando_encontra(ext_client):
     person_id = _resolve(ext_client).json()["person_id"]
     with patch("routers.extension.waterfall.reveal", return_value=FOUND_RESULT):
         resp = ext_client.post("/api/extension/reveal", json={"person_id": person_id})
@@ -147,48 +144,31 @@ def test_reveal_cobra_um_credito_quando_encontra(ext_client):
     assert data["success"] is True
     assert data["emails"][0]["email"] == "joao.silva@acme.com"
     assert data["phones"][0]["is_company_phone"] is True
-    assert data["credits_charged"] == 1
-    assert data["credits_left"] == 4
 
 
-def test_reveal_nao_cobra_quando_nao_encontra(ext_client):
+def test_reveal_diz_quando_nao_encontra(ext_client):
     person_id = _resolve(ext_client).json()["person_id"]
     with patch("routers.extension.waterfall.reveal", return_value=EMPTY_RESULT):
         data = ext_client.post("/api/extension/reveal", json={"person_id": person_id}).json()
 
     assert data["success"] is False
-    assert data["credits_charged"] == 0
-    assert data["credits_left"] == 5
-    assert "nada foi cobrado" in data["message"]
+    assert "Não encontramos contato confiável" in data["message"]
 
 
-def test_segunda_revelacao_da_mesma_pessoa_e_gratis(ext_client):
+def test_reveal_repetido_nunca_e_recusado(ext_client):
+    """
+    Revelar é livre: repetir a mesma pessoa quantas vezes for não pode voltar
+    402 nem parar de entregar o contato.
+    """
     person_id = _resolve(ext_client).json()["person_id"]
     with patch("routers.extension.waterfall.reveal", return_value=FOUND_RESULT):
-        ext_client.post("/api/extension/reveal", json={"person_id": person_id})
-        segunda = ext_client.post("/api/extension/reveal", json={"person_id": person_id}).json()
-
-    assert segunda["credits_charged"] == 0
-    assert segunda["credits_left"] == 4      # continua o mesmo saldo
-
-
-def test_reveal_bloqueia_sem_creditos(ext_client):
-    person_id = _resolve(ext_client).json()["person_id"]
-    db = _Session()
-    try:
-        profile = db.query(Profile).filter(Profile.id == FAKE_USER["sub"]).first()
-        profile.reveals_used = profile.reveals_limit
-        db.commit()
-    finally:
-        db.close()
-
-    with patch("routers.extension.waterfall.reveal", return_value=FOUND_RESULT) as mocked:
-        resp = ext_client.post("/api/extension/reveal", json={"person_id": person_id})
-    assert resp.status_code == 402
-    mocked.assert_not_called()               # não gasta rede se não pode entregar
+        for _ in range(8):
+            resp = ext_client.post("/api/extension/reveal", json={"person_id": person_id})
+            assert resp.status_code == 200
+            assert resp.json()["success"] is True
 
 
-def test_reveal_registra_no_ledger(ext_client):
+def test_reveal_registra_o_historico(ext_client):
     person_id = _resolve(ext_client).json()["person_id"]
     with patch("routers.extension.waterfall.reveal", return_value=FOUND_RESULT):
         ext_client.post("/api/extension/reveal", json={"person_id": person_id})
@@ -196,7 +176,6 @@ def test_reveal_registra_no_ledger(ext_client):
     db = _Session()
     try:
         row = db.query(Reveal).first()
-        assert row.credits_charged == 1
         assert row.found_email is True
         assert row.provider_chain == ["company_context", "pattern+smtp"]
     finally:
@@ -368,7 +347,7 @@ def test_optout_publico_nao_revela_se_o_dado_existia(client):
     assert a.json() == b.json() == c.json()
 
 
-def test_reveal_de_pessoa_bloqueada_nao_entrega_nem_cobra(ext_client):
+def test_reveal_de_pessoa_bloqueada_nao_entrega(ext_client):
     person_id = _resolve(ext_client).json()["person_id"]
     blocked = dict(EMPTY_RESULT, blocked=True, chain=["optout"])
     with patch("routers.extension.waterfall.reveal", return_value=blocked):
@@ -376,7 +355,6 @@ def test_reveal_de_pessoa_bloqueada_nao_entrega_nem_cobra(ext_client):
 
     assert data["success"] is False
     assert data["emails"] == []
-    assert data["credits_left"] == 5
     assert "LGPD" in data["message"]
 
 

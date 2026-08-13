@@ -54,7 +54,6 @@ Confira em `/health`: `schema_ok` precisa ser `true`. Se vier `false`, a lista
 | variável | por quê |
 |---|---|
 | `APP_ENV=production` | fecha `/docs`, exige schema no boot, liga HSTS |
-| `DEMO_MODE=0` | sem isto, **qualquer visitante** ganha conta Pro sem cadastro |
 | `SUPABASE_JWT_SECRET` | só é necessário se o projeto **não** publicar chave pública. Ver "Como o login é verificado", abaixo |
 | `CRON_SECRET` | sem ele a fila não anda e conversas da madrugada não são retomadas |
 | `SECRETS_KEY` | sem ela o segredo que assina o push para o CRM fica **em claro no banco** |
@@ -152,7 +151,6 @@ Já declarados em `vercel.json`:
 |---|---|---|
 | `/api/internal/jobs/run` | a cada 5 min | fila de análise em lote |
 | `/api/internal/wa/pending` | a cada 10 min | responde quem escreveu de madrugada ou ficou para trás |
-| `/api/internal/demo/cleanup` | 4h30 | apaga sessões de demonstração antigas |
 
 Sem o plano Pro os crons não rodam, e a fila só anda enquanto alguém tem a aba
 aberta.

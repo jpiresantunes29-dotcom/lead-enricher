@@ -136,17 +136,14 @@ def test_commit_guarda_todas_as_celulas_originais(client):
     db.close()
 
 
-def test_commit_nao_consome_cota(client):
-    db = _Session()
-    db.add(Profile(id=FAKE_USER["sub"], plan="free", searches_used=0, searches_limit=5))
-    db.commit()
-    db.close()
-
-    _import(client)
-
-    db = _Session()
-    assert db.get(Profile, FAKE_USER["sub"]).searches_used == 0
-    db.close()
+def test_commit_nao_dispara_coleta(client):
+    """
+    Importar é ler o arquivo do usuário: nenhuma linha vai à rede aqui. O
+    enriquecimento é outro passo, pedido explicitamente na planilha.
+    """
+    with patch("services.enrichment_service.enrich_company") as coleta:
+        _import(client)
+    coleta.assert_not_called()
 
 
 def test_commit_limpa_o_rascunho(client):
@@ -417,35 +414,16 @@ def test_sem_dominio_descoberto_a_linha_falha_com_recado(client):
     db.close()
 
 
-def test_enriquecer_consome_uma_busca_por_linha(client):
-    db = _Session()
-    db.add(Profile(id=FAKE_USER["sub"], plan="free", searches_used=0, searches_limit=5))
-    db.commit()
-    db.close()
+def test_enriquecer_a_mesma_linha_varias_vezes_nunca_e_recusado(client):
+    """Sem cota, a fila da planilha não tem por que parar no meio."""
     _import(client)
     db = _Session()
     lead_id = db.query(Lead).filter(Lead.company_name == "TOTVS").one().id
     db.close()
 
     with patch("services.enrichment_service.enrich_company", return_value=MOCK_RESULT):
-        client.post(f"/api/leads/{lead_id}/enrich")
-
-    db = _Session()
-    assert db.get(Profile, FAKE_USER["sub"]).searches_used == 1
-    db.close()
-
-
-def test_fila_para_quando_a_cota_acaba(client):
-    db = _Session()
-    db.add(Profile(id=FAKE_USER["sub"], plan="free", searches_used=5, searches_limit=5))
-    db.commit()
-    db.close()
-    _import(client)
-    db = _Session()
-    lead_id = db.query(Lead).filter(Lead.company_name == "TOTVS").one().id
-    db.close()
-
-    assert client.post(f"/api/leads/{lead_id}/enrich").status_code == 402
+        for _ in range(6):
+            assert client.post(f"/api/leads/{lead_id}/enrich").status_code == 200
 
 
 # ── modelo de planilha ────────────────────────────────────────────────────────

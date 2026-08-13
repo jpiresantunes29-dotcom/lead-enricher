@@ -78,21 +78,28 @@ def test_me_creates_profile_on_first_call(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["id"] == "test-user-123"
-    assert data["plan"] == "free"
-    assert data["searches_used"] == 0
-    assert data["searches_limit"] == 5
+    assert data["email"] == "test@example.com"
+
+
+def test_me_nao_expoe_plano_nem_cota(client):
+    """
+    O acesso é aberto. Um campo de plano ou de cota aqui voltaria a aparecer na
+    tela — e a tela passaria a prometer um limite que o servidor não aplica.
+    """
+    client.get("/api/me")
+    corpo = client.get("/api/me").json()
+    assert set(corpo) == {"id", "email"}
 
 
 def test_me_returns_existing_profile(client):
     db = _Session()
-    db.add(Profile(id="test-user-123", plan="pro", searches_used=3, searches_limit=500))
+    db.add(Profile(id="test-user-123"))
     db.commit()
     db.close()
 
     resp = client.get("/api/me")
     assert resp.status_code == 200
-    assert resp.json()["plan"] == "pro"
-    assert resp.json()["searches_used"] == 3
+    assert resp.json()["id"] == "test-user-123"
 
 
 # ── testes /api/enrich ─────────────────────────────────────────────────────────
@@ -130,23 +137,15 @@ def test_enrich_creates_profile_and_lead(client):
     assert data["data"]["domain"] == "nubank.com.br"
 
 
-def test_enrich_increments_searches_used(client):
+def test_enrich_nunca_recusa_por_limite_de_uso(client):
+    """
+    Não existe cota: nenhuma sequência de buscas pode levar a 402. Este teste é
+    a trava que impede um limite voltar sem ninguém notar.
+    """
     with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
-        client.post("/api/enrich", json={"domain": "nubank.com.br"})
-
-    resp = client.get("/api/me")
-    assert resp.json()["searches_used"] == 1
-
-
-def test_enrich_quota_exceeded(client):
-    db = _Session()
-    db.add(Profile(id="test-user-123", plan="free", searches_used=5, searches_limit=5))
-    db.commit()
-    db.close()
-
-    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
-        resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
-    assert resp.status_code == 402
+        for i in range(12):
+            resp = client.post("/api/enrich", json={"domain": f"empresa{i}.com.br"})
+            assert resp.status_code == 200, resp.text
 
 
 def test_enrich_empty_domain_returns_422(client):
@@ -185,13 +184,13 @@ def test_enrich_cache_returns_cached_data(client):
     assert r2.json()["data"]["domain"] == r1.json()["data"]["domain"]
 
 
-def test_enrich_cache_does_not_increment_quota_twice(client):
+def test_enrich_repetido_nao_duplica_a_ficha(client):
+    """Buscar o mesmo domínio duas vezes é uma empresa no histórico, não duas."""
     with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
 
-    # Apenas 1 pesquisa deve ter sido contabilizada
-    assert client.get("/api/me").json()["searches_used"] == 1
+    assert len(client.get("/api/leads").json()) == 1
 
 
 def test_ficha_de_versao_antiga_nao_e_servida_do_cache(client):
@@ -214,8 +213,12 @@ def test_ficha_de_versao_antiga_nao_e_servida_do_cache(client):
     assert resp.json()["message"] == "Enriquecimento concluído."
 
 
-def test_recoleta_por_versao_antiga_nao_cobra_cota_de_novo(client):
-    """A ficha ficou obsoleta por correção nossa — a cota é do usuário."""
+def test_recoleta_por_versao_antiga_reaproveita_a_mesma_ficha(client):
+    """
+    A ficha ficou obsoleta por correção nossa: a recoleta atualiza a linha que
+    já existe. Abrir uma segunda faria a mesma empresa aparecer duas vezes no
+    histórico, uma com dados velhos.
+    """
     with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
 
@@ -227,16 +230,7 @@ def test_recoleta_por_versao_antiga_nao_cobra_cota_de_novo(client):
     with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
 
-    assert client.get("/api/me").json()["searches_used"] == 1
-
-
-def test_dominio_novo_continua_cobrando_cota(client):
-    """A gratuidade vale só para recoleta — não pode virar brecha de cota."""
-    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
-        client.post("/api/enrich", json={"domain": "nubank.com.br"})
-        client.post("/api/enrich", json={"domain": "outra.com.br"})
-
-    assert client.get("/api/me").json()["searches_used"] == 2
+    assert len(client.get("/api/leads").json()) == 1
 
 
 # ── testes /health ────────────────────────────────────────────────────────────
@@ -280,34 +274,29 @@ def test_institutional_pages(client, path, marker):
     assert "lg-wrap" in resp.text
 
 
-# ── cota: o usuário não pode pagar por uma busca que não recebeu ──────────────
+# ── coleta interrompida no meio ───────────────────────────────────────────────
 
-def test_busca_interrompida_deixa_recibo_e_nao_cobra_de_novo(client):
+def test_busca_interrompida_e_retomada_na_mesma_ficha(client):
     """
-    Quando a coleta morre no meio (timeout da função serverless, por exemplo),
-    a cota já foi debitada. A ficha "pending" gravada antes da coleta é o
-    recibo: a próxima tentativa do mesmo domínio não cobra outra vez.
+    Quando a coleta morre no meio (timeout da função serverless, por exemplo), a
+    ficha fica gravada como "pending". A tentativa seguinte do mesmo domínio
+    continua nela — senão a empresa acabaria com duas linhas, uma vazia.
     """
     with patch("services.enrichment_service.enrich_company", side_effect=TimeoutError("estourou")):
         resp = client.post("/api/enrich", json={"domain": "acme.com.br"})
     assert resp.status_code == 500
 
-    db = _Session()
-    try:
-        perfil = db.query(Profile).filter(Profile.id == "test-user-123").first()
-        usado_apos_falha = perfil.searches_used
-    finally:
-        db.close()
-
-    # A retentativa do mesmo domínio sai de graça.
     with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         ok = client.post("/api/enrich", json={"domain": "acme.com.br"})
     assert ok.status_code == 200
 
     db = _Session()
     try:
-        perfil = db.query(Profile).filter(Profile.id == "test-user-123").first()
-        assert perfil.searches_used == usado_apos_falha, "cobrou duas vezes pelo mesmo domínio"
+        # Conta todas as fichas do usuário: a coleta grava o domínio que ela
+        # apurou, então filtrar por "acme.com.br" esconderia a duplicata.
+        assert db.query(Lead).count() == 1, (
+            "a retentativa abriu uma segunda ficha para o mesmo domínio"
+        )
     finally:
         db.close()
 

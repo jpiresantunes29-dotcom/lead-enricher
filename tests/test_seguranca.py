@@ -34,7 +34,6 @@ def test_token_forjado_com_segredo_vazio_nao_autentica(raw_client, monkeypatch):
     assumiria o `sub` de qualquer usuário.
     """
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
-    monkeypatch.setenv("DEMO_MODE", "0")
 
     forjado = jwt.encode({"sub": "vitima-uuid", "email": "x@y.z"}, "", algorithm="HS256")
     resp = raw_client.get("/api/me", headers={"Authorization": f"Bearer {forjado}"})
@@ -45,7 +44,6 @@ def test_token_forjado_com_segredo_vazio_nao_autentica(raw_client, monkeypatch):
 
 def test_token_assinado_com_outro_segredo_e_recusado(raw_client, monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", SEGREDO_VALIDO)
-    monkeypatch.setenv("DEMO_MODE", "0")
 
     intruso = jwt.encode({"sub": "vitima-uuid"}, "outro-segredo-qualquer", algorithm="HS256")
     resp = raw_client.get("/api/me", headers={"Authorization": f"Bearer {intruso}"})
@@ -54,7 +52,6 @@ def test_token_assinado_com_outro_segredo_e_recusado(raw_client, monkeypatch):
 
 def test_token_valido_autentica(raw_client, monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", SEGREDO_VALIDO)
-    monkeypatch.setenv("DEMO_MODE", "0")
 
     token = jwt.encode({"sub": "user-real", "email": "real@empresa.com"}, SEGREDO_VALIDO,
                        algorithm="HS256")
@@ -66,7 +63,6 @@ def test_token_valido_autentica(raw_client, monkeypatch):
 def test_segredo_curto_demais_conta_como_ausente(raw_client, monkeypatch):
     """Placeholder do .env.example ('your-supabase-jwt-secret') não é segredo."""
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "your-supabase-jwt-secret")
-    monkeypatch.setenv("DEMO_MODE", "0")
 
     token = jwt.encode({"sub": "qualquer"}, "your-supabase-jwt-secret", algorithm="HS256")
     resp = raw_client.get("/api/me", headers={"Authorization": f"Bearer {token}"})
@@ -77,26 +73,14 @@ def test_sem_token_nao_passa(raw_client):
     assert raw_client.get("/api/me").status_code == 403
 
 
-# ── Modo demonstração ────────────────────────────────────────────────────────
+# ── Sessão só com credencial real ────────────────────────────────────────────
 
-def test_sessao_demo_funciona_quando_ligada(raw_client, monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "1")
-    resp = raw_client.get("/api/me", headers={"Authorization": "Bearer demo-session-abc123"})
-    assert resp.status_code == 200
-    dados = resp.json()
-    assert dados["id"].startswith("demo-")
-    assert dados["plan"] == "pro"          # demo explora o produto inteiro
-
-
-def test_sessoes_demo_nao_compartilham_dados(raw_client, monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "1")
-    a = raw_client.get("/api/me", headers={"Authorization": "Bearer demo-session-aaa"}).json()
-    b = raw_client.get("/api/me", headers={"Authorization": "Bearer demo-session-bbb"}).json()
-    assert a["id"] != b["id"]
-
-
-def test_demo_desligado_recusa_token_demo(raw_client, monkeypatch):
-    monkeypatch.setenv("DEMO_MODE", "0")
+def test_token_que_nao_e_jwt_e_recusado(raw_client, monkeypatch):
+    """
+    O modo demonstração aceitava tokens `demo-session-…` inventados pelo próprio
+    navegador. Ele saiu: qualquer credencial que não seja um JWT verificável
+    agora vira 401, sem atalho.
+    """
     monkeypatch.setenv("SUPABASE_JWT_SECRET", SEGREDO_VALIDO)
     resp = raw_client.get("/api/me", headers={"Authorization": "Bearer demo-session-abc"})
     assert resp.status_code == 401
@@ -179,7 +163,6 @@ def test_token_assinado_pela_chave_do_projeto_autentica(raw_client, monkeypatch,
     JWT Secret legado — todo login virava 401.
     """
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
-    monkeypatch.setenv("DEMO_MODE", "0")
 
     token = jwt.encode(
         {"sub": "usuario-real-uuid", "email": "a@b.c", "aud": "authenticated"},
@@ -194,7 +177,6 @@ def test_token_assinado_pela_chave_do_projeto_autentica(raw_client, monkeypatch,
 def test_token_de_outra_chave_com_o_mesmo_kid_nao_autentica(raw_client, monkeypatch, jwks_com_chave):
     """Assinar com chave própria e reivindicar o `kid` do projeto não pode colar."""
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
-    monkeypatch.setenv("DEMO_MODE", "0")
 
     _, pem_do_atacante = _par_de_chaves_ec()
     forjado = jwt.encode(
@@ -213,7 +195,6 @@ def test_kid_desconhecido_nao_cai_em_verificacao_fraca(raw_client, monkeypatch, 
     responde 503, nunca "aceito".
     """
     monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
-    monkeypatch.setenv("DEMO_MODE", "0")
 
     forjado = jwt.encode({"sub": "vitima-uuid"}, "", algorithm="HS256",
                          headers={"kid": "kid-que-nao-existe"})

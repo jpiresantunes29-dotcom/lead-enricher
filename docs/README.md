@@ -9,7 +9,7 @@ caminho e seção (`services/activity_rules.py`, `services/ai_insights.py`,
 |---|---|---|
 | [ROADMAP_FUNCIONALIDADES.md](ROADMAP_FUNCIONALIDADES.md) | **Vigente** | O que vem a seguir, em ordem, com esforço estimado |
 | [AUDITORIA_2026-08.md](AUDITORIA_2026-08.md) | **Vigente** | Falhas encontradas na auditoria de agosto/2026 e como cada uma foi fechada |
-| [CONTACT_INTELLIGENCE.md](CONTACT_INTELLIGENCE.md) | **Vigente** | Banco de contatos próprio, padrão de e-mail por domínio, créditos e extensão |
+| [CONTACT_INTELLIGENCE.md](CONTACT_INTELLIGENCE.md) | **Vigente** | Banco de contatos próprio, padrão de e-mail por domínio e extensão |
 | [MIGRACOES.md](MIGRACOES.md) | **Vigente** | Como mudar o schema: Alembic, ambientes e comandos |
 | [FILA_E_LOTE.md](FILA_E_LOTE.md) | **Vigente** | Como o lote roda sem estourar o tempo da função, e quem empurra a fila |
 | [PROPOSTA_V3_PROSPECCAO_INTELIGENTE.md](PROPOSTA_V3_PROSPECCAO_INTELIGENTE.md) | Histórico (implementado) | Proposta que originou pipeline, atividades, dashboard, CRM e IA |

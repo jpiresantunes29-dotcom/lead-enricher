@@ -26,14 +26,15 @@ informe `http://localhost:8000` antes de conectar.
 |---|---|
 | `/in/{pessoa}` | Identifica nome, cargo e empresa; mostra e-mail/telefone mascarados com botão **Revelar** |
 | `/company/{empresa}` | CNPJ, razão social, situação cadastral, porte, telefone, padrão de e-mail do domínio e lista de decisores |
-| `/company/{empresa}/people` | Captura os perfis visíveis (grátis) ou revela em lote |
+| `/company/{empresa}/people` | Captura os perfis visíveis ou revela em lote |
 | `/search/results/people` | Mesmo comportamento do lote |
 
-## Créditos
+## Revelação
 
-- 1 crédito = 1 pessoa revelada (e-mail + telefone).
-- **Nada é cobrado quando não encontramos contato.**
-- Revelar a mesma pessoa de novo dentro de 90 dias é grátis.
+- Livre: não há crédito, cota nem contador de uso.
+- Quem pediu remoção pela LGPD nunca é exibido, mesmo já estando na base.
+- O que limita o lote é o ritmo (teto de 25 perfis e intervalo entre eles),
+  para não sobrecarregar o LinkedIn — não uma cobrança.
 
 ## Como a extensão se comporta (e por quê)
 
@@ -66,7 +67,7 @@ página do LinkedIn para ver.
 manifest.json          permissões mínimas (storage + os hosts usados)
 background.js          service worker: token, chamadas à API
 content/linkedin.js    extração + painel (shadow DOM, isolado do CSS do LinkedIn)
-ui/popup.html|js       pareamento e saldo de créditos
+ui/popup.html|js       pareamento do navegador com a conta
 ```
 
 ## Antes de publicar na Chrome Web Store

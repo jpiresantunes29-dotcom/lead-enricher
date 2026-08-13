@@ -62,12 +62,15 @@ integralmente — ausência de verificação não é sinal negativo. O circuit b
 em `email_verifier.py` desliga a sondagem após 3 falhas de conexão, em vez de
 gastar 5 s por e-mail para sempre devolver "unknown".
 
-## Créditos
+## Revelação: livre
 
-- 1 crédito = 1 pessoa (e-mail + telefone), medidor separado das buscas.
-- **Não cobra** quando não encontra nada, nem ao revelar a mesma pessoa em 90 dias.
-- Quota checada **antes** da cascata: sem crédito, nem gasta rede.
-- Free 5 · Pro 300 · Enterprise ilimitado (`routers/billing.py::REVEAL_LIMITS`).
+Não há crédito, cota nem plano. Qualquer conta autenticada revela quantos
+contatos precisar; o que existe é o registro em `reveals` (quem revelou quem,
+quando e por qual cascata), usado para a extensão mostrar "já revelado" e para
+auditar a origem de cada dado — não para medir consumo.
+
+O que continua limitando a operação é técnico, não comercial: o teto de tempo
+do `/reveal` (12 s, para caber no limite da função) e o rate limit por minuto.
 
 ## LGPD
 
@@ -130,16 +133,16 @@ extension/            MV3: manifest, service worker, content script, popup
 
 ## Endpoints da extensão
 
-| Rota | Cobra? | Faz rede? | Para quê |
-|---|---|---|---|
-| `POST /api/extension/pair-code` | não | não | app gera o código |
-| `POST /api/extension/pair` | não | não | troca código por token |
-| `GET /api/extension/me` | não | não | saldo de créditos |
-| `POST /api/extension/resolve` | **não** | não (só com `deep`) | prévia mascarada, ~2 s |
-| `POST /api/extension/reveal` | 1 crédito | sim (teto 12 s) | revela o contato |
-| `POST /api/extension/company` | não | sim (teto 9 s) | ficha da empresa + decisores |
-| `POST /api/extension/save` | não | não | joga na pipeline |
-| `POST /api/extension/report` | não | não | remove e bloqueia |
+| Rota | Faz rede? | Para quê |
+|---|---|---|
+| `POST /api/extension/pair-code` | não | app gera o código |
+| `POST /api/extension/pair` | não | troca código por token |
+| `GET /api/extension/me` | não | confirma o pareamento e lista as fontes extras |
+| `POST /api/extension/resolve` | não (só com `deep`) | prévia mascarada, ~2 s |
+| `POST /api/extension/reveal` | sim (teto 12 s) | revela o contato |
+| `POST /api/extension/company` | sim (teto 9 s) | ficha da empresa + decisores |
+| `POST /api/extension/save` | não | joga na pipeline |
+| `POST /api/extension/report` | não | remove e bloqueia |
 
 ## Quando houver orçamento para APIs pagas
 

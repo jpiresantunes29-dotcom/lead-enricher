@@ -44,7 +44,7 @@ async function api(path, { method = 'POST', body = null, auth = true } = {}) {
     return {
       ok: false,
       status: resp.status,
-      error: resp.status === 402 ? 'no_credits' : (resp.status === 401 ? 'not_paired' : 'http'),
+      error: resp.status === 401 ? 'not_paired' : 'http',
       detail: (data && (data.detail || data.message)) || `HTTP ${resp.status}`,
     };
   }

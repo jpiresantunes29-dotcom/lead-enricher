@@ -1,6 +1,6 @@
 """
-Testes do enriquecimento em lote: parsing da lista, fila, cota e as rodadas
-que fazem o lote andar sem estourar o tempo da função.
+Testes do enriquecimento em lote: parsing da lista, fila e as rodadas que
+fazem o lote andar sem estourar o tempo da função.
 """
 import pytest
 from datetime import timedelta
@@ -26,17 +26,6 @@ def _perfil(user_id="test-user-123") -> Profile:
     db = _Session()
     try:
         return db.query(Profile).filter(Profile.id == user_id).first()
-    finally:
-        db.close()
-
-
-def _set_limite(limite: int, usadas: int = 0, user_id="test-user-123"):
-    db = _Session()
-    try:
-        perfil = db.query(Profile).filter(Profile.id == user_id).first()
-        perfil.searches_limit = limite
-        perfil.searches_used = usadas
-        db.commit()
     finally:
         db.close()
 
@@ -87,17 +76,14 @@ def test_lote_sem_dominio_reconhecido_e_recusado(client):
     assert resp.status_code == 422
 
 
-def test_lote_avisa_quando_nao_cabe_na_cota(client):
-    client.get("/api/me")
-    _set_limite(limite=5, usadas=4)
+def test_lote_grande_e_aceito_inteiro(client):
+    """Não há cota para o lote respeitar: o que entrou na lista vai para a fila."""
     resp = client.post("/api/batches", json={
-        "domains": ["a.com.br", "b.com.br", "c.com.br"],
+        "domains": [f"empresa{i}.com.br" for i in range(30)],
     })
     dados = resp.json()
-    assert dados["cabe_na_quota"] is False
-    assert dados["quota_restante"] == 1
-    # O lote é criado mesmo assim: o resto espera a renovação do ciclo.
-    assert dados["total"] == 3
+    assert dados["total"] == 30
+    assert "quota_restante" not in dados
 
 
 def test_lote_conta_entradas_ignoradas(client):
@@ -149,9 +135,8 @@ def test_rodada_respeita_o_orcamento_de_tempo(client):
     assert resumo["remaining"] == 5
 
 
-def test_lote_para_quando_a_cota_acaba_e_guarda_o_resto(client):
-    client.get("/api/me")
-    _set_limite(limite=2, usadas=0)
+def test_lote_roda_ate_o_fim_sem_limite_de_uso(client):
+    """Nada interrompe a fila por consumo: ela só para quando esvazia."""
     batch_id = client.post("/api/batches", json={
         "domains": ["a.com.br", "b.com.br", "c.com.br", "d.com.br"],
     }).json()["batch_id"]
@@ -159,11 +144,10 @@ def test_lote_para_quando_a_cota_acaba_e_guarda_o_resto(client):
     with patch("services.enrichment_service.enrich_company", side_effect=_mock_enrich):
         dados = client.post(f"/api/batches/{batch_id}/run").json()
 
-    assert dados["quota_reached"] is True
-    assert dados["done"] == 2
-    # Os domínios que não couberam continuam na fila, não viram erro.
-    assert dados["progresso"]["na_fila"] == 2
+    assert dados["done"] == 4
+    assert dados["progresso"]["na_fila"] == 0
     assert dados["progresso"]["com_erro"] == 0
+    assert dados["progresso"]["finalizado"] is True
 
 
 def test_falha_de_coleta_e_retentada_e_depois_desiste(client):
@@ -183,17 +167,16 @@ def test_falha_de_coleta_e_retentada_e_depois_desiste(client):
         db.close()
 
 
-def test_dominio_ja_pesquisado_sai_do_cache_sem_gastar_cota(client):
+def test_dominio_ja_pesquisado_sai_do_cache_sem_nova_coleta(client):
     with patch("services.enrichment_service.enrich_company", side_effect=_mock_enrich):
         client.post("/api/enrich", json={"domain": "nubank.com.br"})
-    usadas = client.get("/api/me").json()["searches_used"]
 
     batch_id = client.post("/api/batches", json={"domains": ["nubank.com.br"]}).json()["batch_id"]
     with patch("services.enrichment_service.enrich_company", side_effect=_mock_enrich) as coleta:
         client.post(f"/api/batches/{batch_id}/run")
 
     coleta.assert_not_called()
-    assert client.get("/api/me").json()["searches_used"] == usadas
+    assert len(client.get("/api/leads").json()) == 1
 
 
 def test_dois_workers_nao_processam_o_mesmo_job(client):

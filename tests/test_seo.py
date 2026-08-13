@@ -113,7 +113,9 @@ def test_landing_structured_data(client):
     blocks = {block["@type"]: block for block in _json_ld(client.get("/").text)}
     assert {"Organization", "WebSite", "SoftwareApplication", "FAQPage"} <= blocks.keys()
     assert blocks["Organization"]["url"] == "http://testserver/"
-    assert [offer["price"] for offer in blocks["SoftwareApplication"]["offers"]] == ["0", "97"]
+    # Uma oferta, preço zero: o acesso é aberto. Um preço aqui apareceria no
+    # resultado de busca prometendo uma cobrança que o produto não faz.
+    assert [offer["price"] for offer in blocks["SoftwareApplication"]["offers"]] == ["0"]
 
 
 def test_faq_html_and_structured_data_stay_in_sync(client):

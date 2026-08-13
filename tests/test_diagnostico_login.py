@@ -105,12 +105,15 @@ def test_reconhece_token_bom(raw_client, monkeypatch):
     assert _veredito(raw_client.get(ROTA, headers=_com(bom)))["situacao"] == "ok"
 
 
-def test_reconhece_sessao_demo(raw_client, monkeypatch):
-    """Demo não é login real: sem isto, quem está no modo demo lê um
-    diagnóstico de chave e vai mexer numa configuração que está certa."""
-    monkeypatch.setenv("DEMO_MODE", "1")
-    v = _veredito(raw_client.get(ROTA, headers=_com("demo-session-abc")))
-    assert v["situacao"] == "demo"
+def test_credencial_que_nao_e_jwt_e_reportada_como_ilegivel(raw_client, monkeypatch):
+    """
+    Sem o modo demonstração, um token inventado não tem tratamento especial: o
+    diagnóstico precisa dizer o que ele é (texto que não é JWT), não deixar a
+    pessoa procurando erro de chave.
+    """
+    monkeypatch.setenv("SUPABASE_JWT_SECRET", SEGREDO_VALIDO)
+    v = _veredito(raw_client.get(ROTA, headers=_com("nao-e-um-jwt")))
+    assert v["situacao"] == "token_ilegivel"
 
 
 # ── A trava ──────────────────────────────────────────────────────────────────

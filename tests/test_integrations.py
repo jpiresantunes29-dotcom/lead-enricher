@@ -11,21 +11,12 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from tests.test_api import client, clean_db, _Session, MOCK_ENRICH_RESULT  # noqa: F401
-from models.database import Profile
 
 
 def _make_lead(client):
     with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
         resp = client.post("/api/enrich", json={"domain": "nubank.com.br"})
     return resp.json()["data"]
-
-
-def _make_pro_profile():
-    db = _Session()
-    profile = db.query(Profile).filter(Profile.id == "test-user-123").first()
-    profile.plan = "pro"
-    db.commit()
-    db.close()
 
 
 # ── status de integrações ─────────────────────────────────────────────────────
@@ -236,18 +227,19 @@ def test_ai_summary_unconfigured_returns_503(client, monkeypatch):
     assert resp.status_code == 503
 
 
-def test_ai_summary_free_plan_gated(client, monkeypatch):
+def test_ai_summary_nao_depende_de_plano(client, monkeypatch):
+    """A IA era feature de plano pago. Com a chave configurada, ela é de todos."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
-    monkeypatch.delenv("AI_ALLOW_FREE", raising=False)
     lead = _make_lead(client)
-    resp = client.post(f"/api/leads/{lead['id']}/ai-summary")
-    assert resp.status_code == 402
+
+    with patch("services.ai_insights._call_claude", return_value="Resumo."):
+        resp = client.post(f"/api/leads/{lead['id']}/ai-summary")
+    assert resp.status_code == 200
 
 
 def test_ai_summary_generates_and_caches(client, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     lead = _make_lead(client)
-    _make_pro_profile()
 
     with patch("services.ai_insights._call_claude", return_value="Resumo executivo da Nubank.") as mock_ai:
         r1 = client.post(f"/api/leads/{lead['id']}/ai-summary")

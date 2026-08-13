@@ -658,7 +658,6 @@
         email: d.email && d.email.has ? { masked: d.email.masked, confidence: d.email.confidence } : { masked: null, confidence: 0 },
         phone: d.phone && d.phone.has ? { masked: d.phone.masked, confidence: d.phone.confidence, is_company_phone: d.phone.is_company_phone } : { masked: null, confidence: 0 },
       };
-      state.credits = d.credits_left;
       state.view = 'person';
       render();
       return;
@@ -701,7 +700,7 @@
   setInterval(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
-      state = { view: 'idle', data: null, error: null, busy: false, msg: null, credits: state.credits };
+      state = { view: 'idle', data: null, error: null, busy: false, msg: null };
       run(false);
     }
   }, 900);
