@@ -2795,17 +2795,19 @@ async function loadSettings(){
   const body=document.getElementById('settings-body');
   body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   try{
-    const[meR,connR,waR]=await Promise.all([
+    const[meR,connR,waR,lushaR]=await Promise.all([
       authFetch('/api/me'),
       authFetch('/api/crm/connections'),
       authFetch('/api/wa/connection'),
+      authFetch('/api/me/lusha'),
     ]);
     const me=meR.ok?await meR.json():_profile;
     const conns=connR.ok?await connR.json():[];
     const wa=waR.ok?await waR.json():null;
+    const lusha=lushaR.ok?await lushaR.json():null;
     if(me)_profile=me;
     updateNavUser();
-    renderSettings(me,conns,wa);
+    renderSettings(me,conns,wa,lusha);
   }catch(e){
     if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
   }
@@ -2820,6 +2822,7 @@ const IC_PLUG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 const IC_EXT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg>';
 const IC_EXIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
 const IC_WA='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 20.5l1.7-5.2A8.5 8.5 0 1 1 21 11.5z"/><path d="M8.5 9.5c0 3.3 2.7 6 6 6"/></svg>';
+const IC_LUSHA='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4v4"/></svg>';
 
 /* O cartão do WhatsApp. Diz sempre por qual número as mensagens saem: com a
    conta conectada, o do usuário; sem ela, o do servidor — e "configurado"
@@ -2887,7 +2890,7 @@ function _cardWhatsApp(wa){
     </div>`;
 }
 
-function renderSettings(me,conns,wa){
+function renderSettings(me,conns,wa,lusha){
   const body=document.getElementById('settings-body');
 
   const webhook=(conns||[]).find(c=>c.provider==='webhook');
@@ -2933,6 +2936,32 @@ function renderSettings(me,conns,wa){
     </div>
 
     ${_cardWhatsApp(wa)}
+
+    <div class="panel panel-pad">
+      ${head(IC_LUSHA,'Lusha (enriquecimento pago, opcional)','Conecte a chave API da sua conta Lusha para enriquecer contatos com telefone e dados adicionais. A chave fica cifrada e só você gasta seus créditos. Sem ela, tudo funciona 100% gratuito. Você gera a chave em app.lusha.com → Hub de APIs → Copiar chave da API.')}
+      ${lusha?.conectado
+        ?`<div class="crm-conn">
+          <div class="crm-conn-info">
+            <span class="crm-conn-name">Conectado</span>
+            <span class="crm-conn-meta">Sua chave está salva e criptografada</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="crm-conn-state on">ativo</span>
+            <button class="set-btn danger" onclick="desconectarLusha()">Desconectar</button>
+          </div>
+        </div>`
+        :''}
+      <div class="set-form">
+        <div class="set-field">
+          <label for="lusha-key">Chave da API</label>
+          <input id="lusha-key" class="set-input" type="password" placeholder="Sua chave da Lusha (começa com um UUID)" autocomplete="off" spellcheck="false" value=""/>
+        </div>
+        <div class="set-actions">
+          <button class="set-btn primary" onclick="conectarLusha()">${lusha?.conectado?'Atualizar chave':'Conectar Lusha'}</button>
+        </div>
+        <p id="lusha-feedback" class="set-feedback"></p>
+      </div>
+    </div>
 
     <div class="panel panel-pad">
       ${head(IC_EXT,'Extensão do navegador (LinkedIn)','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Revelar contato é livre — não há limite de revelações.')}
@@ -3010,6 +3039,42 @@ async function disconnectWhatsApp(){
     loadSettings();
   }catch(e){
     if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
+  }
+}
+
+/* ══════ LUSHA: enriquecimento pago (BYOA) ══════ */
+function _lushaFeedback(msg,ok){
+  const el=document.getElementById('lusha-feedback');
+  if(!el)return;
+  el.textContent=msg;
+  el.className='set-feedback '+(ok?'ok':'err');
+}
+
+async function conectarLusha(){
+  const chave=(document.getElementById('lusha-key')?.value||'').trim();
+  if(!chave){_lushaFeedback('Informe a chave da sua conta Lusha.',false);return;}
+
+  _lushaFeedback('Validando a chave com a Lusha…',true);
+  try{
+    const resp=await authFetch('/api/me/lusha',{method:'PUT',body:JSON.stringify({api_key:chave})});
+    const json=await resp.json();
+    if(!resp.ok){_lushaFeedback(json.detail||'A chave não foi aceita pela Lusha.',false);return;}
+    _lushaFeedback('Lusha conectado. Seus créditos serão usados no enriquecimento.',true);
+    document.getElementById('lusha-key').value='';
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_lushaFeedback('Erro de conexão.',false);
+  }
+}
+
+async function desconectarLusha(){
+  if(!confirm('Desconectar a Lusha? O enriquecimento continuará pelo caminho gratuito.'))return;
+  try{
+    const resp=await authFetch('/api/me/lusha',{method:'DELETE'});
+    if(!resp.ok){_lushaFeedback('Não foi possível desconectar.',false);return;}
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_lushaFeedback('Erro de conexão.',false);
   }
 }
 
