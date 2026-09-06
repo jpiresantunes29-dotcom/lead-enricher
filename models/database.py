@@ -605,7 +605,15 @@ def _column_ddl(column) -> str:
     default = getattr(column, "default", None)
     if default is not None and getattr(default, "is_scalar", False):
         value = default.arg
-        literal = f"'{value}'" if isinstance(value, str) else str(int(value) if isinstance(value, bool) else value)
+        if isinstance(value, bool):
+            # TRUE/FALSE (não 1/0): o Postgres recusa DEFAULT 1 numa coluna
+            # BOOLEAN ("column is of type boolean but default expression is
+            # of type integer"), e o SQLite aceita TRUE/FALSE desde a 3.23.
+            literal = "TRUE" if value else "FALSE"
+        elif isinstance(value, str):
+            literal = f"'{value}'"
+        else:
+            literal = str(value)
         return f"{column.name} {ddl_type} DEFAULT {literal}"
     return f"{column.name} {ddl_type}"
 
