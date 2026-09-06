@@ -303,11 +303,11 @@ def test_reentrega_da_meta_nao_gera_segunda_resposta(client):
 
 # ── A jornada travada pelo relógio, retomada pelo cron ──────────────────────
 
-def test_mensagem_da_madrugada_e_respondida_pelo_cron(client, monkeypatch):
+def test_mensagem_da_madrugada_e_respondida_na_hora(client, monkeypatch):
     """
-    O lead escreve às 3h. O portão recusa na hora — mandar mensagem comercial
-    de madrugada é como se perde o número. O cron retoma quando amanhece, e é
-    isso que impede o silêncio de virar lead perdido.
+    Restrição de horário foi desativada: a IA responde de madrugada como
+    responderia em qualquer outro horário, sem esperar o cron retomar depois.
+    A retomada do cron em si tem cobertura própria em test_wa_turno.py.
     """
     monkeypatch.setenv("CRON_SECRET", "segredo-do-cron")
     meta = MetaFalsa()
@@ -316,26 +316,14 @@ def test_mensagem_da_madrugada_e_respondida_pelo_cron(client, monkeypatch):
     with patch("services.wa.client.requests.post", side_effect=meta.post):
         client.post("/api/wa/start", json={"lead_id": lead_id})
 
-        # 3h da manhã: silêncio noturno.
-        monkeypatch.setattr(gate, "service_window", lambda agora=None: (False, False))
         with _ia_responde(brain.CONVERSANDO, "Bom dia! Posso te ligar hoje?"):
             _lead_escreve(client, "oi, vi sua mensagem")
-    assert meta.textos == []
+
+    assert meta.textos == ["Bom dia! Posso te ligar hoje?"]
 
     conversa = _conversa(client)
-    assert conversa["ai_status"] == AI_ACTIVE      # continua no automático
-    assert conversa["aguardando_voce"] is False    # não é pendência humana
-
-    # Amanheceu. O cron passa e responde o que ficou para trás.
-    monkeypatch.setattr(gate, "service_window", lambda agora=None: (True, False))
-    with patch("services.wa.client.requests.post", side_effect=meta.post), \
-         _ia_responde(brain.CONVERSANDO, "Bom dia! Posso te ligar hoje?"):
-        resp = client.post("/api/internal/wa/pending",
-                           headers={"Authorization": "Bearer segredo-do-cron"})
-
-    assert resp.status_code == 200
-    assert resp.json()["enviou"] == 1
-    assert meta.textos == ["Bom dia! Posso te ligar hoje?"]
+    assert conversa["ai_status"] == AI_ACTIVE
+    assert conversa["aguardando_voce"] is False
 
 
 # ── A corrida entre a IA e o clique ─────────────────────────────────────────

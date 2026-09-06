@@ -162,17 +162,19 @@ def test_assumir_cala_a_automacao_na_hora(client):
 
 def _dentro_do_horario(conversa):
     """
-    Um instante que cai no horário comercial e dentro da janela da conversa.
+    Um instante dentro da janela de 24 h da conversa.
 
-    Sem isto o teste passaria ou falharia conforme a hora em que a suíte roda.
+    Restrição de horário comercial foi desativada (`gate.service_window`
+    sempre libera); o único limite que resta é a janela da Meta. Ancorar em
+    `created_at` em vez de pular para "17h do próximo dia útil" evita que o
+    teste passe ou falhe conforme o dia da semana em que a suíte roda — o bug
+    que fazia isto falhar todo fim de semana.
     """
-    from datetime import datetime, UTC
+    from datetime import UTC
     base = conversa.created_at or utcnow()
     if base.tzinfo is None:
         base = base.replace(tzinfo=UTC)
-    return base.replace(hour=17, minute=0, second=0, microsecond=0) + timedelta(
-        days=(0 if base.weekday() < 5 else 7 - base.weekday())
-    )
+    return base
 
 
 def test_pausar_e_retomar_voltam_ao_estado_anterior(client):

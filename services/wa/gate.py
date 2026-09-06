@@ -342,7 +342,7 @@ def can_start(db: Session, lead: Lead, phone_e164: str,
             if recente and not respondeu_depois:
                 return Decision(False, DENY_AWAITING_REPLY)
 
-    return Decision(True, after_hours=fora_do_horario)
+    return Decision(True, after_hours=False)
 
 
 def can_send(db: Session, conversation: Conversation,

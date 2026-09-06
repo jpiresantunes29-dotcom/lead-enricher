@@ -242,69 +242,54 @@ def test_resposta_enviada_nao_estende_a_janela(db):
     assert conversa.window_expires_at == prazo
 
 
-# ── Horário ──────────────────────────────────────────────────────────────────
+# ── Horário: restrições desativadas, a IA responde 24/7 ─────────────────────
 
-def test_madrugada_nao_envia_nada(db):
+def test_madrugada_envia_normalmente(db):
+    """Sem teto de horário: madrugada envia como qualquer outro instante."""
     lead, conversa = _conversa(db)
     decisao = gate.can_send(db, conversa, agora=MADRUGADA)
-    assert decisao.allowed is False
-    assert decisao.reason == gate.DENY_QUIET_HOURS
+    assert decisao.allowed is True
+    assert decisao.after_hours is False
 
 
-def test_fora_do_expediente_envia_em_modo_curto(db):
-    """Sumir com quem acabou de escrever custa o lead; responder curto, não."""
+def test_fora_do_expediente_envia_normalmente(db):
     lead, conversa = _conversa(db)
     decisao = gate.can_send(db, conversa, agora=FORA_DO_HORARIO)
     assert decisao.allowed is True
-    assert decisao.after_hours is True
+    assert decisao.after_hours is False
 
 
-def test_sabado_conta_como_fora_do_expediente(db):
+def test_sabado_envia_normalmente(db):
     lead, conversa = _conversa(db, agora=SABADO)
     decisao = gate.can_send(db, conversa, agora=SABADO)
     assert decisao.allowed is True
-    assert decisao.after_hours is True
+    assert decisao.after_hours is False
 
 
-def test_janela_de_servico_sem_fuso_disponivel_nega(monkeypatch):
-    """Horário indeterminado é motivo para não enviar, não para enviar."""
+def test_janela_de_servico_sempre_libera_mesmo_sem_fuso(monkeypatch):
+    """Restrição de horário desativada: nem a ausência de fuso barra o envio."""
     monkeypatch.setattr(gate, "_zona", lambda: None)
-    assert gate.service_window(COMERCIAL) == (False, False)
+    assert gate.service_window(COMERCIAL) == (True, False)
 
 
-# ── O que a recusa por horário conta ─────────────────────────────────────────
-# Recusar sem dizer quando volta manda o usuário adivinhar — e ele adivinha
-# clicando de novo. Estes testes seguram a parte da mensagem que é acionável.
-
-def test_recusa_por_horario_diz_quando_volta(db):
-    lead, conversa = _conversa(db)
-    decisao = gate.can_send(db, conversa, agora=MADRUGADA)
-    assert "volta a ser possível" in decisao.message
-    assert gate.faixa_de_envio() in decisao.message
-
-
-def test_recusa_de_abertura_tambem_diz_quando_volta(db):
-    lead, conversa = _conversa(db, janela_horas=None)
-    decisao = gate.can_start(db, lead, TELEFONE, conversa, agora=MADRUGADA)
-    assert decisao.reason == gate.DENY_QUIET_HOURS
-    assert "volta a ser possível" in decisao.message
-
-
-def test_proxima_abertura_cai_no_fim_do_silencio(db):
-    """Madrugada de terça: a próxima abertura é às 8h do mesmo dia."""
+def test_proxima_abertura_e_sempre_a_proxima_hora(db):
+    """Sem janela que feche, 'próxima abertura' é sempre a virada de hora seguinte."""
     volta = gate.proxima_abertura(MADRUGADA)
     assert volta is not None
-    assert volta.hour == gate.QUIET_END_HOUR
-    assert volta.date() == MADRUGADA.astimezone(volta.tzinfo).date()
+    assert volta == (
+        MADRUGADA.astimezone(volta.tzinfo).replace(minute=0, second=0, microsecond=0)
+        + timedelta(hours=1)
+    )
     assert gate.service_window(volta)[0] is True
 
 
-def test_janela_aberta_informa_quando_fecha_e_nao_quando_volta():
+def test_janela_de_envio_nunca_fecha():
+    """Sem restrição de horário, a janela não tem previsão de fechamento."""
     janela = gate.janela_de_envio(COMERCIAL)
     assert janela["pode_enviar"] is True
     assert janela["volta_em"] is None
-    assert "fecha" in janela["explicacao"]
-    assert janela["muda_em"]
+    assert "fecha" not in janela["explicacao"]
+    assert janela["muda_em"] is None
 
 
 def test_janela_sem_fuso_se_declara_indeterminada(monkeypatch):
@@ -400,11 +385,11 @@ def test_abertura_barrada_para_quem_nao_e_lead(db):
     assert decisao.reason == gate.DENY_NOT_A_LEAD
 
 
-def test_abertura_barrada_na_madrugada(db):
+def test_abertura_e_permitida_na_madrugada(db):
+    """Sem teto de horário: abertura funciona a qualquer hora."""
     lead, _ = _conversa(db)
     decisao = gate.can_start(db, lead, TELEFONE, None, agora=MADRUGADA)
-    assert decisao.allowed is False
-    assert decisao.reason == gate.DENY_QUIET_HOURS
+    assert decisao.allowed is True
 
 
 def test_abertura_barrada_quando_a_conversa_ja_esta_aberta(db):

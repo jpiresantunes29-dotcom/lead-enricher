@@ -308,16 +308,18 @@ def test_janela_fechada_vira_pendencia(db):
     assert leitura.call_count == 0
 
 
-def test_madrugada_nao_responde_nem_marca_pendencia(db, monkeypatch):
-    """Recusa temporária: o cron retoma no horário, ninguém precisa ser chamado."""
+def test_madrugada_responde_normalmente(db, monkeypatch):
+    """Sem teto de horário: a mensagem da madrugada roda o turno como qualquer outra."""
     monkeypatch.setattr(gate, "service_window", lambda agora=None: (False, False))
     lead, conversa = _conversa(db)
-    with patch.object(brain, "ler") as leitura:
+    with patch.object(brain, "ler", return_value=_leitura(brain.CONVERSANDO)) as leitura, \
+         patch.object(wa_client, "send_text",
+                      return_value=wa_client.SendResult(True, "wamid.X")):
         turno = orchestrator.responder(db, conversa)
 
-    assert turno.acao == orchestrator.NAO_FEZ_NADA
-    assert leitura.call_count == 0
-    assert conversa.ai_status == AI_ACTIVE   # continua no automático
+    assert turno.acao == orchestrator.ENVIOU
+    assert leitura.call_count == 1
+    assert conversa.ai_status == AI_ACTIVE
 
 
 def test_turno_nao_roda_quando_a_ultima_palavra_foi_nossa(db):
@@ -333,9 +335,13 @@ def test_turno_nao_roda_quando_a_ultima_palavra_foi_nossa(db):
     assert leitura.call_count == 0
 
 
-# ── Fora do expediente ──────────────────────────────────────────────────────
+# ── Fora do expediente: teto removido, resposta sempre no modo normal ──────
 
-def test_fora_do_expediente_responde_em_modo_curto(db, monkeypatch):
+def test_fora_do_expediente_nao_ativa_mais_o_modo_curto(db, monkeypatch):
+    """
+    `gate.service_window` continua existindo, mas `can_send` não o consulta
+    mais — o monkeypatch aqui é só para provar que ele ficou sem efeito.
+    """
     monkeypatch.setattr(gate, "service_window", lambda agora=None: (True, True))
     lead, conversa = _conversa(db)
 
@@ -345,24 +351,24 @@ def test_fora_do_expediente_responde_em_modo_curto(db, monkeypatch):
         turno = orchestrator.responder(db, conversa)
 
     assert turno.acao == orchestrator.ENVIOU
-    assert leitura.call_args.kwargs["fora_do_horario"] is True
-    assert conversa.after_hours_turns == 1
+    assert leitura.call_args.kwargs["fora_do_horario"] is False
+    assert conversa.after_hours_turns == 0
 
 
-def test_teto_de_trocas_fora_do_expediente_silencia(db, monkeypatch):
-    """O limite é uma regra em código, não uma instrução no prompt."""
+def test_teto_de_trocas_fora_do_expediente_nao_bloqueia_mais(db, monkeypatch):
+    """O teto era condicionado a `after_hours`, que agora é sempre False."""
     monkeypatch.setattr(gate, "service_window", lambda agora=None: (True, True))
     lead, conversa = _conversa(db)
     conversa.after_hours_turns = orchestrator.MAX_TURNOS_FORA_DO_HORARIO
     db.commit()
 
-    with patch.object(brain, "ler") as leitura, \
-         patch.object(wa_client, "send_text") as envio:
+    with patch.object(brain, "ler", return_value=_leitura(brain.CONVERSANDO)) as leitura, \
+         patch.object(wa_client, "send_text",
+                      return_value=wa_client.SendResult(True, "wamid.X")):
         turno = orchestrator.responder(db, conversa)
 
-    assert turno.acao == orchestrator.NAO_FEZ_NADA
-    assert leitura.call_count == 0
-    assert envio.call_count == 0
+    assert turno.acao == orchestrator.ENVIOU
+    assert leitura.call_count == 1
 
 
 def test_turno_em_horario_comercial_zera_o_contador(db):
