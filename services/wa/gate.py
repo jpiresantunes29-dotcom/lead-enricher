@@ -134,32 +134,12 @@ def _entre(hora: time, inicio: int, fim: int) -> bool:
 
 def service_window(agora: Optional[datetime] = None) -> tuple[bool, bool]:
     """
-    Devolve `(pode_enviar, fora_do_horario)` para o instante dado.
+    ⏰ RESTRIÇÕES DE HORÁRIO DESATIVADAS
 
-    Três faixas, não duas: dentro do comercial fala normalmente; à noite não
-    fala nada; no meio (começo da manhã, fim da tarde, fim de semana) responde
-    de forma curta, porque sumir com quem acabou de escrever custa o lead.
+    Retorna sempre (True, False) = "pode enviar a qualquer hora"
+    A IA responde 24/7 sem limitações de horário comercial.
     """
-    zona = _zona()
-    if zona is None:
-        return False, False
-
-    agora = agora or utcnow()
-    if agora.tzinfo is None:
-        agora = agora.replace(tzinfo=UTC)
-    local = agora.astimezone(zona)
-
-    fim_de_semana = local.weekday() >= 5
-    if fim_de_semana and WEEKEND_IS_QUIET:
-        return False, False
-    if _entre(local.timetz(), QUIET_START_HOUR, QUIET_END_HOUR):
-        return False, False
-
-    comercial = (
-        not fim_de_semana
-        and _entre(local.timetz(), SERVICE_START_HOUR, SERVICE_END_HOUR)
-    )
-    return True, not comercial
+    return True, False
 
 
 # ── Quando a janela muda de estado ───────────────────────────────────────────
@@ -347,10 +327,6 @@ def can_start(db: Session, lead: Lead, phone_e164: str,
     if optout.is_blocked(db, "phone", phone_e164):
         return Decision(False, DENY_OPTED_OUT)
 
-    pode, fora_do_horario = service_window(agora)
-    if not pode:
-        return Decision(False, DENY_QUIET_HOURS, detail=_detalhe_do_horario(agora))
-
     if conversation is not None:
         if _janela_aberta(conversation, agora):
             return Decision(False, DENY_ALREADY_OPEN)
@@ -408,8 +384,4 @@ def can_send(db: Session, conversation: Conversation,
     if not _janela_aberta(conversation, agora):
         return Decision(False, DENY_WINDOW_CLOSED)
 
-    pode, fora_do_horario = service_window(agora)
-    if not pode:
-        return Decision(False, DENY_QUIET_HOURS, detail=_detalhe_do_horario(agora))
-
-    return Decision(True, after_hours=fora_do_horario)
+    return Decision(True, after_hours=False)
