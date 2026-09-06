@@ -57,6 +57,14 @@ class Profile(Base):
     __tablename__ = "profiles"
 
     id = Column(String(36), primary_key=True)  # UUID from Supabase Auth
+    # Vem do claim `email` do JWT (Supabase sempre inclui), gravado/atualizado
+    # a cada login — não é a fonte de verdade da conta, só o endereço para
+    # onde o digest diário escreve. Nulo enquanto o perfil não loga nenhuma vez
+    # com um token que traga o claim (nunca deveria acontecer na prática).
+    email = Column(String(255), nullable=True)
+    # Liga/desliga o resumo diário por e-mail. Ligado por padrão: é o
+    # comportamento que a maioria quer, e quem não quer desliga uma vez.
+    digest_diario = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -107,6 +115,12 @@ class Lead(Base):
     sheet_row = Column(Integer, nullable=True)
     import_batch_id = Column(String(36), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    # Última vez que a coleta rodou para esta ficha (criação ou re-coleta).
+    # Nulo até a primeira coleta bem-sucedida — antes disso `created_at` já diz
+    # tudo. É o que decide quando um lead "esfriou" e precisa ser revisitado
+    # (services/jobs.enqueue_stale_refreshes): sem isso, um lead recoletado
+    # ontem voltaria para a fila hoje só porque `created_at` continua velho.
+    refreshed_at = Column(DateTime(timezone=True), nullable=True)
 
     decision_makers = orm_relationship("DecisionMaker", back_populates="lead", cascade="all, delete-orphan")
     activities = orm_relationship("Activity", back_populates="lead", cascade="all, delete-orphan")
@@ -404,6 +418,25 @@ class EmailPattern(Base):
     last_confirmed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PremiumEmailCheck(Base):
+    """
+    Cache de verificação premium (Hunter e afins) por e-mail.
+
+    Existe para nunca pagar duas vezes pela mesma resposta — a chave é o
+    e-mail, não a pessoa, porque o mesmo candidato pode aparecer em buscas de
+    decisores diferentes antes de qualquer `Person` existir para ele. É
+    também a base da contagem de uso do dia (`ProviderCall`, mais abaixo):
+    quando o teto diário é atingido, a resposta aqui guardada — mesmo velha —
+    ainda vale mais do que nada.
+    """
+    __tablename__ = "premium_email_checks"
+
+    email = Column(String(320), primary_key=True)
+    status = Column(String(20), nullable=False)   # valid|catch_all|invalid|unknown
+    provider = Column(String(40), nullable=False, default="hunter")
+    checked_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class Reveal(Base):
@@ -716,7 +749,7 @@ class WhatsAppConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "d92b4e15c7a3"
+ALEMBIC_HEAD = "b8ded539b15b"
 
 
 def _stamp_alembic_head() -> None:

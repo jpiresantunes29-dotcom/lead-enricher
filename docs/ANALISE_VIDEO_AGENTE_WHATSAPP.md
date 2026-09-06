@@ -94,9 +94,9 @@ decide regra crítica*, *sem WhatsApp não-oficial*, *sem servidor sempre-ligado
 
 - **O que é:** driblar a limitação da API oficial (perde-se o WhatsApp Web) com um painel que mostra a conversa e permite digitar manualmente.
 - **Por que é relevante:** sem isso, o time de vendas fica sem forma de intervir numa conversa individual.
-- **Classificação: Essencial — já implementado no backend.** `routers/wa.py` tem `pausar`/`assumir`/`retomar`, envio manual e status (`AI_ACTIVE`/`AI_PAUSED`/`HUMAN_HANDOFF`/`STOPPED`) exatamente como no vídeo.
-- **Como aplicar:** confirmar que a **UI** (aba "Conversas", provavelmente dentro do app de hash `index.html`, no padrão das outras telas) está de fato construída e testada manualmente — o roadmap trata isso como item de UI ainda a validar. Se a UI não estiver pronta, é o item de maior prioridade desta lista, pois sem ela o backend não tem uso prático.
-- **Impacto:** UI/frontend — nenhuma mudança de banco ou de IA necessária, já existe o suporte no backend.
+- **Classificação: Essencial — implementado e testado (2026-09-06).** `routers/wa.py` tem `pausar`/`assumir`/`retomar`, envio manual e status (`AI_ACTIVE`/`AI_PAUSED`/`HUMAN_HANDOFF`/`STOPPED`) exatamente como no vídeo; a UI é a aba "Conversas" (`templates/index.html` + `static/js/app.js`), no padrão de views por hash das outras telas.
+- **Como aplicou:** a aba passou a mostrar, ao lado do chat, a ficha do lead (planilha, etapa do funil, próximos agendamentos) e atalhos "Abrir WhatsApp"/"Copiar número" — o painel do dono do vídeo, mais o que o produto já tinha de CRM embutido. O simulador (`services/wa/sandbox.py`) deixou de ser uma tela própria e virou um card fixo "Conversa de teste" na mesma lista, testável sem sair da tela de produção.
+- **Impacto:** UI/frontend — nenhuma mudança de banco ou de IA necessária; o backend já dava suporte a tudo.
 
 ### 1.7 Templates de mensagem geridos pelo painel (criar modelo, escolher categoria, reabrir conversa)
 

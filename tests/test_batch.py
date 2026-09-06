@@ -135,6 +135,28 @@ def test_rodada_respeita_o_orcamento_de_tempo(client):
     assert resumo["remaining"] == 5
 
 
+def test_lote_maior_que_o_numero_de_workers_processa_tudo(client, monkeypatch):
+    """
+    Com menos workers do que domínios, a rodada precisa preencher e drenar o
+    pool várias vezes até esvaziar a fila — não só disparar o primeiro lote e
+    parar.
+    """
+    monkeypatch.setattr(jobs, "JOBS_MAX_WORKERS", 2)
+    dominios = [f"empresa{i}.com.br" for i in range(7)]
+    batch_id = client.post("/api/batches", json={"domains": dominios}).json()["batch_id"]
+
+    with patch("services.enrichment_service.enrich_company", side_effect=_mock_enrich):
+        resp = client.post(f"/api/batches/{batch_id}/run")
+
+    dados = resp.json()
+    assert dados["processed"] == 7
+    assert dados["done"] == 7
+    assert dados["remaining"] == 0
+
+    leads = client.get("/api/leads").json()
+    assert {l["domain"] for l in leads} == set(dominios)
+
+
 def test_lote_roda_ate_o_fim_sem_limite_de_uso(client):
     """Nada interrompe a fila por consumo: ela só para quando esvazia."""
     batch_id = client.post("/api/batches", json={

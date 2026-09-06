@@ -16,14 +16,14 @@ sessões demo não veem mais os dados umas das outras.
 - Pendente: rotina de limpeza de perfis/leads demo antigos (TTL ~7 dias);
   e `DEMO_MODE=0` nas env vars da Vercel se quiser desligar o demo em produção.
 
-### 0.2 Enriquecimento assíncrono (fila)
-Hoje `/api/enrich` é síncrono: a função fica presa ~10–30 s por busca
-(scraping + DNS + LinkedIn). **Na Vercel isso é crítico**: o `maxDuration` da
-função é 60 s (já configurado em vercel.json) — buscas lentas estouram o limite.
-- Ação: tabela `jobs` (id, lead_id, status, tentativa) + processamento via
-  Vercel Cron / função dedicada com fluid compute + polling do front
-  (`GET /api/leads/{id}` já devolve status).
-- Esforço: 1–2 dias. Pré-requisito para o 1.1 (lote).
+### 0.2 Enriquecimento assíncrono (fila) ✅ feito
+`services/jobs.py` — tabela `jobs`, reserva por UPDATE condicional (seguro com
+cron e navegador rodando juntos), recuperação de job travado
+(`reclaim_stale`), retentativas (`MAX_ATTEMPTS`). Processado pelo navegador
+(`POST /api/batches/{id}/run`) e pelo cron (`POST /api/internal/jobs/run`,
+`vercel.json`). Desde 2026-09, a coleta de vários domínios roda em paralelo
+dentro de cada rodada (`JOBS_MAX_WORKERS`) — só a coleta de rede é paralela;
+a escrita no banco continua sequencial na mesma sessão.
 
 ### 0.3 Alembic como fonte única de migração
 `models/database.py::_ensure_new_columns()` e `alembic/` coexistem.
@@ -48,8 +48,10 @@ Parcialmente feito em 2026-07-05 (suíte foi de 68 → 80 testes):
 - ✅ `/api/followups/today` (`tests/test_activities.py`): o filtro por tipo
   inexistente que zerava a fila do dia.
 - ✅ páginas institucionais (`tests/test_api.py`).
-- Pendente: `billing` (webhook Stripe — idempotência, upgrade/downgrade) e
-  `crm_config`. Esforço: ~1 dia.
+- ✅ `crm_config` (`tests/test_integrations.py`): toggle e delete de conexão,
+  incluindo conexão inexistente (404).
+- `billing`/Stripe foi removido do produto (decisão de não cobrar por
+  enquanto) — item cancelado, não pendente.
 
 ---
 
@@ -82,8 +84,8 @@ janeiro a julho). O objetivo é substituir o Excel, não conversar com ele:
   é herdado do e-mail quando combina com o nome da empresa (8 casos na base
   real teriam enriquecido a empresa errada).
 
-Pendente: fila server-side (item 0.2) para o usuário poder fechar a aba;
-hoje o enriquecimento em lote depende da aba aberta.
+Fila server-side (item 0.2) feita — o cron cobre quem fecha a aba antes do
+lote terminar, além do processamento no cliente descrito acima.
 
 ### 1.1 Importação de planilha + lote ✅ feito em 2026-08-05
 Relançado sem depender da fila do item 0.2 — a fila roda **no cliente**, um
@@ -108,8 +110,7 @@ Como funciona hoje:
   progresso com "Parar", tratamento de 402 (cota) e 429 (rate limit). No
   histórico, lead importado ganha a tag "planilha" e um botão "Enriquecer".
 
-Pendente (herda do 0.2): fila server-side para o usuário poder fechar a aba
-durante o enriquecimento em lote.
+Fila server-side (herdava do 0.2) feita — ver nota acima.
 
 ### 1.2 Notas e edição manual do lead
 Hoje o lead é 100 % automático. Vendedor precisa corrigir telefone, adicionar
@@ -117,11 +118,16 @@ contexto ("indicação do fulano") e marcar campos como confirmados.
 - `PATCH /api/leads/{id}` (campos editáveis whitelist) + edição inline na UI.
 - Esforço: 1 dia.
 
-### 1.3 Digest diário de follow-ups por e-mail
-O badge "hoje" só aparece com o app aberto. Um e-mail 8h com a fila do dia
-(follow-ups atrasados + de hoje, link direto pro lead) cria hábito.
-- Resend/Postmark + cron. Opt-in em Configurações.
-- Esforço: 1–2 dias.
+### 1.3 Digest diário por e-mail ✅ feito em 2026-09-06
+`services/digest.py` + `POST /api/internal/digest` (cron 11h UTC,
+`vercel.json`), via Resend (`services/mailer.py`, já existia para o opt-out).
+Cobre: novos leads, conversas de WhatsApp iniciadas, respostas recebidas e
+conversas aguardando resposta do usuário nas últimas 24h — usuário sem
+nenhuma atividade não recebe nada, para não virar e-mail que ninguém abre.
+Liga/desliga em `PATCH /api/me` (`digest_diario`, ligado por padrão).
+- Pendente: não cobre follow-ups atrasados especificamente (isso ainda
+  depende da tela de atividades, `routers/activities.py`) — se quiser esse
+  recorte, é uma extensão pequena de `services/digest.py`.
 
 ### 1.4 Multi-cargo na busca de decisores
 `DecisoresRequest.roles` já aceita lista, mas a UI manda 1 cargo por vez.
@@ -129,11 +135,17 @@ O badge "hoje" só aparece com o app aberto. Um e-mail 8h com a fila do dia
   (ex.: sempre busca CTO + Diretor de TI).
 - Esforço: meio dia (backend pronto).
 
-### 1.5 Refresh automático de leads quentes
-Lead em estágio `oportunidade`/`reuniao_agendada` re-enriquece a cada 30 dias
-(funcionários, MX e decisores mudam). Notificar mudanças ("trocou de provedor
-de e-mail — gancho de abordagem").
-- Esforço: 2 dias (depende de 0.2).
+### 1.5 Refresh automático de leads antigos ✅ feito em 2026-09-06
+`services/jobs.py::enqueue_stale_refreshes` — todo lead com `relationship ==
+LEAD` não revisitado há `STALE_LEAD_DAYS` (30 por padrão) volta sozinho para a
+fila (mesma ficha, sem duplicar), até `MAX_STALE_REFRESH_PER_ROUND` por
+rodada. Reaproveita o cron do item 0.2 (`POST /api/internal/jobs/run`) em vez
+de precisar de um agendamento novo.
+- Escopo diferente do que este item previa: aplica a **todo** lead ativo, não
+  só `oportunidade`/`reuniao_agendada` (o campo `stage` não distingue isso
+  hoje na query — daria para restringir por `stage` se fizer sentido depois).
+- Pendente: notificar mudanças detectadas (ex.: "trocou de provedor de
+  e-mail") — hoje só atualiza a ficha, sem comparar com o valor anterior.
 
 ### 1.6 Debounce e agrupamento de mensagens picotadas (WhatsApp)
 Quando o lead manda 3-5 mensagens seguidas rapidamente, agrupar e responder

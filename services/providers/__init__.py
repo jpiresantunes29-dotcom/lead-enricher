@@ -34,6 +34,11 @@ EMAIL_VERIFIERS = [hunter]
 CONTACT_FINDERS: list = []
 
 
+def any_email_verifier_configured() -> bool:
+    """Existe algum verificador premium de e-mail ativo (chave configurada)?"""
+    return any(p.is_configured() for p in EMAIL_VERIFIERS)
+
+
 def premium_verify_email(email: str) -> Optional[str]:
     """Tenta verificar via provedores premium configurados. None = sem resposta."""
     for provider in EMAIL_VERIFIERS:
@@ -76,6 +81,7 @@ def configured_providers() -> list:
 __all__ = [
     "cnpj_receita",
     "hunter",
+    "any_email_verifier_configured",
     "premium_verify_email",
     "premium_find_contacts",
     "configured_providers",

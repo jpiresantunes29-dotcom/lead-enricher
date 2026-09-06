@@ -314,7 +314,7 @@ async function signOut(){
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
-const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','conversas','simulador','history','settings'];
+const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','conversas','history','settings'];
 
 function nav(route){
   if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
@@ -354,11 +354,7 @@ const VIEW_META={
   },
   conversas:{
     title:'Conversas de WhatsApp',
-    sub:'O que cada lead respondeu e quem está respondendo por você. Assumir cala a automação na hora.',
-  },
-  simulador:{
-    title:'Simulador da IA',
-    sub:'Converse como se fosse o lead e veja a IA decidir em tempo real. Nada é enviado e nenhum lead real é tocado.',
+    sub:'O que cada lead respondeu e quem está respondendo por você. A conversa de teste, no topo da lista, não envia nada de verdade.',
   },
   history:{
     title:'Histórico de leads',
@@ -386,6 +382,9 @@ function showView(v){
 
 function applyRoute(){
   let h=location.hash.slice(1);
+  // O simulador virou a "conversa de teste" dentro de Conversas — link/aba
+  // salva do endereço antigo continua levando a algum lugar útil.
+  if(h==='simulador')h='conversas';
   if(h.startsWith('lead-')){
     const id=parseInt(h.slice(5),10);
     if(!_profile){_pendingRoute=h;showView('search');openAuthModal();return;}
@@ -409,7 +408,6 @@ function applyRoute(){
   else if(h==='pipeline')loadPipeline();
   else if(h==='followups')loadFollowups();
   else if(h==='conversas')loadConversas();
-  else if(h==='simulador')loadSimulador();
   else if(h==='history')loadHistory();
   else if(h==='settings')loadSettings();
 }
@@ -1083,22 +1081,34 @@ function renderResult(data){
    já estão paradas. */
 
 let _conversas=[];          // último carregamento da lista
-let _conversaAberta=null;   // id da conversa no painel da direita
+let _conversaAberta=null;   // id da conversa no painel da direita (ou TESTE_ID)
 let _conversasTimer=null;   // polling enquanto a tela está aberta
 let _waStatus=null;         // o que está configurado no servidor
 let _waMetrics=null;        // números do período (só nesta tela)
+
+// A "conversa de teste" é a sessão do simulador, mostrada como um card fixo
+// no topo da lista — mesmo agente, sem nada saindo para a Meta. Um id
+// reservado (nunca um Conversation.id de verdade, que é inteiro) é o que
+// distingue os dois caminhos em abrirConversa()/renderPainelConversa().
+const TESTE_ID='__teste__';
+let _simStatus=null;
+let _simSessao=null;
+let _simOcupado=false;   // um turno por vez: dois em paralelo bagunçam o histórico
 
 async function loadConversas(){
   const root=document.getElementById('conversas-body');
   if(!root)return;
   if(!_conversas.length)root.innerHTML='<div class="muted-box">Carregando conversas…</div>';
   try{
-    const [st,lista,met]=await Promise.all([
+    const [st,lista,met,simSt,simSess]=await Promise.all([
       authFetch('/api/wa/status').then(r=>r.ok?r.json():null),
       authFetch('/api/wa/conversations').then(r=>r.ok?r.json():[]),
       authFetch('/api/wa/metrics').then(r=>r.ok?r.json():null),
+      authFetch('/api/wa/sandbox/status').then(r=>r.ok?r.json():null).catch(()=>null),
+      authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null).catch(()=>null),
     ]);
     _waStatus=st;_conversas=lista||[];_waMetrics=met;
+    _simStatus=simSt;_simSessao=simSess||_simSessao||{empresa:'',mensagens:[],turnos:[]};
     renderConversas();
     atualizarBadgeConversas(st);
   }catch(_){
@@ -1153,18 +1163,6 @@ function renderConversas(){
   // preenchê-la quando a janela virar, sem redesenhar a tela inteira.
   const horario=`<div id="cv-aviso-horario">${avisoHorarioHtml(st)}</div>`;
 
-  if(!_conversas.length){
-    root.innerHTML=`${aviso}${horario}<div class="empty-state-box">
-      <div class="empty-icon">${IC_CHAT}</div>
-      <div class="empty-title">Nenhuma conversa ainda</div>
-      <div class="empty-sub">Abra a ficha de um lead e clique em <strong>Iniciar contato por WhatsApp</strong>.
-      O primeiro convite parte de você; a partir da resposta do lead, a automação assume dentro das regras.<br/><br/>
-      Para ver a IA respondendo antes de gastar um convite, use o
-      <button class="btn-link" onclick="nav('simulador')">Simulador da IA</button>.</div>
-    </div>`;
-    return;
-  }
-
   // Recarga do polling: a tela já está montada. Redesenhar tudo apagaria o
   // texto que está sendo digitado e tiraria o foco da busca a cada 15 s — só
   // a lista e a conversa aberta precisam de notícia nova.
@@ -1188,6 +1186,7 @@ function renderConversas(){
         </div>
         <div class="cv-filters" id="cv-filters">${filtrosConversas()}</div>
       </div>
+      <div class="cv-list-teste" id="cv-teste-slot">${cardConversaTeste()}</div>
       <div class="cv-list" id="cv-list">${listaConversas()}</div>
     </aside>
     <section class="cv-panel" id="cv-panel">${painelVazio()}</section>
@@ -1233,6 +1232,13 @@ function conversasVisiveis(){
 function listaConversas(){
   const visiveis=conversasVisiveis();
   if(!visiveis.length){
+    if(!_conversas.length&&_cvFiltro==='todas'&&!_cvBusca){
+      return `<div class="cv-nada">Nenhuma conversa real ainda.<br/>
+        Abra a ficha de um lead e clique em <strong>Iniciar contato por WhatsApp</strong>.
+        O primeiro convite parte de você; a partir da resposta do lead, a
+        automação assume dentro das regras.<br/><br/>
+        Para testar a IA sem gastar um convite, use a conversa de teste, fixa acima.</div>`;
+    }
     return `<div class="cv-nada">${_cvBusca||_cvFiltro!=='todas'
       ? 'Nenhuma conversa com esse filtro.'
       : 'Nenhuma conversa ainda.'}</div>`;
@@ -1243,8 +1249,10 @@ function listaConversas(){
 function _redesenharLista(){
   const lista=document.getElementById('cv-list');
   const filtros=document.getElementById('cv-filters');
+  const testeSlot=document.getElementById('cv-teste-slot');
   if(lista)lista.innerHTML=listaConversas();
   if(filtros)filtros.innerHTML=filtrosConversas();
+  if(testeSlot)testeSlot.innerHTML=cardConversaTeste();
 }
 
 function filtrarConversas(valor){_cvBusca=valor||'';_redesenharLista();}
@@ -1342,6 +1350,32 @@ function cardConversa(c){
   </button>`;
 }
 
+/* O card fixo da conversa de teste: mesma aparência de um card real, sempre
+   no topo, para a IA já configurada poder ser testada mesmo sem nenhum lead
+   ter respondido ainda. Por baixo é a sessão do simulador — nada sai para a
+   Meta e nenhum lead real é tocado. */
+function cardConversaTeste(){
+  const ativo=_conversaAberta===TESTE_ID?' aberta':'';
+  const st=_simStatus||{};
+  const msgs=(_simSessao&&_simSessao.mensagens)||[];
+  const ultima=msgs[msgs.length-1];
+  const previa=ultima?esc((ultima.body||'').slice(0,80)):'Escreva uma mensagem como se fosse o lead';
+  const tom=st.ia_configurada?'ativa':'pausada';
+  const selo=st.ia_configurada?'IA de teste':'IA desligada';
+  return `<button type="button" class="cv-card cv-card-teste${ativo}" id="cv-card-teste"
+    onclick="abrirConversa('${TESTE_ID}')"
+    title="Conversa de teste — nada sai para a Meta e nenhum lead real é tocado">
+    ${avatarHtml('Conversa de teste',tom)}
+    <span class="cv-card-mid">
+      <span class="cv-card-nome">Conversa de teste <span class="cv-tag-teste">TESTE</span></span>
+      <span class="cv-card-previa">${previa}</span>
+    </span>
+    <span class="cv-card-end">
+      <span class="cv-selo ${tom}">${esc(selo)}</span>
+    </span>
+  </button>`;
+}
+
 /* ══════ TIQUES DE ENTREGA ══════
    Um risco = saiu daqui. Dois = a Meta entregou. Dois em azul = o lead abriu.
    Vermelho = falhou. É o único lugar da tela que diz se a mensagem chegou, e
@@ -1367,6 +1401,7 @@ async function abrirConversa(id,silencioso){
   document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
   const painel=document.getElementById('cv-panel');
   if(!painel)return;
+  if(id===TESTE_ID)return abrirConversaTeste(silencioso);
   if(!silencioso)painel.innerHTML='<div class="muted-box">Abrindo conversa…</div>';
   try{
     const resp=await authFetch(`/api/wa/conversations/${id}`);
@@ -1375,24 +1410,48 @@ async function abrirConversa(id,silencioso){
   }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
 }
 
+/* A conversa de teste não tem um id de servidor para consultar — a sessão do
+   simulador já foi carregada por loadConversas(). Só busca de novo se ainda
+   não tiver chegado (ex.: clique antes do primeiro carregamento terminar). */
+async function abrirConversaTeste(silencioso){
+  const painel=document.getElementById('cv-panel');
+  if(!painel)return;
+  if(!_simSessao&&!silencioso)painel.innerHTML='<div class="muted-box">Abrindo conversa de teste…</div>';
+  if(!_simStatus||!_simSessao){
+    try{
+      const [st,sess]=await Promise.all([
+        authFetch('/api/wa/sandbox/status').then(r=>r.ok?r.json():null),
+        authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null),
+      ]);
+      _simStatus=st;_simSessao=sess||{empresa:'',mensagens:[],turnos:[]};
+    }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';return;}
+  }
+  renderPainelConversa({teste:true});
+}
+
 /* ══════ O CHAT ══════
    Mensagens agrupadas por dia e por autor, como em qualquer cliente de
    conversa. O agrupamento não é enfeite: sem ele, cinco frases seguidas da
-   mesma pessoa viram cinco blocos com cinco assinaturas repetidas. */
-function bolhasDaConversa(mensagens){
-  if(!mensagens.length){
-    return `<div class="cv-msg-vazio">Nenhuma mensagem trocada ainda.<br/>
-      O convite foi enviado — a conversa começa quando o lead responder.</div>`;
+   mesma pessoa viram cinco blocos com cinco assinaturas repetidas.
+   A mesma função desenha a conversa real e a de teste — o que se testa é
+   exatamente o que o lead veria, e uma bolha com aparência própria testaria
+   outra coisa. `opts.teste` muda só o que de fato é diferente: a data vem em
+   epoch (não ISO), a saída é sempre rotulada "IA" e não há tique de entrega
+   (nada foi de fato entregue a ninguém). */
+function bolhasDeMensagens(mensagens,opts){
+  opts=opts||{};
+  if(!mensagens||!mensagens.length){
+    return `<div class="cv-msg-vazio">${opts.vazio||'Nenhuma mensagem trocada ainda.'}</div>`;
   }
   let dia='',autorAnterior='';
   return mensagens.map(m=>{
     const lado=m.direction==='in'?'in':'out';
-    const autor=m.direction==='in'?'Lead':(m.sent_by==='ai'?'IA':'Você');
-    const d=new Date(m.created_at);
-    const diaMsg=isNaN(d)?'':d.toDateString();
+    const autor=m.direction==='in'?'Lead':(opts.teste?'IA':(m.sent_by==='ai'?'IA':'Você'));
+    const quando=opts.teste?new Date((m.created_at||0)*1000):new Date(m.created_at);
+    const diaMsg=isNaN(quando)?'':quando.toDateString();
     let sep='';
     if(diaMsg&&diaMsg!==dia){
-      sep=`<div class="cv-day">${esc(_diaLabel(d))}</div>`;
+      sep=`<div class="cv-day">${esc(_diaLabel(quando))}</div>`;
       dia=diaMsg;autorAnterior='';
     }
     const seguida=autor===autorAnterior?' seguida':'';
@@ -1401,14 +1460,15 @@ function bolhasDaConversa(mensagens){
     const corpo=m.type==='template'
       ? `<span class="cv-msg-tmpl">Convite de abertura enviado${m.template_name?` (template ${esc(m.template_name)})`:''}</span>`
       : esc(m.body||'');
-    // Só a saída leva tique: mensagem que chegou já chegou, por definição.
-    const tique=lado==='out'?tickHtml(m.status):'';
-    const quemIA=m.sent_by==='ai'?' ia':'';
+    // Só a saída leva tique, e só na conversa real: mensagem que chegou já
+    // chegou, por definição, e a conversa de teste não entrega nada de verdade.
+    const tique=(lado==='out'&&!opts.teste)?tickHtml(m.status):'';
+    const quemIA=autor==='IA'?' ia':'';
     return `${sep}<div class="cv-msg ${lado}${seguida}">
       <div class="cv-msg-bolha">${corpo}
         <div class="cv-msg-meta">
           <span class="cv-autor${quemIA}">${autor}</span>
-          <span>${esc(_horaCurta(m.created_at))}</span>${tique}
+          <span>${esc(_horaCurta(quando))}</span>${tique}
         </div>
       </div>
     </div>`;
@@ -1428,12 +1488,13 @@ function digitandoHtml(c,ultima){
   </div>`;
 }
 
+/* ══════ O PAINEL DA DIREITA ══════
+   Uma função só para a conversa real e para a de teste: as duas usam o mesmo
+   chat (bolhasDeMensagens) e a mesma caixa de resposta — o que muda é o que
+   aparece ao lado (ficha do lead de um lado, raio-x da IA do outro). */
 function renderPainelConversa(det){
   const painel=document.getElementById('cv-panel');
   if(!painel)return;
-  const c=det.card;
-  const mensagens=det.messages||[];
-  const nome=c.company_name||'Empresa';
 
   // O painel é remontado a cada recarga do polling. Sem guardar isto, a
   // resposta pela metade some do campo enquanto a pessoa escreve, e a rolagem
@@ -1441,6 +1502,12 @@ function renderPainelConversa(det){
   const rascunho=document.getElementById('cv-texto')?.value||'';
   const colado=estaNoFim('cv-msgs');
   const emojisAbertos=!!document.getElementById('cv-emojis')?.classList.contains('aberta');
+
+  if(det.teste)return _renderPainelTeste(painel,rascunho,colado,emojisAbertos);
+
+  const c=det.card;
+  const mensagens=det.messages||[];
+  const nome=c.company_name||'Empresa';
 
   // A janela de 24h é regra da Meta: fora dela, o campo de resposta aparece
   // desabilitado explicando o porquê — em vez de sumir ou dar erro no envio.
@@ -1469,21 +1536,24 @@ function renderPainelConversa(det){
        </div>`;
 
   painel.innerHTML=`
-    <div class="cv-head">
-      <button type="button" class="cv-voltar" onclick="voltarParaLista()" title="Voltar para a lista" aria-label="Voltar">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
-      </button>
-      ${avatarHtml(nome,c.selo.tom,true)}
-      <div class="cv-head-txt">
-        <div class="cv-head-nome">${esc(nome)}</div>
-        <div class="cv-head-sub">${esc(c.contato||'Contato não identificado')} · <span class="mono">${esc(c.phone_e164)}</span></div>
+    <div class="cv-panel-chat">
+      <div class="cv-head">
+        <button type="button" class="cv-voltar" onclick="voltarParaLista()" title="Voltar para a lista" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        ${avatarHtml(nome,c.selo.tom,true)}
+        <div class="cv-head-txt">
+          <div class="cv-head-nome">${esc(nome)}</div>
+          <div class="cv-head-sub">${esc(c.contato||'Contato não identificado')} · <span class="mono">${esc(c.phone_e164)}</span></div>
+        </div>
+        <span class="cv-selo grande ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
       </div>
-      <span class="cv-selo grande ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
+      <div class="cv-explica">${esc(c.selo.explicacao)}${c.handoff_reason?` <span class="cv-motivo">${esc(c.handoff_reason)}</span>`:''}</div>
+      <div class="cv-acoes">${botoesConversa(c)}</div>
+      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(mensagens,{vazio:'Nenhuma mensagem trocada ainda.<br/>O convite foi enviado — a conversa começa quando o lead responder.'})}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
+      ${caixa}
     </div>
-    <div class="cv-explica">${esc(c.selo.explicacao)}${c.handoff_reason?` <span class="cv-motivo">${esc(c.handoff_reason)}</span>`:''}</div>
-    <div class="cv-acoes">${botoesConversa(c)}</div>
-    <div class="cv-msgs" id="cv-msgs">${bolhasDaConversa(mensagens)}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
-    ${caixa}`;
+    <aside class="cv-panel-aside cv-ficha">${fichaHtml(c,det)}</aside>`;
 
   document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
   const card=document.querySelector(`.cv-card[onclick="abrirConversa(${c.id})"]`);
@@ -1497,6 +1567,79 @@ function renderPainelConversa(det){
     document.getElementById('cv-emoji-btn')?.classList.add('on');
   }
   if(colado)irParaOFim('cv-msgs');
+}
+
+/* Ficha + funil + agendamentos + atalhos — o que se sabe deste lead sem sair
+   do chat. `det.ficha`/`det.agendamentos` já vêm prontos de
+   GET /api/wa/conversations/{id} (routers/wa.py). */
+function fichaHtml(c,det){
+  const tel=(c.phone_e164||'').replace(/\D/g,'');
+  return `<div class="cv-ficha-acoes">
+      ${tel?`<a class="cv-btn" href="https://wa.me/${tel}" target="_blank" rel="noopener">Abrir WhatsApp</a>`:''}
+      <button type="button" class="cv-btn" onclick="copiarTelefone(this,'${esc(c.phone_e164||'')}')">Copiar número</button>
+    </div>
+    ${funilHtml(c.stage)}
+    ${janelaHtml(c)}
+    ${fichaCamposHtml(det.ficha)}
+    ${agendamentosHtml(det.agendamentos)}`;
+}
+
+/* "X de 5" só entre as etapas ativas do funil (routers/leads.py::PIPELINE_STAGES,
+   reaproveitando STAGE_ORDER/STAGE_LABELS do dashboard) — "perdido" é um selo
+   à parte, não uma posição na barra: recuar não é "estar mais perto do fim". */
+function funilHtml(stage){
+  if(!stage)return '';
+  if(stage==='perdido'){
+    return `<div class="cv-ficha-sec"><div class="cv-ficha-sec-tit">Etapa do funil</div>
+      <span class="cv-selo pausada">Perdido</span></div>`;
+  }
+  const ativas=STAGE_ORDER.filter(s=>s!=='perdido');
+  const i=ativas.indexOf(stage);
+  return `<div class="cv-ficha-sec">
+    <div class="cv-ficha-sec-tit">Etapa do funil${i>=0?` · ${i+1} de ${ativas.length}`:''}</div>
+    <div class="cv-funil-nome">${esc(STAGE_LABELS[stage]||stage)}</div>
+  </div>`;
+}
+
+function janelaHtml(c){
+  if(!c.janela_expira_em)return '';
+  return `<div class="cv-ficha-janela ${c.janela_aberta?'aberta':'fechada'}">
+    ${c.janela_aberta?'🔓':'🔒'} Janela de 24h: ${esc(c.janela_expira_em)}
+  </div>`;
+}
+
+function fichaCamposHtml(ficha){
+  const linhas=Object.entries(ficha||{});
+  if(!linhas.length)return '';
+  return `<div class="cv-ficha-sec">
+    <div class="cv-ficha-sec-tit">Ficha (planilha)</div>
+    <dl class="cv-ficha-campos">
+      ${linhas.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}
+    </dl>
+  </div>`;
+}
+
+function agendamentosHtml(lista){
+  if(!lista||!lista.length)return '';
+  return `<div class="cv-ficha-sec">
+    <div class="cv-ficha-sec-tit">Agendamentos</div>
+    <ul class="cv-agenda-lista">
+      ${lista.map(a=>`<li class="${a.ja_passou?'passou':''}">
+        ${esc(_horaCurta(a.quando))}${a.notas?` · ${esc(a.notas.slice(0,60))}`:''}
+        ${a.ja_passou?'<span class="cv-agenda-tag">já passou</span>':''}
+      </li>`).join('')}
+    </ul>
+  </div>`;
+}
+
+function copiarTelefone(btn,tel){
+  if(!tel||!navigator.clipboard)return;
+  navigator.clipboard.writeText(tel).then(()=>{
+    if(!btn)return;
+    const original=btn.textContent;
+    btn.textContent='Copiado!';
+    setTimeout(()=>{btn.textContent=original;},1500);
+  }).catch(()=>{});
 }
 
 function voltarParaLista(){
@@ -1629,17 +1772,14 @@ async function enviarResposta(id){
 }
 
 /* ════════════════════════════════════════════════════════════════
-   SIMULADOR DA IA
-   A mesma conversa que o lead teria, sem nada sair para a Meta e sem
-   tocar num lead real. Ao lado do chat, o raio-x: o que a IA
-   classificou, com quanta confiança e qual regra decidiu o resto.
-   O chat sozinho mostra a resposta; ele não mostra o porquê — que é
-   o que se precisa saber antes de deixar isto falando com clientes.
+   CONVERSA DE TESTE (ex-"Simulador da IA")
+   Mesma conversa que o lead teria, sem nada sair para a Meta e sem tocar
+   num lead real — agora como um card fixo dentro de Conversas, em vez de
+   uma tela própria. Ao lado do chat, o raio-x: o que a IA classificou, com
+   quanta confiança e qual regra decidiu o resto. O chat sozinho mostra a
+   resposta; ele não mostra o porquê — que é o que se precisa saber antes
+   de deixar isto falando com clientes.
    ════════════════════════════════════════════════════════════════ */
-
-let _simStatus=null;
-let _simSessao=null;
-let _simOcupado=false;   // um turno por vez: dois em paralelo bagunçam o histórico
 
 /* Uma frase típica por intenção. Existem para o teste percorrer os nove
    caminhos sem a pessoa ter que adivinhar como um lead escreveria cada um. */
@@ -1662,31 +1802,14 @@ const _SIM_ACAO_LBL={
   nao_enviou:'Não enviou',
 };
 
-async function loadSimulador(){
-  const root=document.getElementById('simulador-body');
-  if(!root)return;
-  if(!_simSessao)root.innerHTML='<div class="muted-box">Carregando o simulador…</div>';
-  try{
-    const [st,sess]=await Promise.all([
-      authFetch('/api/wa/sandbox/status').then(r=>r.ok?r.json():null),
-      authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null),
-    ]);
-    _simStatus=st;_simSessao=sess||{empresa:'',mensagens:[],turnos:[]};
-    renderSimulador();
-  }catch(_){
-    root.innerHTML='<div class="muted-box">Não foi possível carregar o simulador.</div>';
-  }
-}
-
-function renderSimulador(){
-  const root=document.getElementById('simulador-body');
-  if(!root)return;
+/* O painel da conversa de teste: mesmo chat e mesma caixa de resposta do
+   painel real (renderPainelConversa), com o raio-x no lugar da ficha —
+   aqui não há lead de verdade para mostrar. */
+function _renderPainelTeste(painel,rascunho,colado,emojisAbertos){
   const st=_simStatus||{};
-  const s=_simSessao||{mensagens:[],turnos:[]};
+  const s=_simSessao||{mensagens:[],turnos:[],empresa:''};
+  const tom=st.ia_configurada?'ativa':'pausada';
 
-  // Sem chave de IA nada aqui funciona. Dizer isso em cima, com o nome da
-  // variável, evita a descoberta pelo caminho longo — mandar uma mensagem e
-  // receber "chamou você" sem entender por quê.
   const aviso=st.ia_configurada?'':`<div class="cv-warn">
     <strong>A IA não está configurada neste servidor.</strong>
     Toda mensagem enviada aqui vai cair em "chamou você", que é o
@@ -1697,26 +1820,34 @@ function renderSimulador(){
     ? (st.fora_do_horario
         ? '<span class="sim-chip neutro" title="Fora do horário comercial a IA responde em uma frase só">Fora do expediente · resposta curta</span>'
         : '<span class="sim-chip ok">Horário comercial</span>')
-    : '<span class="sim-chip neutro" title="Neste horário a produção ficaria calada; o simulador ignora a trava para você poder testar">Horário de silêncio · trava ignorada</span>';
+    : '<span class="sim-chip neutro" title="Neste horário a produção ficaria calada; a conversa de teste ignora a trava para você poder testar">Horário de silêncio · trava ignorada</span>';
 
-  root.innerHTML=`${aviso}
-  <div class="sim-top">
-    <span class="sim-top-lbl">Empresa do lead fictício</span>
-    <input id="sim-empresa" value="${esc(s.empresa||'')}" placeholder="Empresa Exemplo Ltda"
-           aria-label="Nome da empresa fictícia"
-           title="Este nome vai no prompt, igual ao de um lead real" />
-    <button class="cv-btn" onclick="reiniciarSimulador()"
-            title="Apaga a conversa de teste e começa outra">Recomeçar</button>
-    <span class="sim-top-sep"></span>
-    ${st.ia_configurada
-      ? `<span class="sim-chip ok" title="Modelo que classifica e redige">IA ativa · <code>${esc(st.modelo||'')}</code></span>`
-      : '<span class="sim-chip off">IA desligada</span>'}
-    ${horario}
-  </div>
-
-  <div class="sim-wrap">
-    <section class="sim-chat">
-      <div class="cv-msgs" id="sim-msgs">${bolhasDoSimulador(s.mensagens)}</div>
+  painel.innerHTML=`
+    <div class="cv-panel-chat">
+      <div class="cv-head">
+        <button type="button" class="cv-voltar" onclick="voltarParaLista()" title="Voltar para a lista" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        ${avatarHtml('Conversa de teste',tom,true)}
+        <div class="cv-head-txt">
+          <div class="cv-head-nome">Conversa de teste <span class="cv-tag-teste">TESTE</span></div>
+          <div class="cv-head-sub">
+            <input id="sim-empresa" value="${esc(s.empresa||'')}" placeholder="Empresa do lead fictício"
+                   aria-label="Nome da empresa fictícia" title="Este nome vai no prompt, igual ao de um lead real" />
+          </div>
+        </div>
+        ${st.ia_configurada
+          ? `<span class="sim-chip ok" title="Modelo que classifica e redige">IA ativa · <code>${esc(st.modelo||'')}</code></span>`
+          : '<span class="sim-chip off">IA desligada</span>'}
+      </div>
+      ${aviso}
+      <div class="cv-explica">Você escreve como o <strong>lead</strong>; quem responde é a IA. Nada é enviado
+        para a Meta e nenhum lead real é tocado. ${horario}</div>
+      <div class="cv-acoes">
+        <button type="button" class="cv-btn destaque" onclick="reiniciarConversaTeste()"
+                title="Apaga a conversa de teste e começa outra">Recomeçar</button>
+      </div>
+      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(s.mensagens,{teste:true,vazio:'Escreva a primeira mensagem como se fosse o lead.<br/>A IA vai classificar e decidir se responde ou se passa a conversa para você.'})}</div>
       <div class="sim-sug">
         <span class="sim-sug-lbl">Mensagens de teste — uma por intenção que a IA sabe classificar (role para ver todas):</span>
         <div class="sim-sug-row">
@@ -1724,60 +1855,42 @@ function renderSimulador(){
             title="Deveria ser classificada como ${x.esperado}">${esc(x.txt)}</button>`).join('')}
         </div>
       </div>
-      <div class="cv-emojis" id="sim-emojis">${paletaEmoji('sim-texto')}</div>
+      <div class="cv-emojis" id="cv-emojis">${paletaEmoji('cv-texto')}</div>
       <div class="cv-reply">
-        <button type="button" class="cv-icon-btn" id="sim-emoji-btn"
-                onclick="alternarEmojis('sim-emojis','sim-emoji-btn')"
+        <button type="button" class="cv-icon-btn" id="cv-emoji-btn"
+                onclick="alternarEmojis('cv-emojis','cv-emoji-btn')"
                 title="Inserir um emoji" aria-label="Emoji">☺</button>
-        <textarea id="sim-texto" class="cv-textarea" rows="1"
+        <textarea id="cv-texto" class="cv-textarea" rows="1"
                   placeholder="Escreva como se fosse o lead…" aria-label="Mensagem do lead fictício"
                   oninput="autoCrescer(this)"
-                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarNoSimulador()}"></textarea>
-        <button type="button" class="cv-send" id="sim-send" onclick="enviarNoSimulador()"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemTeste()}"></textarea>
+        <button type="button" class="cv-send" id="cv-send" onclick="enviarMensagemTeste()"
                 title="Enviar como o lead (Enter)" aria-label="Enviar">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z"/></svg>
         </button>
       </div>
-      <div class="cv-reply-sub" id="sim-msg">Você escreve como o <strong>lead</strong>; quem responde é a IA.
-        Nada é enviado para a Meta e nenhum lead real é tocado.</div>
-    </section>
-
-    <aside class="sim-xray">
+      <div class="cv-reply-sub" id="cv-msg">Enter envia. O que a IA entendeu aparece ao lado.</div>
+    </div>
+    <aside class="cv-panel-aside sim-xray">
       <div class="sim-xray-head">
         <strong>O que a IA entendeu</strong>
         <span>Um bloco por mensagem sua, do mais recente para o mais antigo.
         A regra que transforma a intenção em ação é a mesma da produção.</span>
       </div>
-      <div class="sim-xray-body" id="sim-xray">${raioX(s.turnos)}</div>
-    </aside>
-  </div>`;
-  irParaOFim('sim-msgs');
-}
+      <div class="sim-xray-body" id="cv-aside-body">${raioX(s.turnos)}</div>
+    </aside>`;
 
-/* As bolhas do simulador usam as mesmas classes do chat real de propósito: o
-   que se está testando é o que o lead veria, e uma tela de teste com aparência
-   própria testaria outra coisa. */
-function bolhasDoSimulador(mensagens){
-  if(!mensagens||!mensagens.length){
-    return `<div class="cv-msg-vazio">Escreva a primeira mensagem como se fosse o lead.<br/>
-      A IA vai classificar e decidir se responde ou se passa a conversa para você.</div>`;
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+  document.getElementById('cv-card-teste')?.classList.add('aberta');
+  document.getElementById('cv-wrap')?.classList.add('lendo');
+
+  const campo=document.getElementById('cv-texto');
+  if(campo&&rascunho){campo.value=rascunho;autoCrescer(campo);}
+  if(emojisAbertos){
+    document.getElementById('cv-emojis')?.classList.add('aberta');
+    document.getElementById('cv-emoji-btn')?.classList.add('on');
   }
-  let autorAnterior='';
-  return mensagens.map(m=>{
-    const lado=m.direction==='in'?'in':'out';
-    const autor=m.direction==='in'?'Lead':'IA';
-    const seguida=autor===autorAnterior?' seguida':'';
-    autorAnterior=autor;
-    const quando=new Date((m.created_at||0)*1000);
-    return `<div class="cv-msg ${lado}${seguida}">
-      <div class="cv-msg-bolha">${esc(m.body||'')}
-        <div class="cv-msg-meta">
-          <span class="cv-autor${lado==='out'?' ia':''}">${autor}</span>
-          <span>${esc(_horaCurta(quando))}</span>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
+  if(colado)irParaOFim('cv-msgs');
 }
 
 function raioX(turnos){
@@ -1826,66 +1939,66 @@ function blocoTurno(t,atual){
 function usarSugestao(i){
   const s=_SIM_SUGESTOES[i];
   if(!s)return;
-  const campo=document.getElementById('sim-texto');
+  const campo=document.getElementById('cv-texto');
   if(!campo)return;
   campo.value=s.txt;autoCrescer(campo);campo.focus();
-  enviarNoSimulador();
+  enviarMensagemTeste();
 }
 
-async function enviarNoSimulador(){
+async function enviarMensagemTeste(){
   if(_simOcupado)return;
-  const campo=document.getElementById('sim-texto');
-  const msg=document.getElementById('sim-msg');
+  const campo=document.getElementById('cv-texto');
+  const msg=document.getElementById('cv-msg');
   const texto=(campo&&campo.value||'').trim();
   if(!texto){campo&&campo.focus();return;}
 
   _simOcupado=true;
-  document.getElementById('sim-send')?.setAttribute('disabled','');
+  document.getElementById('cv-send')?.setAttribute('disabled','');
   campo.value='';autoCrescer(campo);
 
   // A mensagem do lead entra na hora e o "digitando" aparece embaixo dela: é o
   // que faz a espera pela IA parecer uma conversa em vez de um formulário
   // travado. O que vier do servidor substitui isto.
   _simSessao.mensagens.push({direction:'in',body:texto,created_at:Date.now()/1000});
-  const area=document.getElementById('sim-msgs');
+  const area=document.getElementById('cv-msgs');
   if(area){
-    area.innerHTML=bolhasDoSimulador(_simSessao.mensagens)
+    area.innerHTML=bolhasDeMensagens(_simSessao.mensagens,{teste:true})
       +`<div class="cv-typing"><span class="cv-dots"><i></i><i></i><i></i></span>
         <span class="cv-typing-txt">A IA está lendo e decidindo…</span></div>`;
-    irParaOFim('sim-msgs',true);
+    irParaOFim('cv-msgs',true);
   }
-  msg.className='cv-reply-sub';msg.textContent='Aguardando a IA…';
+  if(msg){msg.className='cv-reply-sub';msg.textContent='Aguardando a IA…';}
 
   try{
     const resp=await authFetch('/api/wa/sandbox/message',
       {method:'POST',body:JSON.stringify({texto,ignorar_horario:true})});
     const turno=await resp.json();
     if(!resp.ok){
-      msg.className='cv-reply-sub sub-err';
-      msg.textContent=turno.detail||'Não foi possível falar com o simulador.';
+      if(msg){msg.className='cv-reply-sub sub-err';msg.textContent=turno.detail||'Não foi possível falar com a conversa de teste.';}
       campo.value=texto;autoCrescer(campo);
     }else{
       // Recarrega a sessão do servidor em vez de remendar a local: ele é quem
       // sabe o que entrou no histórico que a IA vai ler no próximo turno.
       const sess=await authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null);
       if(sess)_simSessao=sess;
-      const area2=document.getElementById('sim-msgs');
-      if(area2)area2.innerHTML=bolhasDoSimulador(_simSessao.mensagens);
-      const xray=document.getElementById('sim-xray');
-      if(xray)xray.innerHTML=raioX(_simSessao.turnos);
-      msg.className='cv-reply-sub';
-      msg.innerHTML=_resumoDoTurno(turno);
-      irParaOFim('sim-msgs',true);
+      const area2=document.getElementById('cv-msgs');
+      if(area2)area2.innerHTML=bolhasDeMensagens(_simSessao.mensagens,{teste:true});
+      const aside=document.getElementById('cv-aside-body');
+      if(aside)aside.innerHTML=raioX(_simSessao.turnos);
+      if(msg){msg.className='cv-reply-sub';msg.innerHTML=_resumoDoTurno(turno);}
+      irParaOFim('cv-msgs',true);
+      // A prévia do card fixo (última mensagem) muda a cada turno.
+      const slot=document.getElementById('cv-teste-slot');
+      if(slot)slot.innerHTML=cardConversaTeste();
     }
   }catch(_){
-    msg.className='cv-reply-sub sub-err';
-    msg.textContent='Erro de conexão com o simulador.';
+    if(msg){msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão com a conversa de teste.';}
     campo.value=texto;autoCrescer(campo);
   }finally{
     _simOcupado=false;
-    document.getElementById('sim-send')?.removeAttribute('disabled');
+    document.getElementById('cv-send')?.removeAttribute('disabled');
     // O "digitando" some junto com o desbloqueio, mesmo quando deu erro.
-    const area3=document.getElementById('sim-msgs');
+    const area3=document.getElementById('cv-msgs');
     if(area3)area3.querySelector('.cv-typing')?.remove();
   }
 }
@@ -1901,14 +2014,16 @@ function _resumoDoTurno(t){
   return `A automação <strong>passaria a conversa para você</strong> — ela não responde nestes casos.`;
 }
 
-async function reiniciarSimulador(){
+async function reiniciarConversaTeste(){
   const empresa=document.getElementById('sim-empresa')?.value||'';
   try{
     const resp=await authFetch('/api/wa/sandbox/reset',
       {method:'POST',body:JSON.stringify({empresa})});
     if(!resp.ok){alert('Não foi possível recomeçar.');return;}
     _simSessao=await resp.json();
-    renderSimulador();
+    renderPainelConversa({teste:true});
+    const slot=document.getElementById('cv-teste-slot');
+    if(slot)slot.innerHTML=cardConversaTeste();
   }catch(_){alert('Erro de conexão.');}
 }
 

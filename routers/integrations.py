@@ -13,6 +13,7 @@ from models.database import get_db, Lead, Activity, CRMConnection
 from middleware.auth import get_current_user
 from services import ai_insights, crypto
 from services.crm import webhook as crm_webhook
+from services import email_verifier
 from services.providers import hunter
 
 logger = logging.getLogger(__name__)
@@ -48,11 +49,17 @@ def integrations_status(
 ):
     """Permite à UI mostrar/ocultar ações conforme o que está configurado."""
     user_id = current_user.get("sub")
-    return {
+    payload = {
         "ai": ai_insights.is_configured(),
         "crm_webhook": crm_webhook.is_configured() or bool(_user_webhook(db, user_id)),
         "hunter": hunter.is_configured(),
     }
+    if hunter.is_configured():
+        # Visível na tela para não repetir o problema de "chave configurada,
+        # ninguém sabe quanto está sendo gasto" — o teto é global (por
+        # instalação), não por usuário, porque a chave também é.
+        payload["hunter_uso_hoje"] = email_verifier.uso_premium_hoje(db)
+    return payload
 
 
 @router.post("/leads/{lead_id}/ai-summary")

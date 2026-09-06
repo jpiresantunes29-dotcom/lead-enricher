@@ -18,7 +18,7 @@ from collections import Counter
 from datetime import timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -32,9 +32,9 @@ from models.database import (
     WhatsAppConnection, get_db, utcnow,
 )
 from models.schemas import (
-    AuditEntryOut, ConversationAction, ConversationCard, ConversationDetail,
-    ConversationOut, ConversationSeal, WaMessageOut, WaMetrics, WaReplyRequest,
-    WaStartRequest, WaStartResponse,
+    AgendamentoOut, AuditEntryOut, ConversationAction, ConversationCard,
+    ConversationDetail, ConversationOut, ConversationSeal, WaMessageOut,
+    WaMetrics, WaReplyRequest, WaStartRequest, WaStartResponse,
 )
 from services.people import optout
 from services.phone_normalizer import normalize_input
@@ -101,13 +101,24 @@ def verificar_webhook(
 
 
 @router.post("/webhook", include_in_schema=False)
-async def receber_webhook(request: Request, db: Session = Depends(get_db)):
+async def receber_webhook(
+    request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db),
+):
     """
     Recebe mensagens e confirmações de entrega.
 
     Responde 200 mesmo quando não há nada para fazer: para a Meta, qualquer
     outra resposta significa "não entreguei" e ela tenta de novo — e a
     reentrega da mesma mensagem custaria uma resposta repetida ao lead.
+
+    O turno (IA + envio pela Meta) NÃO roda aqui dentro: são chamadas de rede
+    de vários segundos, e rodá-las antes de responder deixaria este processo
+    ocupado com um lead só enquanto outras requisições esperam. A gravação da
+    mensagem já está commitada neste ponto; o turno vira tarefa de segundo
+    plano (`_responder_em_segundo_plano`), com sessão própria, e se ele não
+    chegar a rodar (deploy, reinício), o cron `/api/internal/wa/pending`
+    responde na rodada seguinte — a mesma rede de segurança que já existia
+    para a função serverless ser interrompida no meio.
     """
     corpo = await request.body()
     assinatura = request.headers.get(webhook.SIGNATURE_HEADER)
@@ -140,16 +151,47 @@ async def receber_webhook(request: Request, db: Session = Depends(get_db)):
         logger.exception("Falha ao processar webhook do WhatsApp.")
         conversas = []
 
-    # A gravação é commitada ANTES do turno. Se a resposta automática demorar
-    # e a função for interrompida, a mensagem do lead já está salva e a
-    # reentrega da Meta não a duplica — o cron de retomada responde depois.
-    turnos = [orchestrator.responder(db, c) for c in conversas]
+    if conversas:
+        # Mesma fábrica de sessão que esta requisição usou para `db` — a real
+        # `get_db` em produção, a que os testes põem no lugar dela em teste —
+        # para a tarefa de segundo plano abrir a sua própria, já fechada
+        # quando a resposta HTTP é enviada e esta função é chamada.
+        fabrica_sessao = request.app.dependency_overrides.get(get_db, get_db)
+        background_tasks.add_task(
+            _responder_em_segundo_plano, [c.id for c in conversas], fabrica_sessao,
+        )
 
-    return {
-        "ok": True,
-        "mensagens": len(conversas),
-        "respondidas": sum(1 for t in turnos if t.acao == orchestrator.ENVIOU),
-    }
+    return {"ok": True, "mensagens": len(conversas)}
+
+
+def _responder_em_segundo_plano(conversa_ids: list[int], fabrica_sessao) -> None:
+    """Roda o turno de cada conversa fora do ciclo de resposta ao webhook."""
+    gerador = fabrica_sessao()
+    db = next(gerador)
+    try:
+        for conversa_id in conversa_ids:
+            conversa = db.query(Conversation).filter(Conversation.id == conversa_id).first()
+            if conversa is None:
+                continue
+            try:
+                orchestrator.responder(db, conversa)
+            except Exception:
+                # `responder()` já não deveria levantar (ver seu docstring),
+                # mas isto roda sem ninguém para ver um 500 — se escapar
+                # mesmo assim, uma conversa não pode travar as seguintes.
+                logger.exception(
+                    "Falha ao rodar turno em segundo plano para a conversa %s.",
+                    conversa_id,
+                )
+                db.rollback()
+    finally:
+        # Drena o gerador (`get_db` ou a substituta dos testes) até o
+        # `finally: db.close()` dele rodar — mesmo contrato de quando o
+        # FastAPI conduz essa mesma dependência numa requisição normal.
+        try:
+            next(gerador)
+        except StopIteration:
+            pass
 
 
 def _processar(db: Session, dados: dict, dono: Optional[str] = None) -> list:
@@ -301,7 +343,7 @@ def status_do_whatsapp(
         # quando não dá para enviar. Descobrir a recusa só depois de confirmar
         # um envio pago é o pior lugar possível para essa informação aparecer.
         "janela": gate.janela_de_envio(),
-        "aguardando": sum(1 for c in conversas if _aguardando_voce(c)),
+        "aguardando": sum(1 for c in conversas if gate.aguardando_voce(c)),
         "total": db.query(Conversation).filter(
             Conversation.user_id == user_id
         ).count(),
@@ -416,23 +458,6 @@ def iniciar_conversa(
 
 # ── A tela de conversas ──────────────────────────────────────────────────────
 
-def _aguardando_voce(conversa: Conversation) -> bool:
-    """
-    O lead falou e ninguém respondeu.
-
-    É o único sinal que merece badge: conversa parada por decisão do usuário
-    não é pendência, é escolha. O que não pode acontecer é alguém escrever e a
-    mensagem morrer numa tela que ninguém abriu.
-    """
-    if conversa.ai_status not in (HUMAN_HANDOFF, AI_PAUSED):
-        return False
-    if conversa.last_inbound_at is None:
-        return False
-    if conversa.last_outbound_at is None:
-        return True
-    return gate._com_fuso(conversa.last_inbound_at) > gate._com_fuso(conversa.last_outbound_at)
-
-
 def _selo(conversa: Conversation, aguardando: bool) -> ConversationSeal:
     """
     Estado da conversa em uma palavra e uma frase.
@@ -477,7 +502,7 @@ def _card(db: Session, conversa: Conversation) -> ConversationCard:
         )
         contato = decisor.name if decisor else None
 
-    aguardando = _aguardando_voce(conversa)
+    aguardando = gate.aguardando_voce(conversa)
     return ConversationCard(
         id=conversa.id,
         lead_id=conversa.lead_id,
@@ -493,7 +518,43 @@ def _card(db: Session, conversa: Conversation) -> ConversationCard:
         janela_aberta=gate._janela_aberta(conversa, utcnow()),
         aguardando_voce=aguardando,
         updated_at=conversa.updated_at,
+        stage=lead.stage if lead else None,
+        janela_expira_em=gate.janela_da_conversa(conversa, utcnow()),
     )
+
+
+def _ficha(lead: Optional[Lead]) -> Optional[dict]:
+    """A planilha original do lead, para o painel da conversa — sem misturar
+    com os campos de enriquecimento, que já aparecem em outras telas."""
+    if lead is None or not lead.cells:
+        return None
+    return {k: str(v) for k, v in lead.cells.items() if v not in (None, "")}
+
+
+def _agendamentos(db: Session, lead_id: int) -> list[AgendamentoOut]:
+    """Próximos compromissos (reuniões) do lead, mais recentes primeiro no
+    tempo — mesma consulta de `routers/activities.py::pending_activities`,
+    só filtrada por lead em vez de global."""
+    agora = utcnow()
+    atividades = (
+        db.query(Activity)
+        .filter(
+            Activity.lead_id == lead_id,
+            Activity.type == "meeting",
+            Activity.due_at.isnot(None),
+            Activity.completed_at.is_(None),
+        )
+        .order_by(Activity.due_at.asc())
+        .limit(5)
+        .all()
+    )
+    return [
+        AgendamentoOut(
+            id=a.id, quando=a.due_at,
+            ja_passou=gate._com_fuso(a.due_at) < agora, notas=a.notes,
+        )
+        for a in atividades
+    ]
 
 
 def _minha_conversa(db: Session, conversa_id: int, user_id: str) -> Conversation:
@@ -536,9 +597,12 @@ def ver_conversa(
         .order_by(WaMessage.id.asc())
         .all()
     )
+    lead = db.query(Lead).filter(Lead.id == conversa.lead_id).first()
     return ConversationDetail(
         card=_card(db, conversa),
         messages=[WaMessageOut.model_validate(m) for m in mensagens],
+        ficha=_ficha(lead),
+        agendamentos=_agendamentos(db, conversa.lead_id),
     )
 
 
@@ -697,7 +761,7 @@ def metricas(
     ids = [c.id for c in conversas]
 
     responderam = [c for c in conversas if c.last_inbound_at is not None]
-    aguardando = sum(1 for c in conversas if _aguardando_voce(c))
+    aguardando = sum(1 for c in conversas if gate.aguardando_voce(c))
 
     mensagens = (
         db.query(WaMessage.direction, WaMessage.type, WaMessage.sent_by,

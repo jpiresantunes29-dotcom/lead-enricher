@@ -239,6 +239,9 @@ class ConversationCard(BaseModel):
     janela_aberta: bool = False
     aguardando_voce: bool = False
     updated_at: Optional[datetime] = None
+    # Campos para o painel unificado (ficha + funil na mesma tela do chat).
+    stage: Optional[str] = None
+    janela_expira_em: Optional[str] = None
 
 
 class WaMessageOut(BaseModel):
@@ -255,9 +258,21 @@ class WaMessageOut(BaseModel):
     created_at: datetime
 
 
+class AgendamentoOut(BaseModel):
+    """Um compromisso futuro (Activity type=meeting) para o lead da conversa."""
+    id: int
+    quando: datetime
+    ja_passou: bool
+    notas: Optional[str] = None
+
+
 class ConversationDetail(BaseModel):
     card: ConversationCard
     messages: List[WaMessageOut] = []
+    # Ficha (planilha importada) e agendamentos do lead — para o painel
+    # direito não precisar de uma segunda chamada a /api/leads/{id}.
+    ficha: Optional[dict[str, str]] = None
+    agendamentos: List[AgendamentoOut] = []
 
 
 class ConversationAction(BaseModel):

@@ -824,6 +824,16 @@ body{
 .cv-list{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden}
 .cv-nada{padding:26px 18px;text-align:center;font-size:12.5px;color:var(--text-3);line-height:1.6}
 
+/* O card fixo da conversa de teste: mesma linha visual dos cards reais, com
+   uma separação embaixo para não ser confundido com "a primeira conversa". */
+.cv-list-teste{flex-shrink:0;border-bottom:1px solid var(--border)}
+.cv-card-teste{background:var(--bg-2)}
+.cv-tag-teste{
+  font-size:9px;font-weight:800;letter-spacing:.05em;color:var(--text-3);
+  background:var(--surface);border:1px solid var(--border);border-radius:4px;
+  padding:1px 5px;margin-left:4px;vertical-align:middle;
+}
+
 /* Item da lista: avatar, nome + prévia, hora + sinais. */
 .cv-card{
   display:grid;grid-template-columns:auto 1fr auto;gap:11px;align-items:center;
@@ -888,9 +898,54 @@ body{
 .cv-selo.encerrada{background:var(--surface);color:var(--text-3);border:1px solid var(--border)}
 
 /* ── Coluna direita: a conversa ── */
+/* Linha, não coluna: o chat ocupa o espaço que sobra e a ficha/raio-x fica
+   numa faixa fixa ao lado, real ou de teste. `margin:auto` no estado vazio
+   (.cv-empty) continua centralizando nos dois eixos, então nada muda quando
+   não há conversa aberta. */
 .cv-panel{
-  display:flex;flex-direction:column;min-width:0;min-height:0;
+  display:flex;flex-direction:row;min-width:0;min-height:0;
   background:var(--surface);
+}
+.cv-panel-chat{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+.cv-panel-aside{
+  flex:0 0 300px;min-height:0;overflow-y:auto;
+  border-left:1px solid var(--border);background:var(--bg-2);
+}
+@media (max-width:1100px){
+  .cv-panel{flex-direction:column}
+  .cv-panel-aside{
+    flex:0 0 auto;max-height:280px;
+    border-left:none;border-top:1px solid var(--border);
+  }
+}
+
+/* Ficha do lead ao lado do chat: funil, janela de 24h, planilha e agenda. */
+.cv-ficha-acoes{
+  display:flex;gap:6px;flex-wrap:wrap;padding:12px 15px;
+  border-bottom:1px solid var(--border);
+}
+.cv-ficha-janela{
+  margin:12px 15px 0;padding:6px 10px;border-radius:7px;font-size:12px;
+  border:1px solid var(--border);
+}
+.cv-ficha-janela.aberta{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-border)}
+.cv-ficha-janela.fechada{background:var(--err-bg);color:var(--err);border-color:var(--err-border)}
+.cv-ficha-sec{padding:12px 15px;border-bottom:1px solid var(--border)}
+.cv-ficha-sec-tit{
+  font-size:11px;font-weight:700;color:var(--text-3);
+  text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;
+}
+.cv-funil-nome{font-size:13.5px;font-weight:600;color:var(--text)}
+.cv-ficha-campos{display:grid;grid-template-columns:1fr;gap:4px 0;font-size:12.5px}
+.cv-ficha-campos dt{color:var(--text-3);font-weight:600}
+.cv-ficha-campos dd{color:var(--text);margin:0 0 6px}
+.cv-agenda-lista{list-style:none;display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+.cv-agenda-lista li{color:var(--text-2)}
+.cv-agenda-lista li.passou{color:var(--text-3)}
+.cv-agenda-tag{
+  margin-left:6px;font-size:10px;font-weight:700;text-transform:uppercase;
+  color:var(--text-3);background:var(--surface);border:1px solid var(--border);
+  border-radius:4px;padding:1px 5px;
 }
 .cv-empty{
   margin:auto;padding:40px 30px;text-align:center;max-width:380px;
@@ -1127,19 +1182,14 @@ body{
    o que a IA entendeu de cada mensagem. O chat sozinho não responde
    à pergunta que traz alguém aqui — "por que ela respondeu isso?".
    ══════════════════════════════════════════════════════════════════ */
-.sim-top{
-  display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  background:var(--bg-2);border:1px solid var(--border);border-radius:10px;
-  padding:11px 14px;margin-bottom:12px;
+/* O nome da empresa fictícia mora no cabeçalho da conversa de teste agora,
+   no lugar do telefone/contato de uma conversa real. */
+#sim-empresa{
+  font-family:inherit;font-size:11.5px;color:var(--text-2);width:100%;
+  background:transparent;border:none;padding:0;
 }
-.sim-top-lbl{font-size:12px;font-weight:600;color:var(--text-2)}
-.sim-top input{
-  font-family:inherit;font-size:12.5px;color:var(--text);width:210px;
-  background:var(--surface);border:1px solid var(--border);border-radius:7px;
-  padding:6px 10px;
-}
-.sim-top input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(29,78,216,.1)}
-.sim-top-sep{flex:1}
+#sim-empresa:focus{outline:none;color:var(--text)}
+#sim-empresa::placeholder{color:var(--text-3)}
 .sim-chip{
   display:inline-flex;align-items:center;gap:6px;
   font-size:11.5px;font-weight:600;border-radius:20px;padding:4px 11px;
@@ -1148,16 +1198,6 @@ body{
 .sim-chip.off{background:var(--err-bg);color:var(--err);border:1px solid var(--err-border)}
 .sim-chip.neutro{background:var(--surface);color:var(--text-2);border:1px solid var(--border)}
 .sim-chip code{font-family:var(--mono);font-size:11px}
-
-.sim-wrap{
-  display:grid;grid-template-columns:1fr minmax(280px,360px);
-  height:calc(100vh - 320px);min-height:480px;
-  background:var(--bg-2);border:1px solid var(--border);border-radius:12px;
-  overflow:hidden;box-shadow:var(--shadow-sm);
-}
-@media (max-width:1000px){.sim-wrap{grid-template-columns:1fr;height:auto}}
-.sim-chat{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--surface)}
-@media (max-width:1000px){.sim-chat{height:60vh}}
 
 /* Sugestões: uma frase típica por intenção. Existem para o teste cobrir os
    nove caminhos sem a pessoa ter que inventar como um lead escreveria. */

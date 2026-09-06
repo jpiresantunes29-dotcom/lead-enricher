@@ -24,6 +24,7 @@ import string
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta, UTC
 from functools import lru_cache
 from typing import List, Optional, Tuple
 
@@ -43,6 +44,139 @@ _PROBE_CONFIGURED = os.getenv("SMTP_PROBE", "1") != "0"
 _CONNECT_FAILURE_LIMIT = 3
 _connect_failures = 0
 _smtp_disabled = False
+
+# ── Provedor premium (opcional) ──────────────────────────────────────────────
+# Hunter (ou outro EMAIL_VERIFIERS de services/providers) só entra quando a
+# sondagem SMTP grátis não deu resposta confiável — inclusive quando ela nem
+# roda, porque `SMTP_PROBE_AVAILABLE` está desligado (comum em serverless: a
+# Vercel bloqueia a porta 25, então lá TODO e-mail sairia "unknown" sem isto).
+# Cada chamada é paga, então três freios convivem:
+#   1. cache por e-mail (PREMIUM_CACHE_DAYS) — nunca paga duas vezes a mesma;
+#   2. teto por lote (PREMIUM_MAX_PER_BATCH) — uma busca de decisor não pode
+#      virar N chamadas pagas de uma vez só;
+#   3. teto diário (PREMIUM_DAILY_LIMIT) — o freio que protege contra um lote
+#      grande (200 domínios, vários decisores cada) somar uma conta alta sem
+#      ninguém ter decidido isso.
+PREMIUM_CACHE_DAYS = int(os.getenv("HUNTER_CACHE_DAYS", "90"))
+PREMIUM_DAILY_LIMIT = int(os.getenv("HUNTER_DAILY_LIMIT", "200"))
+PREMIUM_MAX_PER_BATCH = int(os.getenv("HUNTER_MAX_PER_BATCH", "3"))
+# Estimativa para o log de custo (`ProviderCall.cost_usd`) — não é uma cobrança
+# real, é o que permite somar "quanto gastamos hoje" sem inventar um valor no
+# meio do código toda vez. Ajuste conforme o plano contratado no Hunter.
+PREMIUM_COST_PER_CALL_USD = float(os.getenv("HUNTER_COST_PER_CALL_USD", "0.01"))
+
+
+def _fresco(quando, dias: int) -> bool:
+    if quando is None:
+        return False
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=UTC)
+    return quando >= datetime.now(UTC) - timedelta(days=dias)
+
+
+def _chamadas_premium_hoje(db) -> int:
+    from models.database import ProviderCall
+
+    inicio_do_dia = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (
+        db.query(ProviderCall)
+        .filter(ProviderCall.provider == "premium_email", ProviderCall.created_at >= inicio_do_dia)
+        .count()
+    )
+
+
+def _verificar_premium_com_cache(db, email: str) -> Optional[str]:
+    """
+    Verifica um e-mail no provedor premium configurado, com cache e teto diário.
+
+    Devolve `None` só quando não há nem resposta nova nem cache — nesse caso,
+    quem chamou deve manter o "unknown" que já tinha, nunca inventar um status.
+    """
+    from models.database import PremiumEmailCheck, ProviderCall, utcnow
+
+    cache = db.query(PremiumEmailCheck).filter(PremiumEmailCheck.email == email).first()
+    if cache and _fresco(cache.checked_at, PREMIUM_CACHE_DAYS):
+        return cache.status
+
+    if _chamadas_premium_hoje(db) >= PREMIUM_DAILY_LIMIT:
+        logger.info("Teto diário de verificação premium atingido; mantendo o que há em cache.")
+        return cache.status if cache else None
+
+    from .providers import premium_verify_email
+
+    inicio = time.monotonic()
+    status = premium_verify_email(email)
+    db.add(ProviderCall(
+        provider="premium_email", operation="verify_email",
+        hit=status is not None,
+        cost_usd=PREMIUM_COST_PER_CALL_USD if status is not None else 0.0,
+        latency_ms=int((time.monotonic() - inicio) * 1000),
+    ))
+    if status is None:
+        db.commit()
+        return cache.status if cache else None
+
+    if cache:
+        cache.status = status
+        cache.checked_at = utcnow()
+    else:
+        db.add(PremiumEmailCheck(email=email, status=status))
+    db.commit()
+    return status
+
+
+def _upgrade_com_premium(db, resultados: List[dict]) -> List[dict]:
+    """Tenta o provedor premium só para quem ficou `unknown`, até o teto do lote."""
+    from .providers import any_email_verifier_configured
+
+    if not any_email_verifier_configured():
+        return resultados
+
+    tentativas = 0
+    for item in resultados:
+        if item["status"] != "unknown":
+            continue
+        if tentativas >= PREMIUM_MAX_PER_BATCH:
+            break
+        tentativas += 1
+        status = _verificar_premium_com_cache(db, item["email"])
+        if status:
+            item["status"] = status
+    return resultados
+
+
+def uso_premium_hoje(db) -> dict:
+    """Quanto já foi gasto hoje em verificação premium — para a tela mostrar."""
+    usadas = _chamadas_premium_hoje(db)
+    return {
+        "usadas": usadas,
+        "limite": PREMIUM_DAILY_LIMIT,
+        "esgotado": usadas >= PREMIUM_DAILY_LIMIT,
+    }
+
+
+def verify_emails_effective(emails: List[str], budget_seconds: float = 8.0,
+                            max_workers: int = 4, db=None) -> List[dict]:
+    """
+    Verificação "melhor esforço": sondagem SMTP grátis primeiro; o que sobrar
+    `unknown` — inclusive quando a sondagem está globalmente desligada — tenta
+    um provedor premium configurado, se `db` for passado. Sem provedor
+    configurado (o caso comum, sem HUNTER_API_KEY), o comportamento é
+    idêntico ao de chamar `verify_batch` direto.
+    """
+    emails = [e for e in emails if e and "@" in e]
+    if not emails:
+        return []
+
+    if smtp_probe_available():
+        resultados = verify_batch(emails, budget_seconds=budget_seconds, max_workers=max_workers)
+    else:
+        resultados = [{"email": e, "status": "unknown"} for e in emails]
+
+    if db is not None:
+        resultados = _upgrade_com_premium(db, resultados)
+
+    return resultados
 
 
 def smtp_probe_available() -> bool:
@@ -215,28 +349,3 @@ def _verify_same_domain(domain: str, emails: List[str], budget_seconds: float,
     return [{"email": e, "status": results[e]} for e in emails]
 
 
-def verify_emails(emails: list, max_checks: int = 3) -> list:
-    """
-    Compatibilidade com o fluxo antigo (decision_finder).
-    Provedores premium têm prioridade; a sondagem SMTP gratuita é o fallback.
-    """
-    from .providers import premium_verify_email
-
-    emails = list(emails or [])
-    to_check = emails[:max_checks]
-    rest = emails[max_checks:]
-
-    premium: dict = {}
-    remaining: List[str] = []
-    for e in to_check:
-        status = premium_verify_email(e)
-        if status:
-            premium[e] = status
-        else:
-            remaining.append(e)
-
-    batch = {r["email"]: r["status"] for r in verify_batch(remaining)} if remaining else {}
-
-    out = [{"email": e, "status": premium.get(e) or batch.get(e, "unknown")} for e in to_check]
-    out.extend({"email": e, "status": "unknown"} for e in rest)
-    return out

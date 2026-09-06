@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from models.database import Company, Person
 from services._utils import normalize_domain, tld_to_region, LINKEDIN_COMPANY_RE
-from services.email_verifier import has_mx, smtp_probe_available, verify_batch
+from services.email_verifier import has_mx, smtp_probe_available, verify_emails_effective
 from services.providers import cnpj_receita, premium_find_contacts
 from . import email_patterns as ep
 from . import optout, repository as repo
@@ -359,8 +359,14 @@ def _resolve_emails(db: Session, person: Person, domain: str,
     catch_all = bool(pattern_row and pattern_row.catch_all)
 
     verified = {}
-    if budget_seconds > 1 and smtp_probe_available():
-        results = verify_batch([c["email"] for c in candidates], budget_seconds=budget_seconds)
+    if budget_seconds > 1:
+        # `verify_emails_effective` roda mesmo com a sondagem SMTP desligada
+        # (comum em serverless, onde a porta 25 é bloqueada): é justamente aí
+        # que o provedor premium — se configurado — vira o único jeito de sair
+        # do "unknown".
+        results = verify_emails_effective(
+            [c["email"] for c in candidates], budget_seconds=budget_seconds, db=db,
+        )
         verified = {r["email"]: r["status"] for r in results}
         if all(v == "catch_all" for v in verified.values()) and verified:
             ep.record_domain_health(db, domain, catch_all=True)

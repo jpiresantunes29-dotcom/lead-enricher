@@ -27,6 +27,8 @@ Duas regras que valem para tudo aqui:
    alguém — e, repetido, o número restringido pela Meta.
 """
 import logging
+import os
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -40,6 +42,14 @@ logger = logging.getLogger(__name__)
 # Quantas respostas automáticas podem sair fora do expediente antes de a
 # conversa silenciar até o próximo dia útil.
 MAX_TURNOS_FORA_DO_HORARIO = 3
+
+# Teto de tempo de UMA rodada do cron de retomada (`rodar_pendentes`).
+# Cada turno pode envolver uma chamada à IA e um envio à Meta — vários
+# segundos — e a rodada roda dentro de uma função serverless com limite
+# próprio (60 s na Vercel). Mesmo orçamento e mesma folga de `jobs.py`
+# (ROUND_BUDGET_SECONDS): o que não coube nesta rodada, a próxima pega,
+# porque `conversas_pendentes` sempre busca por quem ainda está sem resposta.
+RODADA_ORCAMENTO_SEGUNDOS = int(os.getenv("WA_PENDING_ROUND_BUDGET", "45"))
 
 # ── Ações ────────────────────────────────────────────────────────────────────
 ENVIOU = "enviou"
@@ -312,10 +322,23 @@ def conversas_pendentes(db: Session, limite: int = 50) -> list:
     return pendentes
 
 
-def rodar_pendentes(db: Session, limite: int = 50) -> dict:
-    """Uma rodada de retomada. Devolve o resumo, no formato dos crons daqui."""
+def rodar_pendentes(db: Session, limite: int = 50,
+                    budget_seconds: float = RODADA_ORCAMENTO_SEGUNDOS) -> dict:
+    """
+    Uma rodada de retomada. Devolve o resumo, no formato dos crons daqui.
+
+    Para de processar quando o orçamento de tempo acaba, não só quando a lista
+    de pendentes termina — sem isto, uma fila grande faria a função serverless
+    ser interrompida no meio de um turno em vez de terminar a rodada de forma
+    limpa. O que sobrar fica pendente para a próxima chamada do cron.
+    """
+    started = time.monotonic()
+    deadline = started + budget_seconds
     resumo = {ENVIOU: 0, CHAMOU_HUMANO: 0, ENCERROU: 0, NAO_FEZ_NADA: 0}
     for conversa in conversas_pendentes(db, limite):
+        if time.monotonic() >= deadline:
+            logger.info("Orçamento de tempo esgotado; o restante fica para a próxima rodada.")
+            break
         turno = responder(db, conversa)
         resumo[turno.acao] = resumo.get(turno.acao, 0) + 1
     return resumo

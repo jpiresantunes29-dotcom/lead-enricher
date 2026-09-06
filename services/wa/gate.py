@@ -26,7 +26,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from models.database import AI_ACTIVE, Conversation, Lead, RELATIONSHIP_LEAD, utcnow
+from models.database import (
+    AI_ACTIVE, AI_PAUSED, HUMAN_HANDOFF, Conversation, Lead, RELATIONSHIP_LEAD, utcnow,
+)
 from services.people import optout
 
 logger = logging.getLogger(__name__)
@@ -287,6 +289,24 @@ def _com_fuso(momento: datetime) -> datetime:
     return momento if momento.tzinfo else momento.replace(tzinfo=UTC)
 
 
+def aguardando_voce(conversation: Conversation) -> bool:
+    """
+    O lead falou e ninguém respondeu.
+
+    É o único sinal que merece badge (na tela de conversas) ou linha no digest
+    diário: conversa parada por decisão do usuário não é pendência, é escolha.
+    O que não pode acontecer é alguém escrever e a mensagem morrer numa tela
+    que ninguém abriu.
+    """
+    if conversation.ai_status not in (HUMAN_HANDOFF, AI_PAUSED):
+        return False
+    if conversation.last_inbound_at is None:
+        return False
+    if conversation.last_outbound_at is None:
+        return True
+    return _com_fuso(conversation.last_inbound_at) > _com_fuso(conversation.last_outbound_at)
+
+
 def _janela_aberta(conversation: Conversation, agora: datetime) -> bool:
     """
     A janela de 24 h da Meta, contada da última mensagem recebida.
@@ -299,6 +319,25 @@ def _janela_aberta(conversation: Conversation, agora: datetime) -> bool:
     if prazo is None:
         return False
     return _com_fuso(prazo) > agora
+
+
+def janela_da_conversa(conversation: Conversation, agora: Optional[datetime] = None) -> Optional[str]:
+    """
+    Texto pronto para a tela: quanto falta (ou quanto já passou) da janela de
+    24 h da Meta desta conversa. `None` quando não há janela — o lead nunca
+    respondeu, então não existe prazo para contar.
+    """
+    agora = agora or utcnow()
+    if agora.tzinfo is None:
+        agora = agora.replace(tzinfo=UTC)
+    prazo = conversation.window_expires_at
+    if prazo is None:
+        return None
+    segundos = (_com_fuso(prazo) - agora).total_seconds()
+    horas = int(abs(segundos) // 3600)
+    minutos = int((abs(segundos) % 3600) // 60)
+    tempo = f"{horas}h{minutos:02d}" if horas else f"{max(minutos, 1)}min"
+    return f"fecha em {tempo}" if segundos > 0 else f"fechou há {tempo}"
 
 
 def can_start(db: Session, lead: Lead, phone_e164: str,

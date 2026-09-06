@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Request, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from slowapi import Limiter
 from sqlalchemy.orm import Session
 from models.database import get_db, Profile
@@ -14,19 +15,27 @@ limiter = Limiter(key_func=rate_limit_key)
 _bearer_opcional = HTTPBearer(auto_error=False)
 
 
-def get_or_create_profile(db: Session, user_id: str) -> Profile:
+def get_or_create_profile(db: Session, user_id: str, email: str = None) -> Profile:
     """
     O perfil do usuário, criado na primeira vez que ele aparece.
 
     Não há plano nem cota para decidir: toda conta que entra tem o produto
     inteiro. O perfil existe para dar dono aos leads, atividades e conversas.
+
+    `email` vem do claim do JWT, não de formulário — é só o que grava e
+    atualiza o endereço para onde o digest diário escreve, e por isso nunca
+    apaga o que já estava lá (um token sem o claim não pode limpar um e-mail
+    que um token anterior já confirmou).
     """
     profile = db.query(Profile).filter(Profile.id == user_id).first()
     if not profile:
-        profile = Profile(id=user_id)
+        profile = Profile(id=user_id, email=email)
         db.add(profile)
         db.commit()
         db.refresh(profile)
+    elif email and profile.email != email:
+        profile.email = email
+        db.commit()
     return profile
 
 
@@ -55,8 +64,27 @@ def get_me(
     current_user: dict = Depends(get_current_user),
 ):
     user_id = current_user.get("sub")
-    profile = get_or_create_profile(db, user_id)
+    profile = get_or_create_profile(db, user_id, email=current_user.get("email"))
     return {
         "id": profile.id,
         "email": current_user.get("email"),
+        "digest_diario": profile.digest_diario,
     }
+
+
+class PreferenciasUpdate(BaseModel):
+    digest_diario: bool
+
+
+@router.patch("/me")
+def atualizar_preferencias(
+    body: PreferenciasUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Liga/desliga o resumo diário por e-mail."""
+    user_id = current_user.get("sub")
+    profile = get_or_create_profile(db, user_id, email=current_user.get("email"))
+    profile.digest_diario = body.digest_diario
+    db.commit()
+    return {"digest_diario": profile.digest_diario}

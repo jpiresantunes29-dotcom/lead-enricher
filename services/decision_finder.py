@@ -2,6 +2,8 @@
 Encontra decisores em uma empresa filtrando por cargo, com VERIFICAÇÃO.
 
 Estratégia (em ordem de prioridade):
+  -1. Banco global de pessoas — decisores já encontrados nesta empresa em
+      qualquer busca anterior (deste usuário ou de outro). Zero rede.
   0. Quadro societário da Receita (CNPJ) — associação oficial empresa→pessoa
   1. Aba People/Pessoas do LinkedIn (linkedin.com/company/{slug}/people/)
      — fonte direta; associação empresa→pessoa é garantida pela página
@@ -10,9 +12,14 @@ Estratégia (em ordem de prioridade):
 
 Com uma sessão de banco (`db`), os e-mails deixam de ser palpite fixo e passam
 a sair do padrão aprendido do domínio, e cada decisor encontrado é gravado no
-banco global de pessoas — alimentando as próximas buscas de graça.
+banco global de pessoas — alimentando as próximas buscas de graça (fonte -1).
 
-Cargos de decisão reconhecidos e priorizados por TITLE_PRIORITY.
+Cargos de decisão reconhecidos e priorizados por TITLE_PRIORITY. A fonte 2
+(busca por motor) é a mais barata de errar: um "Former CTO" ainda aparece nos
+resultados do Google meses depois de a pessoa sair do cargo, e nomes mal
+extraídos do título da página viram lixo no banco. Por isso ela carrega guardas
+extras que as fontes 0 e 1 não precisam (associação oficial ou direta).
+
 Sem dependência de APIs pagas.
 """
 import logging
@@ -27,7 +34,8 @@ from bs4 import BeautifulSoup
 
 from ._utils import normalize_domain, HEADERS, LINKEDIN_COMPANY_RE
 from ._ddg import search_multi
-from .email_verifier import verify_batch, verify_emails
+from .email_verifier import verify_emails_effective
+from .people.identity import name_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +77,43 @@ TITLE_PRIORITY: dict = {
 }
 
 _CONFIDENCE_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+# Sinaliza que o cargo já passou: resultado de busca ainda indexado pelo
+# motor, mas a pessoa pode ter saído da empresa há anos. Sem isso, "Former
+# CTO" e "Ex-diretor" batiam cargo+empresa e saíam como confiança "high".
+_FORMER_ROLE_RE = re.compile(
+    r"\b(former|ex[-\s]|anteriormente|previously|past|até \d{4}|until \d{4})\b",
+    re.IGNORECASE,
+)
+
+
+def _norm_name_key(name: str) -> str:
+    """Chave de dedupe robusta a acento/espaçamento ('João Silva' == 'joao  silva')."""
+    return " ".join(name_tokens(name or ""))
+
+
+# Palavras de interface que aparecem em título de página, nunca em nome de
+# pessoa — "Ver perfil profissional de..." e afins viram um nome de 2 tokens
+# que passaria despercebido só pela contagem.
+_JUNK_NAME_TOKENS = {
+    "perfil", "profile", "login", "entrar", "signin", "sign", "cadastre",
+    "cadastro", "view", "ver", "join", "linkedin", "log", "conecte",
+    "connect", "search", "busca", "pesquisa", "pagina", "page", "acesse",
+    "acesso", "visualizar", "veja",
+}
+
+
+def _is_plausible_person_name(name: str) -> bool:
+    """
+    Nome extraído de busca por motor precisa parecer gente: pelo menos nome e
+    sobrenome, nenhum dos dois sendo texto de interface. Sem essa guarda,
+    título de página mal cortado ("Ver Perfil", "LinkedIn Login") virava um
+    "decisor" fantasma no banco.
+    """
+    tokens = name_tokens(name or "")
+    if len(tokens) < 2:
+        return False
+    return not any(t in _JUNK_NAME_TOKENS for t in tokens)
 
 
 def _title_priority(title: str) -> int:
@@ -130,11 +175,26 @@ def _generate_emails(name: str, domain: str) -> List[str]:
     return list(dict.fromkeys(emails))[:4]
 
 
+def _contains_phrase(text: str, phrase: str) -> bool:
+    """
+    Confirma `phrase` inteira dentro de `text`, com borda de palavra nas duas
+    pontas. 'cfo' não pode bater dentro de 'chief financial officer' escrito
+    por extenso nem dentro de outra palavra que só coincida por acaso.
+    """
+    if not phrase:
+        return False
+    return bool(re.search(rf"\b{re.escape(phrase.lower())}\b", text))
+
+
 def _match_confidence(snippet: str, title: str, role: str, company: str) -> str:
-    """Avalia se snippet+título confirmam cargo e empresa."""
-    text = (snippet + " " + title).lower()
-    has_role = bool(role) and role.lower() in text
-    has_company = bool(company) and company.lower() in text
+    """Avalia se snippet+título confirmam cargo e empresa atuais."""
+    text = f"{snippet} {title}".lower()
+    if _FORMER_ROLE_RE.search(text):
+        # Resultado ainda indexado, mas o cargo/vínculo pode não valer mais —
+        # nunca é "high" mesmo quando cargo e empresa aparecem no texto.
+        return "low"
+    has_role = _contains_phrase(text, role)
+    has_company = _contains_phrase(text, company)
     if has_role and has_company:
         return "high"
     if has_role or has_company:
@@ -165,7 +225,7 @@ def _probable_emails(name: str, domain: str, verify: bool, db=None) -> List[dict
         return []
 
     if verify:
-        results = verify_batch(emails_raw, budget_seconds=6.0)
+        results = verify_emails_effective(emails_raw, budget_seconds=6.0, db=db)
     else:
         results = [{"email": e, "status": "unknown"} for e in emails_raw]
 
@@ -366,6 +426,62 @@ def _search_one_role(role: str, company_term: str, budget: float = 24.0) -> List
 
 
 # ---------------------------------------------------------------------------
+# Fonte -1 — Banco global de pessoas (cache entre buscas, entre usuários)
+# ---------------------------------------------------------------------------
+
+def _cached_decisors(db, domain: str, roles: List[str], limit: int) -> List[dict]:
+    """
+    Decisores desta empresa já encontrados em qualquer busca anterior — desta
+    conta ou de outra. `_persist_decisors` é quem alimenta esse banco depois
+    de cada chamada; esta função é o que devolve esse trabalho de graça na
+    próxima vez, sem gastar um segundo do orçamento de rede.
+
+    Filtra por `decision_rank` (classificação de senioridade do próprio
+    cargo salvo), não pelo texto de `roles` pedido agora: um decisor
+    encontrado buscando "CTO" continua sendo decisor numa busca por "CFO".
+    """
+    if db is None:
+        return []
+    from .people import repository as repo
+    from .people.waterfall import find_company_decision_makers
+
+    company = repo.get_company(db, domain)
+    if not company:
+        return []
+
+    out = []
+    for person in find_company_decision_makers(db, company, limit=limit):
+        if not person.full_name or repo.decision_rank(person) >= 9:
+            continue
+        title = person.title or person.headline or ""
+        emails = [
+            {
+                "email": e.email, "status": e.status,
+                "confidence": e.confidence or 0, "pattern": e.pattern,
+            }
+            for e in repo.sorted_emails(person) if (e.confidence or 0) > 0
+        ]
+        matched_role = next(
+            (r for r in roles if r.lower() in title.lower()),
+            title or (roles[0] if roles else ""),
+        )
+        out.append({
+            "name": person.full_name,
+            "title_searched": matched_role,
+            "title_found": title,
+            "snippet": "Já conhecido na base (encontrado em busca anterior).",
+            "linkedin_url": (
+                f"https://www.linkedin.com/in/{person.linkedin_slug}"
+                if person.linkedin_slug else None
+            ),
+            "probable_emails": emails,
+            "match_confidence": "high",
+            "phone": None,
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Ponto de entrada público
 # ---------------------------------------------------------------------------
 
@@ -457,6 +573,7 @@ def find_decision_makers(
       probable_emails (lista de {email, status, confidence}), match_confidence, phone
 
     Estratégia:
+      -1. Banco global de pessoas (decisores já encontrados antes, zero rede)
       0. Quadro societário da Receita (se o CNPJ da empresa já é conhecido)
       1. Aba People do LinkedIn (se linkedin_url disponível)
       2. Fallback: busca por motor de pesquisa por cargo
@@ -475,14 +592,24 @@ def find_decision_makers(
     seen_names: set = set()
     truncated_by_time = False
 
-    # Fonte 0: registro público da Receita — associação oficial
-    for r in _qsa_decisors(db, domain, company_term, roles, verify_emails_smtp):
-        name_key = (r.get("name") or "").lower()
+    # Fonte -1: já conhecido no banco global — instantâneo, sem custo de rede
+    for r in _cached_decisors(db, domain, roles, limit):
+        name_key = _norm_name_key(r.get("name"))
         if name_key and name_key not in seen_names:
             seen_names.add(name_key)
             found.append(r)
         if len(found) >= limit:
             break
+
+    # Fonte 0: registro público da Receita — associação oficial
+    if len(found) < limit:
+        for r in _qsa_decisors(db, domain, company_term, roles, verify_emails_smtp):
+            name_key = _norm_name_key(r.get("name"))
+            if name_key and name_key not in seen_names:
+                seen_names.add(name_key)
+                found.append(r)
+            if len(found) >= limit:
+                break
 
     # Fonte 1: aba People — acesso direto, confiança alta
     if linkedin_url and len(found) < limit and remaining() > _PEOPLE_TAB_RESERVE:
@@ -497,8 +624,8 @@ def find_decision_makers(
         )
         for r in people_results:
             slug = LINKEDIN_PROFILE_RE.search(r.get("linkedin_url") or "")
-            slug_key = slug.group(1).lower() if slug else (r.get("name") or "").lower()
-            name_key = (r.get("name") or "").lower()
+            slug_key = slug.group(1).lower() if slug else _norm_name_key(r.get("name"))
+            name_key = _norm_name_key(r.get("name"))
             if slug_key not in seen_slugs and name_key not in seen_names:
                 seen_slugs.add(slug_key)
                 seen_names.add(name_key)
@@ -527,11 +654,23 @@ def find_decision_makers(
                     continue
                 title = r.get("title", "")
                 snippet = r.get("snippet", "")
+                # "Former CTO" / "Ex-diretor" ainda aparece no índice do motor
+                # anos depois de a pessoa sair — não vira decisor desta fonte.
+                if _FORMER_ROLE_RE.search(f"{snippet} {title}".lower()):
+                    seen_slugs.add(slug)
+                    continue
                 name = _extract_name(title, slug)
-                if (name or "").lower() in seen_names:
+                if not _is_plausible_person_name(name):
+                    # Título de página mal cortado ("Ver Perfil", "LinkedIn
+                    # Login") não é gente — não vale a pena nem para o
+                    # candidato de e-mail que seria gerado a partir dele.
+                    seen_slugs.add(slug)
+                    continue
+                name_key = _norm_name_key(name)
+                if name_key in seen_names:
                     continue
                 seen_slugs.add(slug)
-                seen_names.add((name or "").lower())
+                seen_names.add(name_key)
                 confidence = _match_confidence(snippet, title, role, company_term)
 
                 found.append(_build_decisor(

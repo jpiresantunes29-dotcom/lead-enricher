@@ -407,9 +407,11 @@ Ganchos de abordagem:
    python -m uvicorn main:app --reload
    ```
 
-4. **Testar no simulador**:
+4. **Testar na conversa de teste** (desde 2026-09-06, o simulador não é mais
+   uma tela própria — é um card fixo "Conversa de teste" no topo da lista de
+   Conversas):
    ```
-   http://localhost:8000/app/wa/simulador
+   http://localhost:8000/app#conversas
    ```
 
 ### Setup Produção (Vercel)
@@ -885,7 +887,7 @@ print(f"Horário: {turno.fora_do_horario}")
 
 ### Problema: "IA não está configurada"
 
-**Sintoma**: Ao abrir o simulador, aparece "GROQ_API_KEY ausente"
+**Sintoma**: Ao abrir a conversa de teste, aparece "GROQ_API_KEY ausente"
 
 **Checklist**:
 - [ ] `GROQ_API_KEY` está definida em `.env`?
@@ -1072,7 +1074,7 @@ lead_enricher/
 ```
 GET  /health                              Status geral
 POST /api/wa/webhook                      Recepção de mensagens WhatsApp
-GET  /api/wa/simulador                    Interface do simulador
+GET  /api/wa/sandbox                      Sessão da conversa de teste (UI: /app#conversas)
 
 POST /api/leads/{id}/ai-summary           Gera resumo executivo
 GET  /api/integrations/status             Status da IA (req. autenticação)

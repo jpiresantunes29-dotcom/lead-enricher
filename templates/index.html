@@ -80,13 +80,6 @@
       </span>
       <span id="nav-wa-count" class="nav-badge" style="display:none" title="Conversas esperando você responder"></span>
     </button>
-    <button class="app-nav-btn" data-route="simulador" onclick="nav('simulador')" title="Conversar com a IA sem gastar mensagem e sem tocar num lead real">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1H7a3 3 0 0 0-3 3v2H3v3h1v2a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-2h1v-3h-1V9a3 3 0 0 0-3-3h-2V5a3 3 0 0 0-3-3z"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>
-      <span class="nav-txt">
-        <span class="nav-lbl">Simulador da IA</span>
-        <span class="nav-desc">Testar sem enviar nada</span>
-      </span>
-    </button>
 
     <p class="sb-group">Análise</p>
     <button class="app-nav-btn" data-route="dashboard" onclick="nav('dashboard')" title="Números de esforço e conversão do período">
@@ -356,16 +349,12 @@
     <div id="followups-body"></div>
   </section>
 
-  <!-- ── VIEW: CONVERSAS (WhatsApp) ── -->
+  <!-- ── VIEW: CONVERSAS (WhatsApp) ──
+       Uma lista só, com um card fixo "Conversa de teste" no topo (mesma IA
+       configurada, sem nada saindo para a Meta — vive na memória do
+       servidor, é teste, não histórico) junto das conversas reais. -->
   <section class="view view--wide" id="view-conversas">
     <div id="conversas-body"></div>
-  </section>
-
-  <!-- ── VIEW: SIMULADOR DA IA ──
-       Mesma conversa que o lead veria, sem nada sair para a Meta. A sessão
-       vive na memória do servidor: é teste, não histórico. -->
-  <section class="view view--wide" id="view-simulador">
-    <div id="simulador-body"></div>
   </section>
 
   <!-- ── VIEW: HISTÓRICO ── -->

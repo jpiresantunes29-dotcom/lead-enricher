@@ -127,6 +127,60 @@ def enrich_existing_lead(db: Session, profile: Profile, lead: Lead) -> EnrichOut
     return outcome
 
 
+@dataclass
+class PreparedEnrichment:
+    """
+    O que dá para decidir sem rede: se já existe resposta pronta (cache, ou
+    erro de domínio inválido) ou, senão, a ficha reservada e à espera da
+    coleta.
+
+    Usado por `services/jobs.py` para coletar vários domínios em paralelo:
+    esta parte (banco, rápida) roda sequencial antes de disparar a coleta, e
+    `finish_enrichment` (também banco, rápida) fecha o ciclo depois — o que
+    fica em paralelo é só o meio, que é rede pura.
+    """
+    outcome: Optional[EnrichOutcome] = None   # pronto: cache ou erro, nada mais a fazer
+    domain: Optional[str] = None
+    lead: Optional[Lead] = None               # reservado; falta coletar e chamar finish_enrichment
+
+
+def reserve_lead(db: Session, lead: Lead) -> Lead:
+    """Grava o placeholder da ficha, se ainda não existir. Só banco, sem rede."""
+    if lead.id is None:
+        db.add(lead)
+        db.commit()
+        db.refresh(lead)
+    return lead
+
+
+def prepare_enrichment(db: Session, profile: Profile, raw_domain: str,
+                       existing_lead: Optional[Lead] = None) -> PreparedEnrichment:
+    """A parte de `enrich_for_user` que só toca banco: decide cache ou reserva a ficha."""
+    domain = normalize_domain(raw_domain)
+    if not domain:
+        return PreparedEnrichment(outcome=EnrichOutcome(
+            result=RESULT_ERROR, message="Domínio inválido.", error="dominio_vazio",
+        ))
+
+    if existing_lead is not None:
+        return PreparedEnrichment(domain=domain, lead=reserve_lead(db, existing_lead))
+
+    cached = find_cached_lead(db, domain, profile.id)
+    if cached:
+        logger.info("Cache hit for domain=%s user=%s", domain, profile.id)
+        return PreparedEnrichment(outcome=EnrichOutcome(
+            result=RESULT_CACHED, lead=cached, message="Dados carregados do cache.",
+        ))
+
+    # A ficha nasce ANTES da coleta: se o processo morrer no meio, a próxima
+    # tentativa continua nesta mesma linha em vez de abrir outra.
+    previous = find_previous_attempt(db, domain, profile.id)
+    lead = previous if previous is not None else Lead(
+        user_id=profile.id, raw_input_domain=raw_domain, domain=domain, status="pending",
+    )
+    return PreparedEnrichment(domain=domain, lead=reserve_lead(db, lead))
+
+
 def enrich_for_user(db: Session, profile: Profile, raw_domain: str,
                     existing_lead: Optional[Lead] = None) -> EnrichOutcome:
     """
@@ -137,54 +191,43 @@ def enrich_for_user(db: Session, profile: Profile, raw_domain: str,
     de abrir outra — senão a mesma empresa apareceria duas vezes no histórico,
     uma com as células originais e outra com os dados coletados.
     """
-    domain = normalize_domain(raw_domain)
-    if not domain:
-        return EnrichOutcome(
-            result=RESULT_ERROR, message="Domínio inválido.", error="dominio_vazio",
-        )
-
-    if existing_lead is not None:
-        return _run_enrichment(db, profile, domain, raw_domain, existing_lead)
-
-    cached = find_cached_lead(db, domain, profile.id)
-    if cached:
-        logger.info("Cache hit for domain=%s user=%s", domain, profile.id)
-        return EnrichOutcome(
-            result=RESULT_CACHED, lead=cached, message="Dados carregados do cache.",
-        )
-
-    # A ficha nasce ANTES da coleta: se o processo morrer no meio, a próxima
-    # tentativa continua nesta mesma linha em vez de abrir outra.
-    previous = find_previous_attempt(db, domain, profile.id)
-    lead = previous if previous is not None else Lead(
-        user_id=profile.id, raw_input_domain=raw_domain, domain=domain, status="pending",
-    )
-    return _run_enrichment(db, profile, domain, raw_domain, lead)
-
-
-def _run_enrichment(db: Session, profile: Profile, domain: str, raw_domain: str,
-                    lead: Lead) -> EnrichOutcome:
-    """Reserva a ficha, coleta e grava. Único ponto que fala com a coleta."""
-    if lead.id is None:
-        db.add(lead)
-        db.commit()
-        db.refresh(lead)
+    prepared = prepare_enrichment(db, profile, raw_domain, existing_lead=existing_lead)
+    if prepared.outcome is not None:
+        return prepared.outcome
 
     try:
         data = enrich_company(raw_domain)
+        error = None
     except Exception as e:
+        data, error = None, e
+    return finish_enrichment(db, profile, prepared.domain, prepared.lead, data, error)
+
+
+def finish_enrichment(db: Session, profile: Profile, domain: str, lead: Lead,
+                      data: Optional[dict], error: Optional[Exception] = None) -> EnrichOutcome:
+    """
+    Grava o resultado de UMA coleta já feita. Só banco — nenhuma chamada de
+    rede acontece aqui.
+
+    Separada da coleta para permitir buscar vários domínios em paralelo
+    (services/jobs.py) sem que threads diferentes toquem o banco ao mesmo
+    tempo: a coleta roda solta, e só a gravação — rápida — acontece na sessão
+    principal, uma de cada vez.
+    """
+    if error is not None:
         lead.status = "failed"
         db.commit()
-        logger.exception("Enrichment failed for domain=%s: %s", domain, e)
+        logger.exception("Enrichment failed for domain=%s: %s", domain, error)
         return EnrichOutcome(
             result=RESULT_ERROR, lead=lead,
-            message=f"Erro ao enriquecer: {e}", error=str(e)[:500],
+            message=f"Erro ao enriquecer: {error}", error=str(error)[:500],
         )
 
     for key, value in data.items():
         if hasattr(Lead, key):
             setattr(lead, key, value)
     lead.user_id = profile.id
+    lead.refreshed_at = datetime.now(UTC)
     db.commit()
     db.refresh(lead)
 

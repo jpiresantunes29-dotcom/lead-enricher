@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from models.database import get_db
-from services import jobs
+from services import digest, jobs
 from services.wa import orchestrator
 
 logger = logging.getLogger(__name__)
@@ -42,9 +42,15 @@ def rodar_fila(db: Session = Depends(get_db)):
 
     Cobre quem fechou a aba antes do lote terminar — enquanto a tela está
     aberta, é o próprio navegador que empurra a fila (`/api/batches/{id}/run`).
+
+    Antes de processar, também enfileira leads que não são revisitados há
+    `STALE_LEAD_DAYS` (ver `services/jobs.enqueue_stale_refreshes`) — é o único
+    cron que roda para a base inteira uma vez por dia, e reaproveitar esta
+    rodada evita precisar de mais um agendamento só para isso.
     """
+    leads_reenfileirados = jobs.enqueue_stale_refreshes(db)
     resumo = jobs.run_pending(db)
-    return {"ok": True, **resumo}
+    return {"ok": True, "leads_reenfileirados": leads_reenfileirados, **resumo}
 
 
 @router.get("/preflight", dependencies=[Depends(require_cron_secret)])
@@ -58,6 +64,17 @@ def prontidao(db: Session = Depends(get_db)):
     """
     from services import preflight
     return preflight.verificar(db=db).como_dict()
+
+
+@router.post("/digest", dependencies=[Depends(require_cron_secret)])
+def enviar_digest(db: Session = Depends(get_db)):
+    """
+    Resumo diário por e-mail — uma vez por dia, chamado pelo cron.
+
+    Cobre o que aconteceu nas últimas 24 h e o que está esperando resposta:
+    ver `services/digest.py` para o que entra na contagem.
+    """
+    return {"ok": True, **digest.enviar_para_todos(db)}
 
 
 @router.post("/wa/pending", dependencies=[Depends(require_cron_secret)])

@@ -56,6 +56,44 @@ def test_conexao_com_endereco_interno_e_recusada(client):
         assert resp.status_code == 422, f"aceitou destino interno: {url}"
 
 
+def test_toggle_liga_e_desliga_a_conexao(client):
+    client.post("/api/crm/connections", json={
+        "provider": "webhook", "webhook_url": "https://hooks.exemplo.com/x",
+    })
+
+    resp = client.patch("/api/crm/connections/webhook/toggle")
+    assert resp.status_code == 200
+    assert resp.json() == {"provider": "webhook", "is_active": False}
+
+    # É um alternador: chamar de novo liga de volta.
+    resp = client.patch("/api/crm/connections/webhook/toggle")
+    assert resp.json()["is_active"] is True
+
+    listagem = client.get("/api/crm/connections").json()
+    assert listagem[0]["is_active"] is True
+
+
+def test_toggle_de_conexao_inexistente_e_404(client):
+    resp = client.patch("/api/crm/connections/webhook/toggle")
+    assert resp.status_code == 404
+
+
+def test_delete_remove_a_conexao(client):
+    client.post("/api/crm/connections", json={
+        "provider": "webhook", "webhook_url": "https://hooks.exemplo.com/x",
+    })
+
+    resp = client.delete("/api/crm/connections/webhook")
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": True}
+    assert client.get("/api/crm/connections").json() == []
+
+
+def test_delete_de_conexao_inexistente_e_404(client):
+    resp = client.delete("/api/crm/connections/webhook")
+    assert resp.status_code == 404
+
+
 def test_conexao_exige_https(client):
     with patch("routers.crm_config.is_valid_target", return_value=True):
         resp = client.post(

@@ -270,3 +270,69 @@ def test_upsert_person_deduplica_por_slug(db):
 
 def test_pessoa_sem_identidade_nao_e_gravada(db):
     assert repo.upsert_person(db, full_name="Fulano") is None
+
+
+# ── decision_finder: cache global e guardas de precisão ─────────────────────
+
+def test_decisor_ja_conhecido_volta_do_cache_sem_rede(db, monkeypatch):
+    """
+    Fonte -1: um decisor achado numa busca anterior (de qualquer usuário)
+    tem que voltar puro do banco, sem tocar em nenhuma fonte de rede.
+    """
+    from services import decision_finder as df
+
+    company = repo.upsert_company(db, "acme.com", name="Acme")
+    person = repo.upsert_person(db, full_name="João Silva", slug="joao-silva",
+                                title="CTO", company_domain="acme.com", company=company)
+    repo.add_email(db, person, "joao.silva@acme.com", status="valid", confidence=97)
+    db.flush()
+
+    for nome_da_fonte in ("_qsa_decisors", "_fetch_people_tab_decisors", "_search_one_role"):
+        monkeypatch.setattr(df, nome_da_fonte,
+                            lambda *a, **k: (_ for _ in ()).throw(AssertionError(
+                                f"{nome_da_fonte} não deveria rodar: cache já tinha o decisor")))
+
+    # limit=1: o cache sozinho já satisfaz o pedido, então nenhuma outra
+    # fonte deveria sequer ser chamada (é isso que os monkeypatches acima
+    # verificam, estourando se alguma delas rodar).
+    result = df.find_decision_makers(
+        domain="acme.com", company_name="Acme", roles=["CTO"], limit=1, db=db,
+    )
+    assert len(result) == 1
+    assert result[0]["name"] == "João Silva"
+    assert result[0]["probable_emails"][0]["email"] == "joao.silva@acme.com"
+
+
+def test_cache_ignora_pessoa_sem_cargo_de_decisao(db):
+    """Um analista salvo por engano na base não deve ser servido como decisor."""
+    from services import decision_finder as df
+
+    company = repo.upsert_company(db, "acme.com", name="Acme")
+    repo.upsert_person(db, full_name="Ana Souza", slug="ana-souza",
+                       title="Analista de Marketing", company_domain="acme.com", company=company)
+    db.flush()
+
+    assert df._cached_decisors(db, "acme.com", ["CMO"], limit=5) == []
+
+
+@pytest.mark.parametrize("title,snippet,role,company,esperado", [
+    ("João Silva - CTO - Acme", "João é CTO na Acme desde 2020", "CTO", "Acme", "high"),
+    ("João Silva - Former CTO - Acme", "Former CTO at Acme", "CTO", "Acme", "low"),
+    ("João Silva", "Ex-diretor da Acme, hoje consultor", "diretor", "Acme", "low"),
+    ("x", "Perfil da empresa acfoo ltda", "cfo", "Acme", "low"),
+])
+def test_match_confidence_ignora_cargo_antigo_e_falso_positivo(title, snippet, role, company, esperado):
+    from services import decision_finder as df
+    assert df._match_confidence(snippet, title, role, company) == esperado
+
+
+@pytest.mark.parametrize("nome,esperado", [
+    ("João Silva", True),
+    ("Ver Perfil", False),
+    ("LinkedIn Login", False),
+    ("Madonna", False),
+    ("", False),
+])
+def test_nome_extraido_precisa_parecer_gente(nome, esperado):
+    from services import decision_finder as df
+    assert df._is_plausible_person_name(nome) is esperado

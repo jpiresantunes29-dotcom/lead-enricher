@@ -17,13 +17,14 @@ import logging
 import os
 import time
 import uuid
+from concurrent.futures import ALL_COMPLETED, FIRST_COMPLETED, ThreadPoolExecutor, wait
 from datetime import timedelta
 from typing import List, Optional
 
 from sqlalchemy import func, or_, update
 from sqlalchemy.orm import Session
 
-from models.database import Job, Profile, utcnow
+from models.database import Job, Lead, Profile, RELATIONSHIP_LEAD, utcnow
 from services import enrichment_service
 from services._utils import normalize_domain
 
@@ -45,6 +46,24 @@ MAX_ATTEMPTS = 3
 # Teto de domínios por lote. Protege o banco (e o tempo de coleta) de um CSV
 # colado por engano e enfileirado inteiro de uma vez.
 MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "200"))
+
+# Empresa muda: gente troca de cargo, decisor sai, telefone é atualizado. Um
+# lead nunca revisitado depois da primeira coleta vai ficando cada vez mais
+# desatualizado — este é o prazo depois do qual ele volta sozinho para a fila.
+STALE_LEAD_DAYS = int(os.getenv("STALE_LEAD_DAYS", "30"))
+
+# Quantos leads antigos entram na fila por rodada do cron. Sem teto, a
+# primeira vez que esta rotina roda numa base grande enfileiraria todo o
+# histórico de uma vez — cada um levando 15-30 s de coleta.
+MAX_STALE_REFRESH_PER_ROUND = int(os.getenv("MAX_STALE_REFRESH_PER_ROUND", "20"))
+
+# Jobs em paralelo por rodada. Enriquecimento é I/O de rede (scraping, DNS,
+# busca) — a GIL do Python libera durante isso, e paralelizar é o que permite
+# uma rodada de 45 s processar vários domínios em vez de um atrás do outro. Um
+# lote de 200 domínios a ~20 s cada levaria mais de uma hora em série; poucos
+# workers de cada vez evita sobrecarregar os motores de busca gratuitos que a
+# coleta usa por baixo (decision_finder, quando chamado à parte).
+JOBS_MAX_WORKERS = int(os.getenv("JOBS_MAX_WORKERS", "4"))
 
 # Depois de quanto tempo um job reservado é considerado abandonado. Precisa ser
 # maior que a rodada mais longa possível, senão duas rodadas simultâneas
@@ -92,6 +111,51 @@ def create_batch(db: Session, user_id: str, domains: List[str]) -> tuple[str, Li
     db.commit()
     logger.info("Lote criado batch=%s user=%s jobs=%d", batch_id, user_id, len(jobs))
     return batch_id, jobs
+
+
+def enqueue_stale_refreshes(db: Session, max_leads: int = MAX_STALE_REFRESH_PER_ROUND,
+                            older_than_days: int = STALE_LEAD_DAYS) -> int:
+    """
+    Enfileira leads que não são revisitados há `older_than_days` para uma
+    re-coleta (mesmo domínio, mesma ficha — não cria lead duplicado).
+
+    Só leads com `relationship == LEAD`: cliente atual ou contato bloqueado
+    não precisa da ficha mantida em dia, e recoletar um deles seria trabalho
+    sem propósito nenhum. Um lead com job "refresh" já na fila não entra de
+    novo — sem essa checagem, rodar o cron várias vezes num dia empilharia o
+    mesmo lead repetidas vezes.
+    """
+    corte = utcnow() - timedelta(days=older_than_days)
+    payloads_em_voo = (
+        db.query(Job.payload)
+        .filter(Job.kind == "refresh", Job.status.in_((STATUS_QUEUED, STATUS_RUNNING)))
+        .all()
+    )
+    ja_enfileirados = {linha[0].get("lead_id") for linha in payloads_em_voo if linha[0]}
+
+    candidatos = (
+        db.query(Lead)
+        .filter(
+            Lead.relationship == RELATIONSHIP_LEAD,
+            func.coalesce(Lead.refreshed_at, Lead.created_at) < corte,
+        )
+        .order_by(func.coalesce(Lead.refreshed_at, Lead.created_at).asc())
+        .limit(max_leads + len(ja_enfileirados))  # folga para descontar os já na fila
+        .all()
+    )
+
+    novos = [
+        Job(user_id=lead.user_id, kind="refresh", payload={"lead_id": lead.id},
+            status=STATUS_QUEUED)
+        for lead in candidatos
+        if lead.id not in ja_enfileirados
+    ][:max_leads]
+
+    if novos:
+        db.add_all(novos)
+        db.commit()
+        logger.info("Leads antigos reenfileirados para atualização: %d", len(novos))
+    return len(novos)
 
 
 # ── Execução ─────────────────────────────────────────────────────────────────
@@ -168,23 +232,8 @@ def _next_queued(db: Session, user_id: Optional[str] = None,
     return query.order_by(Job.id.asc()).first()
 
 
-def run_job(db: Session, job: Job) -> str:
-    """
-    Executa um job já reservado e devolve o resultado
-    (`enrichment_service.RESULT_*`). Não levanta exceção.
-    """
-    profile = db.query(Profile).filter(Profile.id == job.user_id).first()
-    if not profile:
-        job.status = STATUS_FAILED
-        job.result = enrichment_service.RESULT_ERROR
-        job.error = "perfil inexistente"
-        job.finished_at = utcnow()
-        db.commit()
-        return enrichment_service.RESULT_ERROR
-
-    domain = (job.payload or {}).get("domain", "")
-    outcome = enrichment_service.enrich_for_user(db, profile, domain)
-
+def _apply_outcome(db: Session, job: Job, outcome) -> None:
+    """Grava o resultado de um outcome já pronto no job e fecha a transação."""
     job.result = outcome.result
     job.lead_id = outcome.lead.id if outcome.lead else None
     job.error = outcome.error
@@ -200,7 +249,82 @@ def run_job(db: Session, job: Job) -> str:
         job.finished_at = utcnow()
 
     db.commit()
+
+
+def _contar(resumo: dict, job: Job) -> None:
+    if job.result == enrichment_service.RESULT_ERROR and job.status == STATUS_FAILED:
+        resumo["failed"] += 1
+    elif job.status == STATUS_DONE:
+        resumo["done"] += 1
+
+
+def run_job(db: Session, job: Job) -> str:
+    """
+    Executa um job já reservado, do início ao fim (reserva + coleta + grava),
+    e devolve o resultado (`enrichment_service.RESULT_*`). Não levanta exceção.
+
+    Usado direto pelos jobs `kind="refresh"` (poucos por rodada, e a descoberta
+    de domínio já mistura rede com banco por dentro — não vale coordenar
+    paralelismo para isso). Jobs `kind="enrich"`, o caso comum de lote grande,
+    passam por `run_pending`, que paraleliza só a coleta — ver lá.
+    """
+    profile = db.query(Profile).filter(Profile.id == job.user_id).first()
+    if not profile:
+        job.status = STATUS_FAILED
+        job.result = enrichment_service.RESULT_ERROR
+        job.error = "perfil inexistente"
+        job.finished_at = utcnow()
+        db.commit()
+        return enrichment_service.RESULT_ERROR
+
+    if job.kind == "refresh":
+        lead = db.query(Lead).filter(Lead.id == (job.payload or {}).get("lead_id")).first()
+        if lead is None:
+            job.status = STATUS_FAILED
+            job.result = enrichment_service.RESULT_ERROR
+            job.error = "lead inexistente"
+            job.finished_at = utcnow()
+            db.commit()
+            return enrichment_service.RESULT_ERROR
+        outcome = enrichment_service.enrich_existing_lead(db, profile, lead)
+    else:
+        domain = (job.payload or {}).get("domain", "")
+        outcome = enrichment_service.enrich_for_user(db, profile, domain)
+
+    _apply_outcome(db, job, outcome)
     return outcome.result
+
+
+def _start_enrich_job(db: Session, pool: ThreadPoolExecutor, job: Job):
+    """
+    Prepara um job `kind="enrich"` (banco: cache/reserva da ficha — rápido) e
+    dispara a coleta (rede pura) no pool. Devolve `(future, contexto)` para
+    `run_pending` acompanhar, ou `None` se o job já foi resolvido na hora
+    (cache ou domínio inválido) sem precisar de rede nenhuma.
+    """
+    profile = db.query(Profile).filter(Profile.id == job.user_id).first()
+    if not profile:
+        job.status = STATUS_FAILED
+        job.result = enrichment_service.RESULT_ERROR
+        job.error = "perfil inexistente"
+        job.finished_at = utcnow()
+        db.commit()
+        return None
+
+    raw_domain = (job.payload or {}).get("domain", "")
+    prepared = enrichment_service.prepare_enrichment(db, profile, raw_domain)
+    if prepared.outcome is not None:
+        _apply_outcome(db, job, prepared.outcome)
+        return None
+
+    def _coletar():
+        try:
+            return (enrichment_service.enrich_company(raw_domain), None)
+        except Exception as e:
+            return (None, e)
+
+    future = pool.submit(_coletar)
+    return future, {"job": job, "profile": profile, "prepared": prepared}
 
 
 def run_pending(db: Session, budget_seconds: float = ROUND_BUDGET_SECONDS,
@@ -208,6 +332,14 @@ def run_pending(db: Session, budget_seconds: float = ROUND_BUDGET_SECONDS,
                 max_jobs: Optional[int] = None) -> dict:
     """
     Processa jobs até acabar a fila ou o orçamento de tempo.
+
+    Jobs `kind="enrich"` são coletados em paralelo (até `JOBS_MAX_WORKERS` de
+    cada vez): a coleta é rede pura e roda solta no pool, mas toda escrita no
+    banco — reserva da ficha e gravação do resultado — acontece nesta mesma
+    sessão, sequencial. É a diferença entre paralelizar a espera de rede (que
+    é o gargalo real) e paralelizar sessões de banco: a segunda opção corrompe
+    uma conexão SQLite compartilhada entre threads (o que os testes usam) e,
+    em Postgres, ganharia pouco sobre o que já se ganha aqui.
 
     Devolve o resumo da rodada — é o que a UI usa para decidir se chama outra.
     """
@@ -220,25 +352,77 @@ def run_pending(db: Session, budget_seconds: float = ROUND_BUDGET_SECONDS,
     # lote encolhe a cada rodada que morre e nunca chega ao fim.
     reclaim_stale(db)
 
-    while True:
-        if max_jobs is not None and processed >= max_jobs:
-            break
-        if deadline - time.monotonic() < _JOB_RESERVE_SECONDS:
-            break
+    workers = max(1, JOBS_MAX_WORKERS)
+    em_voo: dict = {}   # future -> {"job", "profile", "prepared"}
 
-        job = _next_queued(db, user_id=user_id, batch_id=batch_id)
-        if job is None:
-            break
-        if not _claim(db, job):
-            continue        # outra rodada pegou este; tenta o próximo
+    def _drenar(bloqueante: bool, restante: float = 0.0) -> None:
+        nonlocal processed
+        concluidos, _ = wait(
+            list(em_voo),
+            timeout=None if bloqueante else restante,
+            return_when=FIRST_COMPLETED if bloqueante else ALL_COMPLETED,
+        )
+        for fut in concluidos:
+            contexto = em_voo.pop(fut)
+            data, error = fut.result()
+            outcome = enrichment_service.finish_enrichment(
+                db, contexto["profile"], contexto["prepared"].domain,
+                contexto["prepared"].lead, data, error,
+            )
+            _apply_outcome(db, contexto["job"], outcome)
+            _contar(resumo, contexto["job"])
+            processed += 1
 
-        result = run_job(db, job)
-        processed += 1
+    # Sem `with`: o context manager de ThreadPoolExecutor espera TODAS as
+    # tasks na saída, o que anularia o orçamento de tempo se uma coleta
+    # travar. O shutdown explícito no fim, com wait=False, devolve o controle
+    # assim que o prazo acaba — o que sobrar continua rodando sozinho (rede
+    # pura, sem sessão) e o job fica preso em `running` até `reclaim_stale`
+    # da próxima rodada resgatar, se a coleta não terminar a tempo.
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        while True:
+            if max_jobs is not None and processed + len(em_voo) >= max_jobs:
+                break
+            if deadline - time.monotonic() < _JOB_RESERVE_SECONDS:
+                break
 
-        if result == enrichment_service.RESULT_ERROR and job.status == STATUS_FAILED:
-            resumo["failed"] += 1
-        elif job.status == STATUS_DONE:
-            resumo["done"] += 1
+            if len(em_voo) >= workers:
+                _drenar(bloqueante=True)
+                continue
+
+            job = _next_queued(db, user_id=user_id, batch_id=batch_id)
+            if job is None:
+                if not em_voo:
+                    break
+                _drenar(bloqueante=True)
+                continue
+            if not _claim(db, job):
+                continue        # outra rodada pegou este; tenta o próximo
+
+            if job.kind != "enrich":
+                # Poucos por rodada (refresh de leads antigos) — sequencial.
+                run_job(db, job)
+                _contar(resumo, job)
+                processed += 1
+                continue
+
+            iniciado = _start_enrich_job(db, pool, job)
+            if iniciado is None:
+                _contar(resumo, job)
+                processed += 1
+                continue
+            future, contexto = iniciado
+            em_voo[future] = contexto
+
+        # Drena o que ainda está em voo, respeitando o que sobrou do
+        # orçamento. Como um job só começa quando ainda resta pelo menos
+        # `_JOB_RESERVE_SECONDS`, esta espera normalmente é suficiente para
+        # ele terminar — é a mesma garantia que já valia na versão em série.
+        if em_voo:
+            _drenar(bloqueante=False, restante=max(0.0, deadline - time.monotonic()))
+    finally:
+        pool.shutdown(wait=False)
 
     resumo["processed"] = processed
     resumo["remaining"] = count_queued(db, user_id=user_id, batch_id=batch_id)

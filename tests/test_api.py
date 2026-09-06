@@ -88,7 +88,7 @@ def test_me_nao_expoe_plano_nem_cota(client):
     """
     client.get("/api/me")
     corpo = client.get("/api/me").json()
-    assert set(corpo) == {"id", "email"}
+    assert set(corpo) == {"id", "email", "digest_diario"}
 
 
 def test_me_returns_existing_profile(client):
