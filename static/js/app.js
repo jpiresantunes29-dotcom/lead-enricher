@@ -2208,7 +2208,7 @@ async function searchDecisores(){
     const resp=await authFetch('/api/decisores',{method:'POST',body:JSON.stringify({lead_id:currentLeadId,roles:[role]})});
     const json=await resp.json();
     if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">${esc(json.detail||json.message||'Erro.')}</div>`;return;}
-    renderDecisores(json.decisores);
+    renderDecisoresV2(json.decisores);
   }catch(e){list.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
   finally{btn.disabled=false;bText.textContent='Buscar decisores';bSpin.style.display='none';}
 }
@@ -2225,6 +2225,78 @@ function renderDecisores(list){
     const li=p.linkedin_url?`<a class="meta-chip linkedin" href="${p.linkedin_url}" target="_blank" rel="noopener">LinkedIn</a>`:'';
     return `<div class="dec-card" style="animation-delay:${i*60}ms"><div class="dec-ava">${init}</div><div class="dec-info"><div class="dec-name">${esc(p.name||'—')} ${mB(p.match_confidence)}</div><div class="dec-role-txt">${esc(p.title_searched||'')}</div>${p.snippet?`<div class="dec-snippet">${esc(p.snippet.slice(0,200))}</div>`:''}<div class="dec-meta" id="dec-meta-${p.id}">${li}${emails}${decPhoneHtml(p)}</div></div></div>`;
   }).join('');
+}
+
+/* ══════ TESTE: card de decisor estilo extensão Lusha ══════
+   Mascara telefone/e-mail até o usuário clicar em "Revelar" — os dados já
+   vieram na resposta da busca, então revelar é só trocar o texto na tela,
+   sem custo nem chamada nova. */
+function _mascararTelefone(e164){
+  if(!e164)return null;
+  // Não dá para saber o tamanho do DDI de cabeça (+1 dos EUA vs +55 do Brasil
+  // vs +598 do Uruguai) sem uma tabela de países. Mais simples e sempre
+  // correto: mostrar os 4 primeiros dígitos após o "+" e mascarar o resto —
+  // é o suficiente para reconhecer o país/DDD sem expor a linha inteira.
+  const visivel=Math.min(5,e164.length);
+  const mask=e164.slice(0,visivel)+'•'.repeat(Math.max(0,e164.length-visivel));
+  return {mask,full:e164};
+}
+function _mascararEmail(email){
+  if(!email)return null;
+  const at=email.indexOf('@');
+  if(at<0)return {mask:email,full:email};
+  return {mask:`${'•'.repeat(Math.min(at,6))}@${email.slice(at+1)}`,full:email};
+}
+
+function renderDecisoresV2(list){
+  const root=document.getElementById('decisores-list');
+  if(!list||!list.length){root.innerHTML=`<div class="empty-state-box"><div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/></svg></div><div class="empty-title">Nenhum resultado</div><div class="empty-sub">Tente variar o cargo — "Diretor TI" em vez de "Diretor de TI".</div></div>`;return;}
+  _decisores=list;
+  root.innerHTML=list.map((p,i)=>{
+    const init=(p.name||'?').trim()[0].toUpperCase();
+    const li=p.linkedin_url?`<a class="dec2-li" href="${esc(p.linkedin_url)}" target="_blank" rel="noopener" title="Abrir LinkedIn">in</a>`:'';
+    const melhorEmail=(p.probable_emails||[])[0];
+    const emailObj=_mascararEmail(typeof melhorEmail==='string'?melhorEmail:melhorEmail?.email);
+    const phoneObj=_mascararTelefone(p.phone);
+    const fonte=p.phone_is_mobile===true?'lusha':'';
+
+    const rows=[];
+    if(phoneObj)rows.push(`<div class="dec2-row" data-full="${esc(phoneObj.full)}" data-kind="phone">
+        <span class="dec2-row-ic">${IC_PHONE_SM}</span><span class="dec2-masked">${esc(phoneObj.mask)}</span>
+        ${fonte?'<span class="dec2-src">Lusha</span>':''}
+      </div>`);
+    if(emailObj)rows.push(`<div class="dec2-row" data-full="${esc(emailObj.full)}" data-kind="email">
+        <span class="dec2-row-ic">${IC_MAIL_SM}</span><span class="dec2-masked">${esc(emailObj.mask)}</span>
+      </div>`);
+    if(!rows.length)rows.push(`<div class="dec2-row"><span class="dec2-masked">Sem telefone nem e-mail encontrado para este cargo.</span></div>`);
+
+    return `<div class="dec2-card" style="animation-delay:${i*60}ms" id="dec2-${p.id}">
+      <div class="dec2-head">
+        <div class="dec2-ava">${init}</div>
+        <div>
+          <div class="dec2-name-row"><span class="dec2-name">${esc(p.name||'—')}</span>${li}</div>
+          <div class="dec2-role">${esc(p.title_searched||p.title_found||'')}</div>
+        </div>
+      </div>
+      ${(phoneObj||emailObj)?`<button type="button" class="dec2-reveal" onclick="revelarDec2(${p.id})">Revelar contato</button>`:''}
+      <div class="dec2-rows">${rows.join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+const IC_PHONE_SM='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+const IC_MAIL_SM='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z" opacity="0"/><path d="M22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6z"/><path d="m22 6-10 7L2 6"/></svg>';
+
+function revelarDec2(id){
+  const card=document.getElementById('dec2-'+id);
+  if(!card)return;
+  card.querySelectorAll('.dec2-row[data-full]').forEach(row=>{
+    const full=row.getAttribute('data-full');
+    const span=row.querySelector('.dec2-masked');
+    if(span){span.textContent=full;span.classList.remove('dec2-masked');span.classList.add('dec2-value');}
+  });
+  const btn=card.querySelector('.dec2-reveal');
+  if(btn)btn.remove();
 }
 
 /* ══════ CELULAR DO DECISOR ══════

@@ -752,6 +752,41 @@ body{
 .dec-warn{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--warn)}
 .dec-msg{flex-basis:100%;font-size:11.5px;color:var(--text-3);margin-top:5px}
 
+/* ══════ TESTE: card de decisor estilo extensão Lusha ══════ */
+.dec2-card{
+  padding:16px;border:1px solid var(--border);border-radius:12px;
+  background:var(--surface);animation:cardIn .3s ease both;
+}
+.dec2-head{display:flex;align-items:flex-start;gap:12px;margin-bottom:12px}
+.dec2-ava{
+  width:44px;height:44px;border-radius:50%;flex-shrink:0;
+  background:var(--accent-bg);border:1px solid var(--accent-border);
+  display:flex;align-items:center;justify-content:center;
+  font-weight:700;font-size:16px;color:var(--accent);
+}
+.dec2-name-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.dec2-name{font-size:15px;font-weight:700}
+.dec2-li{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:18px;height:18px;border-radius:4px;background:#0a66c2;color:#fff;
+  font-size:11px;font-weight:700;flex-shrink:0;
+}
+.dec2-role{font-size:13px;color:var(--text-3);margin-top:2px}
+.dec2-badge{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
+.dec2-reveal{
+  width:100%;padding:10px;margin-bottom:12px;
+  background:#5b3df5;color:#fff;border:none;border-radius:8px;
+  font-size:13.5px;font-weight:700;cursor:pointer;transition:background .15s;
+}
+.dec2-reveal:hover{background:#4a30dd}
+.dec2-reveal:disabled{opacity:.6;cursor:wait}
+.dec2-rows{display:flex;flex-direction:column;gap:8px}
+.dec2-row{display:flex;align-items:center;gap:10px;font-size:13.5px}
+.dec2-row-ic{flex-shrink:0;color:var(--text-3);display:flex}
+.dec2-masked{color:var(--text-3);letter-spacing:1px}
+.dec2-value{color:var(--text-1);font-weight:600}
+.dec2-src{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);background:var(--accent-bg);padding:1px 6px;border-radius:4px;margin-left:auto}
+
 /* ── Correção manual de campo (telefone) ── */
 .cell-edit{
   font-size:11.5px;font-weight:700;color:var(--accent);
