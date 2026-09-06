@@ -354,7 +354,7 @@ _SLUG_PREFIXES = ("cia-", "grupo-", "o-")
 # Teto de candidatos testados. Cada página do LinkedIn leva ~12 s; testamos
 # em paralelo, então o custo é ~1 página — mas cada tentativa é uma requisição
 # ao LinkedIn, e disparar dezenas por busca é o caminho para tomar bloqueio.
-_MAX_SLUG_CANDIDATES = 7
+_MAX_SLUG_CANDIDATES = 10
 
 
 def _slugify(value: str) -> str:
@@ -382,12 +382,23 @@ def _guess_slug_candidates(company_name: Optional[str], domain: str) -> List[str
 
     candidates.append(base.replace("-", ""))
     candidates += [prefix + (stripped or base) for prefix in _SLUG_PREFIXES]
+    # Mesmos prefixos, mas combinados com o root do domínio: cobre o caso em
+    # que o nome coletado do site é diferente do nome usado no LinkedIn, mas
+    # o domínio ainda dá a pista certa (ex.: grupo-<root>).
+    candidates += [prefix + root for prefix in _SLUG_PREFIXES]
 
     # Caminho inverso do sufixo removido acima: empresa brasileira cujo nome
     # não carrega "do Brasil" mas cujo slug no LinkedIn carrega (comum em
     # subsidiária local de marca estrangeira: "Acme" -> linkedin/acme-brasil).
     if domain.endswith(".br") and stripped == base:
         for suffix in ("-brasil", "-do-brasil"):
+            candidates.append(f"{base}{suffix}")
+
+    # Multinacional que opera no Brasil sob o mesmo nome, mas cujo LinkedIn
+    # é da subsidiária regional, não da matriz: "Nespresso" ->
+    # linkedin/nespresso-brasil, mesmo com domínio .com global.
+    if base:
+        for suffix in ("-br", "-brasil", "-americas", "-latam"):
             candidates.append(f"{base}{suffix}")
 
     seen = set()

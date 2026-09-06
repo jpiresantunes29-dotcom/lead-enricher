@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Teto de tempo da busca inteira. A função serverless da Vercel morre em 60 s
 # sem devolver nada — é melhor entregar a ficha parcial do que perder tudo.
-ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "35"))
+ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "50"))
 
 # Versão da lógica de coleta. INCREMENTE sempre que uma correção mudar o que
 # seria coletado para o mesmo domínio: fichas gravadas por versões anteriores
@@ -41,7 +41,10 @@ ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "35"))
 #       confiança "verified" (site/sede/funcionários derivados da página só
 #       entram junto com o LinkedIn verificado) — dado não confirmado agora
 #       fica vazio em vez de aparecer como palpite
-ENRICHMENT_VERSION = 5
+#   6 — LinkedIn "probable" passa a ser aceito (com a confiança real marcada
+#       na ficha, não só "verified"); orçamento total e o gatilho de busca do
+#       LinkedIn aumentados para caber mais tentativas antes do teto da Vercel
+ENRICHMENT_VERSION = 6
 
 
 def enrich_company(domain_input: str) -> dict:
@@ -162,7 +165,7 @@ def enrich_company(domain_input: str) -> dict:
             page = inspect_company_page(site_linkedin_url, domain)
             found_url = site_linkedin_url
             logger.info("LinkedIn source=site domain=%s", domain)
-        elif _remaining() > 8:
+        elif _remaining() > 5:
             linkedin_data = find_company_linkedin(domain, company_name)
             found_url = (linkedin_data or {}).get("url")
             page = (linkedin_data or {}).get("page")
@@ -177,13 +180,14 @@ def enrich_company(domain_input: str) -> dict:
         logger.warning("Etapa LinkedIn falhou domain=%s: %s", domain, e)
         page, found_url = None, None
 
-    # Só afirmamos o LinkedIn da empresa com confiança "verified" — a própria
-    # página declara o domínio buscado no bloco "Informações". Qualquer coisa
-    # abaixo disso (probable/unverified) é palpite, e mostrar o link errado
-    # na ficha é pior do que não mostrar nenhum. Sem "verified", também não
-    # aproveitamos setor/sede/funcionários dessa página: se não temos certeza
-    # de que é a empresa certa, nenhum dado dela é confiável.
-    if found_url and page and page.get("confidence") == "verified":
+    # Afirmamos o LinkedIn da empresa com confiança "verified" (a própria
+    # página declara o domínio buscado no bloco "Informações") ou "probable"
+    # (nome da empresa bate, mas o site declarado não confirma — geralmente
+    # porque a página não veio, ou a marca é do grupo controlador). Abaixo
+    # disso ("unverified") é chute demais para mostrar: link errado na ficha
+    # é pior do que campo vazio. A confiança de verdade fica gravada em
+    # linkedin_confidence, então o vendedor sabe o que está olhando.
+    if found_url and page and page.get("confidence") in ("verified", "probable"):
         result["linkedin_url"] = found_url
         result["linkedin_confidence"] = page["confidence"]
     else:
