@@ -411,7 +411,9 @@ def test_sem_credencial_da_meta_a_rota_explica_o_que_falta(client, monkeypatch):
     lead_id = _lead()
     resp = client.post("/api/wa/start", json={"lead_id": lead_id})
     assert resp.status_code == 503
-    assert "WHATSAPP_ACCESS_TOKEN" in resp.json()["detail"]
+    # A frase é para quem vai conectar o WhatsApp pela tela, não para quem
+    # edita variável de ambiente: fala do token, não de WHATSAPP_ACCESS_TOKEN.
+    assert "token de acesso" in resp.json()["detail"]
 
 
 # ── Status para a tela ───────────────────────────────────────────────────────
@@ -421,4 +423,7 @@ def test_status_lista_o_que_falta_configurar(client, monkeypatch):
     corpo = client.get("/api/wa/status").json()
     assert corpo["configurado"] is True
     assert corpo["template"] is False
-    assert "WHATSAPP_TEMPLATE_NAME" in corpo["faltando"]
+    assert "template de abertura" in corpo["faltando"]
+    # Sem conexão gravada, quem envia é o número do servidor — e a tela
+    # precisa saber disso para não dizer que o WhatsApp é do usuário.
+    assert corpo["origem"] == "ambiente"

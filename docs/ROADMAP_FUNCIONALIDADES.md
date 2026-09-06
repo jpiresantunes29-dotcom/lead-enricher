@@ -135,6 +135,47 @@ Lead em estágio `oportunidade`/`reuniao_agendada` re-enriquece a cada 30 dias
 de e-mail — gancho de abordagem").
 - Esforço: 2 dias (depende de 0.2).
 
+### 1.6 Debounce e agrupamento de mensagens picotadas (WhatsApp)
+Quando o lead manda 3-5 mensagens seguidas rapidamente, agrupar e responder
+uma vez em vez de gerar N respostas. Melhora UX e reduz custo/latência da IA.
+- Implementação: pequeno atraso (5-8s) antes de processar; se mensagem nova
+  chega, reagendar; reusar cron já existente em vez de `sleep` (serverless).
+- Esforço: 1 dia.
+
+### 1.7 Múltiplos templates geridos pelo painel
+Hoje só 1 template fixo (`WHATSAPP_TEMPLATE_NAME`) para abertura fria.
+Criar tabela `wa_templates` com registro simples (nome, categoria Meta, corpo)
+e permitir escolher ao reenviar template após janela de 24h fechar (reengajamento).
+- Esforço: 1-2 dias.
+
+### 1.8 Base de conhecimento institucional leve
+Arquivo `.md` curto (não dinâmico) com "sobre nós: quem somos, o que vendemos,
+3 diferenciais" injetado no prompt da IA. Melhora respostas em
+`CONVERSANDO` sem tocar na regra "preço/condição → humano".
+- Esforço: 1 dia.
+
+### 1.9 Ferramenta de leitura de agenda (Google Calendar)
+Dar ao LLM uma função de **leitura** (não escrita) para consultar horários
+livres do vendedor via Google Calendar API (gratuita até cota generosa).
+IA sugere 2-3 horários reais na conversa; a **criação do evento** continua
+como ação determinística/humana.
+- Esforço: 2-3 dias (integração OAuth por vendedor).
+
+### 1.10 Script de QA com conversas sintéticas (teste adversário)
+Script que gera N conversas automáticas (outro LLM faz o papel do lead,
+variando intenção), roda contra `brain.ler()`, compara resultado esperado vs
+obtido, gera relatório (markdown/CSV) com taxa de acerto por intenção.
+Ferramenta interna: roda antes de qualquer mudança de prompt, sem impacto
+em produção.
+- Esforço: 2 dias.
+
+### 1.11 Reorganizar o prompt em seções nomeadas
+Extrair o prompt de `services/wa/brain.py` para um arquivo
+`services/wa/prompt.md` versionado, com seções `## OBJETIVO`, `## INTENÇÕES`,
+`## COMO AGIR`, `## NUNCA FAZER`. Facilita revisão e histórico de mudanças
+sem mexer em código Python.
+- Esforço: 1 dia.
+
 ---
 
 ## Fase 2 — Cara corporativa e monetização Enterprise

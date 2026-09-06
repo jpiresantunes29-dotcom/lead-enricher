@@ -1000,7 +1000,7 @@ function renderResult(data){
     // comercial do provedor e o resto da infraestrutura ficam no relatório
     // completo, logo abaixo.
     `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.mail}Domínio MX</span>${_mxCell?`<span class="data-val mono">${esc(_mxCell.host)}</span>${_mxCell.count>1?`<span class="data-sub">+${_mxCell.count-1} servidor(es) de reserva</span>`:''}`:'<span class="data-val muted">—</span>'}</div>`,
-    cell('Funcionários',emp,{ic:IC.users,delay:d+=50}),
+    cell('Pessoas associadas',emp,{ic:IC.users,delay:d+=50}),
     cell('Localização',data.location,{ic:IC.pin,delay:d+=50}),
     cell('Setor',data.sector,{ic:IC.tag,delay:d+=50}),
   ];
@@ -2565,7 +2565,7 @@ function renderHistory(q){
   }).join('');
   body.innerHTML=`<div class="tbl-scroll"><table class="lead-tbl">
     <thead><tr>
-      ${th('Empresa','company')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Funcionários','employees')}${th('Data','created_at')}${th('Ações',null)}
+      ${th('Empresa','company')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Pessoas associadas','employees')}${th('Data','created_at')}${th('Ações',null)}
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -2607,7 +2607,7 @@ function renderLeadSummary(l){
   const rows=[
     row('Site',ws?`<a class="data-val link" href="${l.website}" target="_blank" rel="noopener">${esc(ws)}</a>`:''),
     row('LinkedIn',l.linkedin_url?`<a class="data-val link" href="${l.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(l.linkedin_confidence)}`:''),
-    row('Funcionários',emp?esc(String(emp)):''),
+    row('Pessoas associadas',emp?esc(String(emp)):''),
     row('Localização',l.location?esc(l.location):''),
     row('Setor',l.sector?esc(l.sector):''),
     row('Provedor de e-mail',l.mx_provider?`<span class="mx-tag">${esc(l.mx_provider)}</span>${cb(l.mx_provider_confidence)}`:''),
@@ -2680,21 +2680,99 @@ async function loadSettings(){
   const body=document.getElementById('settings-body');
   body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   try{
-    const[meR,connR]=await Promise.all([
+    const[meR,connR,waR]=await Promise.all([
       authFetch('/api/me'),
       authFetch('/api/crm/connections'),
+      authFetch('/api/wa/connection'),
     ]);
     const me=meR.ok?await meR.json():_profile;
     const conns=connR.ok?await connR.json():[];
+    const wa=waR.ok?await waR.json():null;
     if(me)_profile=me;
     updateNavUser();
-    renderSettings(me,conns);
+    renderSettings(me,conns,wa);
   }catch(e){
     if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
   }
 }
 
-function renderSettings(me,conns){
+const _setHead=(icon,title,desc)=>`<div class="set-head">
+  <span class="set-ic">${icon}</span>
+  <span><div class="set-title">${title}</div><p class="set-desc">${desc}</p></span>
+</div>`;
+const IC_USER='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+const IC_PLUG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/></svg>';
+const IC_EXT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg>';
+const IC_EXIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+const IC_WA='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 20.5l1.7-5.2A8.5 8.5 0 1 1 21 11.5z"/><path d="M8.5 9.5c0 3.3 2.7 6 6 6"/></svg>';
+
+/* O cartão do WhatsApp. Diz sempre por qual número as mensagens saem: com a
+   conta conectada, o do usuário; sem ela, o do servidor — e "configurado"
+   sozinho não distingue os dois. */
+function _cardWhatsApp(wa){
+  if(!wa)return'';
+  const conectado=!!wa.conectado;
+  const pelaConta=wa.origem==='conta';
+  const estado=conectado
+    ?`<div class="crm-conn">
+        <div class="crm-conn-info">
+          <span class="crm-conn-name">${esc(wa.display_phone_number||'Número conectado')}</span>
+          <span class="crm-conn-meta">id ${esc(wa.phone_number_id||'—')}${wa.verificado_em?' · confirmado com a Meta em '+new Date(wa.verificado_em).toLocaleDateString('pt-BR'):' · ainda não confirmado'}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="crm-conn-state ${wa.configurado?'on':'off'}">${wa.configurado?'pronto':'incompleto'}</span>
+          <button class="set-btn danger" onclick="disconnectWhatsApp()">Desconectar</button>
+        </div>
+      </div>`
+    :(wa.configurado
+      ?`<div class="muted-box">Hoje as mensagens saem pelo número configurado no servidor. Conecte o seu para falar pelo seu próprio WhatsApp.</div>`
+      :'');
+
+  const pendencias=(wa.faltando||[]).length
+    ?`<p class="set-feedback err">Falta: ${(wa.faltando||[]).map(esc).join(', ')}.</p>`:'';
+  const erro=wa.erro?`<p class="set-feedback err">${esc(wa.erro)}</p>`:'';
+
+  return`
+    <div class="panel panel-pad">
+      ${_setHead(IC_WA,'Seu WhatsApp Business','Conecte o número da sua conta para conversar com os leads por ele. As credenciais vêm do <strong>Meta Business</strong> (Apps → WhatsApp → Configuração da API) e ficam cifradas aqui — depois de salvas não voltam para esta tela.')}
+      ${estado}
+      ${erro}
+      <div class="set-form">
+        <div class="set-field">
+          <label for="wa-pnid">ID do número (Phone Number ID)</label>
+          <input id="wa-pnid" class="set-input" placeholder="Ex.: 109876543210987" autocomplete="off" spellcheck="false" value="${esc(wa.phone_number_id||'')}"/>
+        </div>
+        <div class="set-field">
+          <label for="wa-token">Token de acesso${wa.tem_token?' (preenchido — deixe em branco para manter)':''}</label>
+          <input id="wa-token" class="set-input" type="password" placeholder="${wa.tem_token?'••••••••••••':'EAAG…'}" autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="set-field">
+          <label for="wa-secret">App Secret${wa.tem_app_secret?' (preenchido — deixe em branco para manter)':''}</label>
+          <input id="wa-secret" class="set-input" type="password" placeholder="${wa.tem_app_secret?'••••••••••••':'Assina o webhook: sem ele nada é recebido'}" autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="set-field">
+          <label for="wa-verify">Token de verificação${wa.tem_verify_token?' (preenchido — deixe em branco para manter)':''}</label>
+          <input id="wa-verify" class="set-input" type="password" placeholder="${wa.tem_verify_token?'••••••••••••':'Uma frase que você inventa e repete na Meta'}" autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="set-field">
+          <label for="wa-template">Template de abertura aprovado</label>
+          <input id="wa-template" class="set-input" placeholder="Ex.: primeiro_contato" autocomplete="off" spellcheck="false" value="${esc(wa.template_name||'')}"/>
+        </div>
+        <div class="set-actions">
+          <button class="set-btn primary" onclick="saveWhatsApp()">${conectado?'Atualizar conexão':'Conectar WhatsApp'}</button>
+        </div>
+        ${pendencias}
+        <p id="wa-feedback" class="set-feedback"></p>
+      </div>
+      <div class="set-row" style="align-items:flex-start">
+        <span class="set-lbl">URL do webhook</span>
+        <span class="set-val" style="user-select:all;word-break:break-all">${esc(wa.webhook_url||'')}</span>
+      </div>
+      <p class="set-desc">Cadastre essa URL e o token de verificação na Meta (WhatsApp → Configuração → Webhook) e assine o campo <strong>messages</strong>. É o que faz as respostas dos leads chegarem aqui.</p>
+    </div>`;
+}
+
+function renderSettings(me,conns,wa){
   const body=document.getElementById('settings-body');
 
   const webhook=(conns||[]).find(c=>c.provider==='webhook');
@@ -2712,14 +2790,7 @@ function renderSettings(me,conns){
       </div>`
     :'';
 
-  const head=(icon,title,desc)=>`<div class="set-head">
-    <span class="set-ic">${icon}</span>
-    <span><div class="set-title">${title}</div><p class="set-desc">${desc}</p></span>
-  </div>`;
-  const IC_USER='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
-  const IC_PLUG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/></svg>';
-  const IC_EXT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg>';
-  const IC_EXIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+  const head=_setHead;
 
   body.innerHTML=`
     <div class="panel panel-pad">
@@ -2745,6 +2816,8 @@ function renderSettings(me,conns){
         <p id="crm-feedback" class="set-feedback"></p>
       </div>
     </div>
+
+    ${_cardWhatsApp(wa)}
 
     <div class="panel panel-pad">
       ${head(IC_EXT,'Extensão do navegador (LinkedIn)','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Revelar contato é livre — não há limite de revelações.')}
@@ -2775,6 +2848,53 @@ async function generatePairCode(){
     el.className='set-feedback ok';
   }catch(e){
     if(e.message!=='not_authenticated'){el.textContent='Erro de conexão.';el.className='set-feedback err';}
+  }
+}
+
+/* ══════ WHATSAPP: conectar o número da conta ══════ */
+function _waFeedback(msg,ok){
+  const el=document.getElementById('wa-feedback');
+  if(!el)return;
+  el.textContent=msg;
+  el.className='set-feedback '+(ok?'ok':'err');
+}
+
+async function saveWhatsApp(){
+  const pnid=(document.getElementById('wa-pnid')?.value||'').trim();
+  if(!pnid){_waFeedback('Informe o ID do número (Phone Number ID).',false);return;}
+
+  const corpo={phone_number_id:pnid};
+  // Campo em branco significa "mantenha o que está gravado" — só vai o que
+  // foi digitado agora, para não apagar segredo que a tela nunca recebeu.
+  const token=(document.getElementById('wa-token')?.value||'').trim();
+  const secret=(document.getElementById('wa-secret')?.value||'').trim();
+  const verify=(document.getElementById('wa-verify')?.value||'').trim();
+  const template=(document.getElementById('wa-template')?.value||'').trim();
+  if(token)corpo.access_token=token;
+  if(secret)corpo.app_secret=secret;
+  if(verify)corpo.verify_token=verify;
+  corpo.template_name=template;
+
+  _waFeedback('Conferindo com a Meta…',true);
+  try{
+    const resp=await authFetch('/api/wa/connection',{method:'POST',body:JSON.stringify(corpo)});
+    const json=await resp.json();
+    if(!resp.ok){_waFeedback(json.detail||'Não foi possível conectar.',false);return;}
+    _waFeedback('WhatsApp conectado. As mensagens saem pelo seu número.',true);
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
+  }
+}
+
+async function disconnectWhatsApp(){
+  if(!confirm('Desconectar o WhatsApp desta conta? As conversas continuam salvas, mas você deixa de enviar e receber até conectar de novo.'))return;
+  try{
+    const resp=await authFetch('/api/wa/connection',{method:'DELETE'});
+    if(!resp.ok){_waFeedback('Não foi possível desconectar.',false);return;}
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
   }
 }
 

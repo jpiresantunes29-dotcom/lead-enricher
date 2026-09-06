@@ -185,16 +185,22 @@ def _checar_whatsapp(rel: Relatorio) -> None:
     mensagem e não consegue provar que o que volta é mesmo da Meta. O webhook
     recusa tudo (falha fechada, como deve), então o efeito prático é: o lead
     responde e ninguém nunca fica sabendo. Convite pago, resposta perdida.
+
+    Olha só as variáveis do servidor — a **reserva**, usada por quem ainda não
+    conectou uma conta. Cada conta conectada traz o próprio par token/segredo,
+    coerente por construção: a tela confere as credenciais com a Meta antes de
+    gravar, e sem App Secret o webhook daquela conta recusa a entrega.
     """
     envia = wa_client.is_configured()
     assina = wa_webhook.is_configured()
 
     if not envia and not assina:
         rel.achados.append(Achado(
-            ATENCAO, "WhatsApp desligado",
-            "A aba Conversas fica visível e explicando o que falta; nenhum "
-            "convite pode ser enviado.",
-            "Configure as variáveis WHATSAPP_* quando o WABA estiver aprovado.",
+            ATENCAO, "Servidor sem WhatsApp de reserva",
+            "Nada impede o produto de funcionar: cada usuário conecta o próprio "
+            "número em Configurações. Quem não conectar não envia nem recebe.",
+            "Só defina as variáveis WHATSAPP_* se quiser um número padrão para "
+            "quem ainda não conectou o seu.",
         ))
         return
 

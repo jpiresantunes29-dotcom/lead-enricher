@@ -10,7 +10,7 @@ HEADERS = [
     ("Site", "website"),
     ("LinkedIn", "linkedin_url"),
     ("Setor", "sector"),
-    ("Funcionários", "employee_count"),
+    ("Pessoas associadas", "employee_count"),
     ("Localização", "location"),
     ("Descrição", "description"),
     ("Decisor", "decision_maker_name"),

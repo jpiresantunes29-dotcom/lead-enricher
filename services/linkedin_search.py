@@ -11,6 +11,7 @@ Estratégia:
      - Procura "website":"<domain>" no JSON ou og:url
      - Devolve confidence: "verified" | "probable" | "unverified"
 """
+import logging
 import re
 import unicodedata
 import requests
@@ -26,6 +27,8 @@ from ._utils import (
     fix_response_encoding,
 )
 from ._ddg import search_multi
+
+logger = logging.getLogger(__name__)
 
 # (connect, read) da página pública da empresa. O read é generoso de propósito:
 # a página passa de 350 KB e leva ~11 s, e é dela que sai a contagem exata de
@@ -311,9 +314,19 @@ def inspect_company_page(linkedin_url: str, domain: str,
     requisição.
     """
     html = page_html if page_html is not None else fetch_company_page(linkedin_url)
-    info = parse_company_page(html)
+    try:
+        info = parse_company_page(html)
+    except Exception as e:
+        logger.warning("Falha ao interpretar página do LinkedIn url=%s: %s", linkedin_url, e)
+        info = {key: None for key in _PAGE_FIELDS}
+        info["name"] = None
+    try:
+        confidence = _confidence(html, domain, info["website"]) if linkedin_url else "unverified"
+    except Exception as e:
+        logger.warning("Falha ao validar vínculo do LinkedIn url=%s domain=%s: %s", linkedin_url, domain, e)
+        confidence = "unverified"
     return {
-        "confidence": _confidence(html, domain, info["website"]) if linkedin_url else "unverified",
+        "confidence": confidence,
         "sector": info["sector"],
         "location": info["location"],
         "size": info["size"],
@@ -341,7 +354,7 @@ _SLUG_PREFIXES = ("cia-", "grupo-", "o-")
 # Teto de candidatos testados. Cada página do LinkedIn leva ~12 s; testamos
 # em paralelo, então o custo é ~1 página — mas cada tentativa é uma requisição
 # ao LinkedIn, e disparar dezenas por busca é o caminho para tomar bloqueio.
-_MAX_SLUG_CANDIDATES = 5
+_MAX_SLUG_CANDIDATES = 7
 
 
 def _slugify(value: str) -> str:
@@ -369,6 +382,13 @@ def _guess_slug_candidates(company_name: Optional[str], domain: str) -> List[str
 
     candidates.append(base.replace("-", ""))
     candidates += [prefix + (stripped or base) for prefix in _SLUG_PREFIXES]
+
+    # Caminho inverso do sufixo removido acima: empresa brasileira cujo nome
+    # não carrega "do Brasil" mas cujo slug no LinkedIn carrega (comum em
+    # subsidiária local de marca estrangeira: "Acme" -> linkedin/acme-brasil).
+    if domain.endswith(".br") and stripped == base:
+        for suffix in ("-brasil", "-do-brasil"):
+            candidates.append(f"{base}{suffix}")
 
     seen = set()
     unique = []
@@ -460,7 +480,11 @@ def find_company_linkedin(domain: str, company_name: Optional[str] = None) -> di
     domain = normalize_domain(domain)
 
     # Estratégia 1: extração do site (a empresa declarando o próprio perfil)
-    found = _extract_from_site(domain)
+    try:
+        found = _extract_from_site(domain)
+    except Exception as e:
+        logger.warning("Extração de LinkedIn do site falhou domain=%s: %s", domain, e)
+        found = None
     source = "site"
     page = None
 
@@ -468,13 +492,21 @@ def find_company_linkedin(domain: str, company_name: Optional[str] = None) -> di
     # não depende de infraestrutura de terceiros — e os buscadores estão
     # todos barrando robô hoje (captcha/anti-bot).
     if not found:
-        guessed = _guess_from_slugs(domain, company_name)
+        try:
+            guessed = _guess_from_slugs(domain, company_name)
+        except Exception as e:
+            logger.warning("Adivinhação de slug do LinkedIn falhou domain=%s: %s", domain, e)
+            guessed = None
         if guessed:
             found, page, source = guessed["url"], guessed["page"], "slug_guess"
 
     # Estratégia 3: busca em engines — último recurso, hoje dormente.
     if not found:
-        found = _search_engines(domain, company_name)
+        try:
+            found = _search_engines(domain, company_name)
+        except Exception as e:
+            logger.warning("Busca de LinkedIn em engines falhou domain=%s: %s", domain, e)
+            found = None
         source = "search_engine"
 
     if not found:

@@ -37,7 +37,11 @@ ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "35"))
 #       pelo porte da Receita; CNPJ também nas páginas legais do site
 #   4 — MX com PTR reverso, ASN, rede e país em todas as linhas (painel
 #       "Infraestrutura de e-mail"); NS com IP
-ENRICHMENT_VERSION = 4
+#   5 — mx_provider só é aceito com confiança "high"; linkedin_url só com
+#       confiança "verified" (site/sede/funcionários derivados da página só
+#       entram junto com o LinkedIn verificado) — dado não confirmado agora
+#       fica vazio em vez de aparecer como palpite
+ENRICHMENT_VERSION = 5
 
 
 def enrich_company(domain_input: str) -> dict:
@@ -126,10 +130,17 @@ def enrich_company(domain_input: str) -> dict:
         cnpj_pool = ThreadPoolExecutor(max_workers=1)
         cnpj_future = cnpj_pool.submit(lookup_cnpj, result["cnpj"], timeout=6)
 
-    # Consolida DNS
+    # Consolida DNS.
+    # mx_provider só é aceito com confiança "high" (hostname MX bate com um
+    # padrão conhecido — Google, Microsoft, Locaweb...): "medium" (ASN) e
+    # "low" (nome chutado do hostname) são inferência, não certeza, e a ficha
+    # do vendedor não pode afirmar um provedor que pode estar errado. Os
+    # registros MX crus (mx_records) continuam aparecendo sempre — são fato
+    # de DNS, não interpretação.
     if dns_data and isinstance(dns_data, dict):
-        result["mx_provider"] = dns_data.get("mx_provider")
-        result["mx_provider_confidence"] = dns_data.get("mx_provider_confidence")
+        if dns_data.get("mx_provider_confidence") == "high":
+            result["mx_provider"] = dns_data.get("mx_provider")
+            result["mx_provider_confidence"] = dns_data.get("mx_provider_confidence")
         result["mx_records"] = dns_data.get("mx", [])
         result["hosting_provider"] = dns_data.get("hosting_provider")
         result["dns_report"] = dns_data
@@ -144,23 +155,41 @@ def enrich_company(domain_input: str) -> dict:
     # funcionários.
     company_name = result.get("company_name")
     page = None
-    if result.get("linkedin_url"):
-        page = inspect_company_page(result["linkedin_url"], domain)
+    site_linkedin_url = result.get("linkedin_url")
+    found_url = None
+    try:
+        if site_linkedin_url:
+            page = inspect_company_page(site_linkedin_url, domain)
+            found_url = site_linkedin_url
+            logger.info("LinkedIn source=site domain=%s", domain)
+        elif _remaining() > 8:
+            linkedin_data = find_company_linkedin(domain, company_name)
+            found_url = (linkedin_data or {}).get("url")
+            page = (linkedin_data or {}).get("page")
+            # Por qual caminho o LinkedIn apareceu (ou não). É o número que decide
+            # se vale contratar busca paga para o que sobrar — sem ele a decisão
+            # seria chute.
+            logger.info(
+                "LinkedIn source=%s domain=%s",
+                (linkedin_data or {}).get("source") or "none", domain,
+            )
+    except Exception as e:
+        logger.warning("Etapa LinkedIn falhou domain=%s: %s", domain, e)
+        page, found_url = None, None
+
+    # Só afirmamos o LinkedIn da empresa com confiança "verified" — a própria
+    # página declara o domínio buscado no bloco "Informações". Qualquer coisa
+    # abaixo disso (probable/unverified) é palpite, e mostrar o link errado
+    # na ficha é pior do que não mostrar nenhum. Sem "verified", também não
+    # aproveitamos setor/sede/funcionários dessa página: se não temos certeza
+    # de que é a empresa certa, nenhum dado dela é confiável.
+    if found_url and page and page.get("confidence") == "verified":
+        result["linkedin_url"] = found_url
         result["linkedin_confidence"] = page["confidence"]
-        logger.info("LinkedIn source=site domain=%s", domain)
-    elif _remaining() > 8:
-        linkedin_data = find_company_linkedin(domain, company_name)
-        if linkedin_data and linkedin_data.get("url"):
-            result["linkedin_url"] = linkedin_data["url"]
-            result["linkedin_confidence"] = linkedin_data["confidence"]
-            page = linkedin_data.get("page")
-        # Por qual caminho o LinkedIn apareceu (ou não). É o número que decide
-        # se vale contratar busca paga para o que sobrar — sem ele a decisão
-        # seria chute.
-        logger.info(
-            "LinkedIn source=%s domain=%s",
-            (linkedin_data or {}).get("source") or "none", domain,
-        )
+    else:
+        result["linkedin_url"] = None
+        result["linkedin_confidence"] = None
+        page = None
 
     # O bloco "Informações" da página do LinkedIn preenche setor e sede sem
     # nenhuma requisição extra — o HTML já está em mãos. É a fonte que cobre a
@@ -174,10 +203,14 @@ def enrich_company(domain_input: str) -> dict:
     # Etapa 3: employee count (cascata multi-fonte; aba People tem prioridade).
     # Sem orçamento sobrando, ainda vale ler a página que já está em mãos — o
     # que não pode é entrar em rede e estourar o limite da função serverless.
-    emp_data = fetch_employee_count(
-        result.get("linkedin_url"), website_url,
-        page_html=page_html, allow_network=_remaining() > 6,
-    )
+    try:
+        emp_data = fetch_employee_count(
+            result.get("linkedin_url"), website_url,
+            page_html=page_html, allow_network=_remaining() > 6,
+        )
+    except Exception as e:
+        logger.warning("Contagem de funcionários falhou domain=%s: %s", domain, e)
+        emp_data = None
     if emp_data:
         result["employee_count"] = emp_data
         # Contagem exata (aba People ou face-pile) — armazenada separadamente

@@ -33,7 +33,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from models.database import AI_ACTIVE, Conversation, Lead, WaMessage, utcnow
-from services.wa import brain, client, gate, states
+from services.wa import brain, client, credenciais, gate, states
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,10 @@ def _turno(db: Session, conversa: Conversation, agora) -> Turno:
         logger.info("Envio cancelado depois da leitura: %s", decisao.reason)
         return Turno(NAO_FEZ_NADA, motivo=decisao.message, intencao=leitura.intencao)
 
-    envio = client.send_text(conversa.phone_e164, texto)
+    # Pelo número de quem é a conversa. A automação responde em nome do dono
+    # do lead, e é o WhatsApp dele que o lead vê do outro lado.
+    envio = client.send_text(conversa.phone_e164, texto,
+                             cred=credenciais.do_usuario(db, conversa.user_id))
     if not envio.ok:
         return _passar_para_humano(
             db, conversa,

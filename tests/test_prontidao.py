@@ -143,8 +143,12 @@ def _envio_ligado(monkeypatch):
     monkeypatch.setenv("WHATSAPP_TEMPLATE_NAME", "primeiro_contato")
 
 
-def test_whatsapp_totalmente_desligado_e_so_um_aviso():
-    a = _achado(preflight.verificar(producao=True), "WhatsApp desligado")
+def test_servidor_sem_whatsapp_de_reserva_e_so_um_aviso():
+    """
+    Sem as variáveis, o produto não está quebrado: cada conta conecta o
+    próprio número pela tela. O que falta é só o número padrão de reserva.
+    """
+    a = _achado(preflight.verificar(producao=True), "sem WhatsApp de reserva")
     assert a.severidade == preflight.ATENCAO
 
 

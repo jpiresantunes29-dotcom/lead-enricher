@@ -155,29 +155,52 @@ Já declarados em `vercel.json`:
 Sem o plano Pro os crons não rodam, e a fila só anda enquanto alguém tem a aba
 aberta.
 
-## 4. WhatsApp — recebimento primeiro
+## 4. WhatsApp — cada conta conecta o próprio número
 
-1. Crie o WABA e o número no [Meta for Developers](https://developers.facebook.com/).
-2. Defina **só** as variáveis de recebimento e faça o deploy:
-   - `WHATSAPP_APP_SECRET` (App Secret do app da Meta)
-   - `WHATSAPP_VERIFY_TOKEN` (qualquer segredo que você escolher)
-3. No painel da Meta, cadastre o webhook:
-   - URL: `https://SEU-DOMINIO/api/wa/webhook`
-   - Token de verificação: o mesmo `WHATSAPP_VERIFY_TOKEN`
-   - Assine o campo **messages**
-4. O handshake tem que passar na hora. Se falhar, o token não bate.
+O WhatsApp **não é mais configurado por variável de ambiente**. Quem usa o
+sistema conecta o número dele em **Configurações → Seu WhatsApp Business**, sem
+depender de quem administra o servidor e sem deploy. Um número por conta.
 
-## 5. WhatsApp — envio
+O que o usuário precisa ter em mãos, tudo do
+[Meta for Developers](https://developers.facebook.com/) (App → WhatsApp →
+Configuração da API):
 
-1. Aprove **um** template de abertura na Meta (categoria *marketing*).
-2. Só então defina:
-   - `WHATSAPP_PHONE_NUMBER_ID` (o id do número no WABA, **não** o telefone)
-   - `WHATSAPP_ACCESS_TOKEN`
-   - `WHATSAPP_TEMPLATE_NAME` (o nome do template aprovado)
-3. Deploy.
+| Campo na tela | Onde achar na Meta |
+|---|---|
+| ID do número (Phone Number ID) | o id do número no WABA, **não** o telefone |
+| Token de acesso | token do app (permanente, de preferência) |
+| App Secret | Configurações do app → Básico |
+| Token de verificação | uma frase que ele inventa e repete na Meta |
+| Template de abertura | nome de **um** template aprovado, categoria *marketing* |
 
-Confira em `/api/wa/status`: `configurado` precisa ser `true` e `faltando`
-precisa estar vazio.
+Ao salvar, o sistema pergunta à Meta se as credenciais valem antes de gravar:
+token inválido é recusado ali, não no primeiro convite (que é pago).
+
+Depois de conectar, cadastre o webhook no painel da Meta:
+
+- URL: a que a própria tela mostra (`https://SEU-DOMINIO/api/wa/webhook`)
+- Token de verificação: o mesmo que foi informado na tela
+- Assine o campo **messages**
+
+O handshake tem que passar na hora. Se falhar, o token não bate.
+
+Confira em `/api/wa/status`: `configurado` precisa ser `true`, `faltando`
+precisa estar vazio e `origem` precisa dizer `conta` — `ambiente` significa que
+aquela conta ainda está enviando pelo número do servidor.
+
+### As variáveis antigas ainda funcionam
+
+`WHATSAPP_PHONE_NUMBER_ID`, `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_TEMPLATE_NAME`,
+`WHATSAPP_APP_SECRET` e `WHATSAPP_VERIFY_TOKEN` continuam valendo como
+**reserva**: quem ainda não conectou uma conta envia por elas. É o que mantém
+de pé a instalação que já estava funcionando. Uma conta conectada sempre tem
+precedência sobre o ambiente.
+
+> **`SECRETS_KEY` passa a ser obrigatória de verdade.** Os tokens da Meta ficam
+> cifrados no banco com ela. Se a chave mudar, as conexões param de abrir e o
+> sistema **recusa o envio** em vez de cair para o número do servidor — sair
+> pelo número errado seria pior do que não sair. O conserto é o usuário
+> reconectar o WhatsApp na tela.
 
 ## 6. O primeiro teste é no seu próprio número
 
@@ -214,11 +237,12 @@ Do mais cirúrgico para o mais bruto:
 |---|---|
 | uma conversa saiu do controle | **Assumir agora** na aba Conversas — vale imediatamente |
 | a IA está respondendo mal | apague `GROQ_API_KEY` e faça deploy: tudo vira pendência humana, nada se perde |
-| o número está sendo denunciado | apague `WHATSAPP_ACCESS_TOKEN`: nada mais sai, o recebimento continua |
-| precisa parar tudo | apague `WHATSAPP_APP_SECRET` **e** `WHATSAPP_ACCESS_TOKEN` |
+| **um** número está sendo denunciado | o dono clica em **Desconectar** em Configurações → Seu WhatsApp Business: aquela conta para de enviar e receber na hora, sem deploy e sem afetar as outras |
+| o número do servidor está sendo denunciado | apague `WHATSAPP_ACCESS_TOKEN`: nada mais sai por ele, o recebimento continua |
+| precisa parar tudo | apague `WHATSAPP_APP_SECRET` **e** `WHATSAPP_ACCESS_TOKEN` e desconecte as contas |
 
 Nenhuma dessas ações perde dados: as conversas, as mensagens e a trilha de
-auditoria continuam no banco.
+auditoria continuam no banco — desconectar apaga a credencial, não o histórico.
 
 > Não desligue só o `WHATSAPP_APP_SECRET` deixando o envio ligado. Em produção
 > o app se recusa a subir nesse estado — de propósito.

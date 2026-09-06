@@ -673,9 +673,50 @@ class CRMConnection(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class WhatsAppConnection(Base):
+    """
+    O WhatsApp Business de um usuário. Uma conta, um número.
+
+    Existe para o usuário conectar o próprio número sem depender de quem
+    administra o servidor: enquanto as credenciais viviam só em variável de
+    ambiente, havia um WhatsApp para a instalação inteira e trocá-lo exigia
+    deploy. Aqui cada conta traz o seu, e o envio passa a ser feito pelo número
+    de quem está falando.
+
+    `phone_number_id` fica em claro e é único no banco por dois motivos que se
+    somam: é ele que o webhook lê no corpo da Meta para descobrir de quem é a
+    mensagem que chegou, e dois usuários reivindicando o mesmo número tornariam
+    essa resposta ambígua — o segundo receberia conversa do primeiro.
+
+    `access_token`, `app_secret` e `verify_token` são credenciais e usam
+    `SegredoCriptografado` (services/crypto.py). O resto identifica, não
+    autentica, e é lido em claro.
+    """
+    __tablename__ = "whatsapp_connections"
+
+    user_id = Column(String(36), primary_key=True)
+    phone_number_id = Column(String(64), nullable=False, unique=True, index=True)
+    waba_id = Column(String(64), nullable=True)
+    #: Número legível ("+55 11 98888-7777"), como a Meta o devolve. Só para a
+    #: tela mostrar qual número está conectado — não é usado para enviar.
+    display_phone_number = Column(String(32), nullable=True)
+    access_token = Column(SegredoCriptografado, nullable=False)
+    app_secret = Column(SegredoCriptografado, nullable=True)
+    verify_token = Column(SegredoCriptografado, nullable=True)
+    template_name = Column(String(120), nullable=True)
+    template_language = Column(String(10), nullable=False, default="pt_BR")
+    is_active = Column(Boolean, nullable=False, default=True)
+    #: Quando a Meta confirmou as credenciais pela última vez. Nulo significa
+    #: "gravado mas nunca testado" — a tela diz isso em vez de fingir que está
+    #: pronto, porque descobrir token inválido no primeiro convite é caro.
+    verified_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "a4c7e208d5f1"
+ALEMBIC_HEAD = "d92b4e15c7a3"
 
 
 def _stamp_alembic_head() -> None:

@@ -47,7 +47,7 @@ SYSTEM_COLUMNS: List[Dict[str, str]] = [
     {"label": "LinkedIn (coletado)", "field": "linkedin_url", "kind": "text"},
     {"label": "Setor", "field": "sector", "kind": "text"},
     {"label": "Localização", "field": "location", "kind": "text"},
-    {"label": "Funcionários", "field": "employee_count", "kind": "text"},
+    {"label": "Pessoas associadas", "field": "employee_count", "kind": "text"},
     {"label": "Email corporativo", "field": "corporate_email", "kind": "text"},
     {"label": "Telefone", "field": "phone", "kind": "text"},
     {"label": "Provedor de e-mail", "field": "mx_provider", "kind": "text"},

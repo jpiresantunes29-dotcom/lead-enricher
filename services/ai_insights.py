@@ -74,7 +74,7 @@ def _lead_context(lead: Any, decision_makers: Optional[List[Any]] = None) -> str
 
     emp = getattr(lead, "employee_count", None)
     if isinstance(emp, dict):
-        add("Funcionários", emp.get("exact") or emp.get("band") or emp.get("min"))
+        add("Pessoas associadas no LinkedIn", emp.get("exact") or emp.get("band") or emp.get("min"))
 
     dns = getattr(lead, "dns_report", None)
     if isinstance(dns, dict):

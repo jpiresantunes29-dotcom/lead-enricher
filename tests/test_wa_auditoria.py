@@ -34,7 +34,7 @@ def sem_rede(monkeypatch):
     Sem este mock, a suíte sairia para a internet com credenciais falsas: lenta,
     dependente de rede e capaz de falhar por motivo nenhum a ver com o código.
     """
-    monkeypatch.setattr(wa_client, "phone_quality", lambda: None)
+    monkeypatch.setattr(wa_client, "phone_quality", lambda *_: None)
 
 
 @pytest.fixture(autouse=True)
@@ -298,7 +298,7 @@ def test_metricas_nao_inventam_custo_em_reais(client):
 # ── Qualidade do número ──────────────────────────────────────────────────────
 
 def test_qualidade_rebaixada_chega_na_tela(client, monkeypatch):
-    monkeypatch.setattr(wa_client, "phone_quality", lambda: {
+    monkeypatch.setattr(wa_client, "phone_quality", lambda *_: {
         "rating": "RED", "tom": "critico", "recado": "Pare os convites frios agora.",
         "limite": "TIER_250",
     })
@@ -307,7 +307,7 @@ def test_qualidade_rebaixada_chega_na_tela(client, monkeypatch):
 
 
 def test_meta_indisponivel_nao_quebra_as_metricas(client, monkeypatch):
-    monkeypatch.setattr(wa_client, "phone_quality", lambda: None)
+    monkeypatch.setattr(wa_client, "phone_quality", lambda *_: None)
     resp = client.get("/api/wa/metrics")
     assert resp.status_code == 200
     assert resp.json()["qualidade_do_numero"] is None

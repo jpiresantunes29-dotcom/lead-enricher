@@ -1,11 +1,11 @@
 """
 Parser robusto multi-engine para busca de URLs (especialmente LinkedIn).
 
-Engines em cascata:
-  1. DuckDuckGo HTML (POST + form) — preferida
-  2. Bing
-  3. SearXNG instâncias públicas (JSON API)
-  4. Google (regex genérico no HTML)
+Engines, todas disparadas EM PARALELO (não em cascata): SearXNG (instâncias
+públicas), Mojeek, DuckDuckGo HTML, Bing, Google. Rodar em paralelo em vez de
+esperar cada uma falhar em sequência é o que garante o mesmo orçamento de
+tempo cobrindo cinco tentativas em vez de uma — motor bloqueado hoje não
+consome o tempo dos outros.
 
 Estratégia anti-block: extração via regex (não depende de seletores CSS frágeis).
 Para cada URL, tenta extrair título do contexto próximo no HTML.
@@ -14,6 +14,8 @@ import re
 import json
 import time
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from urllib.parse import quote_plus, unquote, urlparse
 from bs4 import BeautifulSoup
 from typing import Dict, List, Optional
@@ -179,31 +181,48 @@ def _try_searxng(query: str, pattern: str, timeout: int = 12) -> List[Dict]:
     return []
 
 
-def search_ddg(query: str, timeout: int = 12) -> List[Dict]:
+def search_ddg(query: str, pattern: str = LINKEDIN_SLUG_PATTERN, timeout: int = 12) -> List[Dict]:
     """Busca DuckDuckGo HTML com POST (mais resiliente)."""
     return _try_engine(
         "ddg",
         "https://html.duckduckgo.com/html/",
         method="POST",
         data={"q": query, "b": "", "kl": "us-en"},
+        pattern=pattern,
         timeout=timeout,
     )
 
 
-def search_bing(query: str, timeout: int = 12) -> List[Dict]:
+def search_bing(query: str, pattern: str = LINKEDIN_SLUG_PATTERN, timeout: int = 12) -> List[Dict]:
     """Busca Bing."""
     return _try_engine(
         "bing",
         f"https://www.bing.com/search?q={quote_plus(query)}",
+        pattern=pattern,
         timeout=timeout,
     )
 
 
-def search_google(query: str, timeout: int = 12) -> List[Dict]:
+def search_google(query: str, pattern: str = LINKEDIN_SLUG_PATTERN, timeout: int = 12) -> List[Dict]:
     """Busca Google (frequentemente bloqueada, mas extrai via regex genérico)."""
     return _try_engine(
         "google",
         f"https://www.google.com/search?q={quote_plus(query)}&num=20",
+        pattern=pattern,
+        timeout=timeout,
+    )
+
+
+def search_mojeek(query: str, pattern: str = LINKEDIN_SLUG_PATTERN, timeout: int = 12) -> List[Dict]:
+    """
+    Busca no Mojeek — índice próprio (não é proxy de Google/Bing), HTML simples
+    sem desafio JS. Motor pequeno, mas é exatamente por isso que ainda não
+    entrou na guerra de bloqueio a scraping que pegou DDG/Bing/Google.
+    """
+    return _try_engine(
+        "mojeek",
+        f"https://www.mojeek.com/search?q={quote_plus(query)}",
+        pattern=pattern,
         timeout=timeout,
     )
 
@@ -211,39 +230,59 @@ def search_google(query: str, timeout: int = 12) -> List[Dict]:
 def search_multi(query: str, pattern: str = LINKEDIN_SLUG_PATTERN,
                  timeout: int = 12, budget: Optional[float] = None) -> List[Dict]:
     """
-    Busca em múltiplas engines em sequência. Devolve resultados deduplicados.
-    Engines tentadas: SearXNG (mais estável) → DDG → Bing → Google.
+    Busca em múltiplas engines EM PARALELO. Devolve resultados deduplicados.
+    Engines: SearXNG (instâncias públicas), Mojeek, DDG, Bing, Google.
 
-    `budget` limita o tempo TOTAL da cascata. Sem ele, quatro motores lentos
-    somam quase um minuto — mais do que a função serverless inteira tem para
-    responder. Quem chama sabe quanto tempo ainda resta; aqui só respeitamos.
+    Antes disto rodava em cascata (um motor de cada vez, na ordem acima) — um
+    motor bloqueado ou lento consumia o orçamento inteiro antes do próximo
+    sequer começar. Em paralelo, o custo total é o do motor mais lento que
+    responde dentro do orçamento, não a soma de todos — o mesmo tempo agora
+    cobre cinco tentativas em vez de uma ou duas.
+
+    `budget` (ou `timeout`, na ausência dele) limita o tempo TOTAL da busca.
+    Sem isso, motores lentos somam mais tempo do que a função serverless tem
+    para responder. Quem chama sabe quanto tempo ainda resta; aqui só
+    respeitamos.
     """
-    deadline = time.monotonic() + budget if budget else None
+    total_budget = budget if budget else timeout
+    deadline = time.monotonic() + total_budget
+    engine_timeout = max(3, int(total_budget))
+
+    engines = (
+        ("searxng", lambda t: _try_searxng(query, pattern, timeout=t)),
+        ("mojeek", lambda t: search_mojeek(query, pattern, timeout=t)),
+        ("ddg", lambda t: search_ddg(query, pattern, timeout=t)),
+        ("bing", lambda t: search_bing(query, pattern, timeout=t)),
+        ("google", lambda t: search_google(query, pattern, timeout=t)),
+    )
+
     seen = set()
     deduped = []
-
-    for engine_func in (
-        lambda t: _try_searxng(query, pattern, timeout=t),
-        lambda t: search_ddg(query, timeout=t),
-        lambda t: search_bing(query, timeout=t),
-        lambda t: search_google(query, timeout=t),
-    ):
-        engine_timeout = timeout
-        if deadline is not None:
-            left = deadline - time.monotonic()
-            if left < 3:
-                break               # não dá para tentar mais nada com honestidade
-            engine_timeout = int(min(timeout, left))
+    # Pool solto (sem `with`): queremos parar de ESPERAR assim que tivermos
+    # resultado suficiente ou o orçamento acabar, sem bloquear até que todo
+    # motor (inclusive um travado) termine — as threads restantes só são
+    # dispensadas em segundo plano (mesmo padrão de services.enricher para o
+    # lookup de CNPJ em paralelo).
+    pool = ThreadPoolExecutor(max_workers=len(engines))
+    try:
+        futures = {pool.submit(fn, engine_timeout): name for name, fn in engines}
+        remaining = max(1.0, deadline - time.monotonic())
         try:
-            results = engine_func(engine_timeout)
-        except Exception:
-            results = []
-        for r in results:
-            u = (r.get("url") or "").lower().split("#")[0]
-            if u and u not in seen:
-                seen.add(u)
-                deduped.append(r)
-        if len(deduped) >= 5:
-            break
+            for future in as_completed(futures, timeout=remaining):
+                try:
+                    results = future.result()
+                except Exception:
+                    results = []
+                for r in results:
+                    u = (r.get("url") or "").lower().split("#")[0]
+                    if u and u not in seen:
+                        seen.add(u)
+                        deduped.append(r)
+                if len(deduped) >= 5:
+                    break
+        except FuturesTimeoutError:
+            pass  # orçamento esgotado — devolve o que já chegou
+    finally:
+        pool.shutdown(wait=False)
 
     return deduped

@@ -29,7 +29,7 @@ from models.database import (
     AUDIT_ASSUMIDA, AUDIT_RELACIONAMENTO,
     RELATIONSHIP_CUSTOMER, RELATIONSHIP_DO_NOT_CONTACT,
     Activity, AuditLog, Conversation, DecisionMaker, Lead, WaMessage,
-    get_db, utcnow,
+    WhatsAppConnection, get_db, utcnow,
 )
 from models.schemas import (
     AuditEntryOut, ConversationAction, ConversationCard, ConversationDetail,
@@ -38,7 +38,7 @@ from models.schemas import (
 )
 from services.people import optout
 from services.phone_normalizer import normalize_input
-from services.wa import client, gate, orchestrator, states, webhook
+from services.wa import client, credenciais, gate, orchestrator, states, webhook
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,7 @@ def verificar_webhook(
     hub_mode: str = Query("", alias="hub.mode"),
     hub_challenge: str = Query("", alias="hub.challenge"),
     hub_verify_token: str = Query("", alias="hub.verify_token"),
+    db: Session = Depends(get_db),
 ):
     """
     Handshake que a Meta faz uma vez, ao cadastrar a URL.
@@ -86,7 +87,15 @@ def verificar_webhook(
     Ela manda um desafio e espera receber o mesmo valor de volta, em texto
     puro, se o token bater.
     """
-    if hub_mode == "subscribe" and webhook.check_verify_token(hub_verify_token):
+    # O GET não diz de qual número é, então vale qualquer token cadastrado:
+    # cada conta aponta esta mesma URL com o token dela.
+    tokens = [
+        c.verify_token for c in
+        db.query(WhatsAppConnection.verify_token)
+        .filter(WhatsAppConnection.is_active.is_(True))
+        .all()
+    ]
+    if hub_mode == "subscribe" and webhook.check_verify_token(hub_verify_token, tokens):
         return Response(content=hub_challenge, media_type="text/plain")
     raise HTTPException(status_code=403, detail="Token de verificação inválido.")
 
@@ -102,7 +111,14 @@ async def receber_webhook(request: Request, db: Session = Depends(get_db)):
     """
     corpo = await request.body()
     assinatura = request.headers.get(webhook.SIGNATURE_HEADER)
-    if not webhook.verify_signature(corpo, assinatura):
+
+    # De quem é este webhook. Lido do corpo ainda não confiável e usado só
+    # para escolher contra qual App Secret a assinatura será conferida — a
+    # explicação está em webhook.phone_number_id_do_corpo.
+    pnid = webhook.phone_number_id_do_corpo(corpo)
+    dono, cred = credenciais.por_phone_number_id(db, pnid)
+
+    if not webhook.verify_signature(corpo, assinatura, secret=cred.app_secret or None):
         # 403 de propósito: requisição sem assinatura válida não é a Meta, e
         # não queremos que ela seja reentregue.
         raise HTTPException(status_code=403, detail="Assinatura inválida.")
@@ -114,7 +130,7 @@ async def receber_webhook(request: Request, db: Session = Depends(get_db)):
         return {"ok": True, "mensagens": 0}
 
     try:
-        conversas = _processar(db, dados)
+        conversas = _processar(db, dados, dono)
         db.commit()
     except Exception:
         db.rollback()
@@ -136,19 +152,23 @@ async def receber_webhook(request: Request, db: Session = Depends(get_db)):
     }
 
 
-def _processar(db: Session, dados: dict) -> list:
+def _processar(db: Session, dados: dict, dono: Optional[str] = None) -> list:
     """
     Percorre o envelope da Meta e grava o que chegou.
 
     Devolve as conversas que receberam mensagem nova — são elas que ganham um
     turno depois, já fora da transação de gravação.
+
+    `dono` é o usuário de quem é o número que recebeu. Com uma conta por
+    usuário, o mesmo telefone pode estar em conversa com mais de um: sem esse
+    escopo, a mensagem entraria na conversa de outra pessoa.
     """
     tocadas = {}
     for entrada in dados.get("entry") or []:
         for mudanca in entrada.get("changes") or []:
             valor = mudanca.get("value") or {}
             for msg in valor.get("messages") or []:
-                conversa = _guardar_recebida(db, msg)
+                conversa = _guardar_recebida(db, msg, dono)
                 if conversa is not None:
                     tocadas[conversa.id] = conversa
             for status in valor.get("statuses") or []:
@@ -194,7 +214,8 @@ def _corpo_da_mensagem(msg: dict) -> Optional[str]:
     return f"[{tipo or 'desconhecido'}]"
 
 
-def _guardar_recebida(db: Session, msg: dict) -> Optional[Conversation]:
+def _guardar_recebida(db: Session, msg: dict,
+                      dono: Optional[str] = None) -> Optional[Conversation]:
     """Grava a mensagem. Devolve a conversa quando ela é nova; senão, None."""
     wamid = msg.get("id")
     telefone = _e164(msg.get("from"))
@@ -206,12 +227,13 @@ def _guardar_recebida(db: Session, msg: dict) -> Optional[Conversation]:
         # Reentrega da Meta: já processamos esta mensagem.
         return None
 
-    conversa = (
-        db.query(Conversation)
-        .filter(Conversation.phone_e164 == telefone)
-        .order_by(Conversation.updated_at.desc())
-        .first()
-    )
+    consulta = db.query(Conversation).filter(Conversation.phone_e164 == telefone)
+    if dono:
+        # Só as conversas de quem é o número que recebeu. Duas contas podem
+        # estar falando com o mesmo lead, e responder pela conversa errada
+        # mostraria a um usuário o histórico do outro.
+        consulta = consulta.filter(Conversation.user_id == dono)
+    conversa = consulta.order_by(Conversation.updated_at.desc()).first()
     if conversa is None:
         # Alguém escreveu para o número sem ter sido convidado por nós. Não há
         # lead a que associar, e inventar um seria criar ficha de quem não
@@ -258,24 +280,30 @@ def status_do_whatsapp(
     de escondê-lo — um botão que some não ensina nada a quem procura por ele —
     e para o aviso na barra lateral.
     """
+    user_id = current_user.get("sub")
+    cred = credenciais.do_usuario(db, user_id)
     conversas = (
         db.query(Conversation)
-        .filter(Conversation.user_id == current_user.get("sub"),
+        .filter(Conversation.user_id == user_id,
                 Conversation.ai_status.in_((HUMAN_HANDOFF, AI_PAUSED)))
         .all()
     )
     return {
-        "configurado": client.is_configured(),
-        "template": bool(client.template_name()),
-        "webhook_assinado": webhook.is_configured(),
-        "faltando": client.missing_config(),
+        "configurado": cred.configurado,
+        "template": bool(cred.template_name),
+        "webhook_assinado": bool(cred.app_secret),
+        "faltando": cred.faltando(),
+        # De quem é o número que envia: a conta do usuário ou o do servidor.
+        # Sem isto, "configurado" não diz qual WhatsApp o lead vai ver.
+        "origem": cred.origem,
+        "erro": cred.erro,
         # A janela de horário vem junto para o botão da ficha já nascer apagado
         # quando não dá para enviar. Descobrir a recusa só depois de confirmar
         # um envio pago é o pior lugar possível para essa informação aparecer.
         "janela": gate.janela_de_envio(),
         "aguardando": sum(1 for c in conversas if _aguardando_voce(c)),
         "total": db.query(Conversation).filter(
-            Conversation.user_id == current_user.get("sub")
+            Conversation.user_id == user_id
         ).count(),
     }
     # A qualidade do número NÃO entra aqui de propósito: esta rota é carregada
@@ -321,14 +349,15 @@ def iniciar_conversa(
     que o lead seja dele, passa pelo portão de abertura e não é chamada por
     nada automático.
     """
-    if not client.is_configured():
+    user_id = current_user.get("sub")
+    cred = credenciais.do_usuario(db, user_id)
+    if not cred.configurado:
         raise HTTPException(
             status_code=503,
-            detail="WhatsApp não configurado no servidor: falta "
-                   + ", ".join(client.missing_config()) + ".",
+            detail=cred.erro or ("Conecte seu WhatsApp Business em Configurações: falta "
+                                 + ", ".join(cred.faltando()) + "."),
         )
 
-    user_id = current_user.get("sub")
     lead = db.query(Lead).filter(Lead.id == body.lead_id, Lead.user_id == user_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
@@ -354,6 +383,7 @@ def iniciar_conversa(
     envio = client.send_template(
         telefone,
         variaveis=[lead.company_name or lead.domain or ""] if body.usar_nome_da_empresa else None,
+        cred=cred,
     )
     if not envio.ok:
         raise HTTPException(status_code=502, detail=f"A Meta recusou o envio ({envio.error}).")
@@ -362,11 +392,11 @@ def iniciar_conversa(
                             decision_maker_id=body.decision_maker_id)
     db.flush()   # a conversa nova precisa de id antes da mensagem apontar para ela
 
-    corpo = f"[template: {client.template_name()}]"
+    corpo = f"[template: {cred.template_name}]"
     db.add(WaMessage(
         conversation_id=conversa.id, direction="out",
         wa_message_id=envio.wa_message_id, type="template",
-        template_name=client.template_name(), status="sent", sent_by="human",
+        template_name=cred.template_name, status="sent", sent_by="human",
         body=corpo,
     ))
     states.register_outbound(db, conversa, corpo)
@@ -575,14 +605,16 @@ def responder(
     texto = (body.texto or "").strip()
     if not texto:
         raise HTTPException(status_code=422, detail="Escreva a mensagem antes de enviar.")
-    if not client.is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="WhatsApp não configurado no servidor: falta "
-                   + ", ".join(client.missing_config()) + ".",
-        )
 
     user_id = current_user.get("sub")
+    cred = credenciais.do_usuario(db, user_id)
+    if not cred.configurado:
+        raise HTTPException(
+            status_code=503,
+            detail=cred.erro or ("Conecte seu WhatsApp Business em Configurações: falta "
+                                 + ", ".join(cred.faltando()) + "."),
+        )
+
     conversa = _minha_conversa(db, conversa_id, user_id)
 
     if not gate._janela_aberta(conversa, utcnow()):
@@ -597,7 +629,7 @@ def responder(
             detail="Este número pediu para não receber mensagens.",
         )
 
-    envio = client.send_text(conversa.phone_e164, texto)
+    envio = client.send_text(conversa.phone_e164, texto, cred=cred)
     if not envio.ok:
         raise HTTPException(status_code=502, detail=f"A Meta recusou o envio ({envio.error}).")
 
@@ -705,5 +737,5 @@ def metricas(
         pediram_para_parar=sum(1 for d in relacionamentos
                                if d.startswith(RELATIONSHIP_DO_NOT_CONTACT)),
         aguardando_voce=aguardando,
-        qualidade_do_numero=client.phone_quality(),
+        qualidade_do_numero=client.phone_quality(credenciais.do_usuario(db, user_id)),
     )

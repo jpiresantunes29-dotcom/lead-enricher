@@ -55,7 +55,7 @@ def servidor_completo(monkeypatch):
     # que esta jornada percorre. Sem este mock a suíte sai para a internet ao
     # pedir as métricas — lenta e capaz de falhar por motivo nenhum a ver com
     # o código. A qualidade tem teste próprio em `test_wa_auditoria.py`.
-    monkeypatch.setattr(wa_client, "phone_quality", lambda: None)
+    monkeypatch.setattr(wa_client, "phone_quality", lambda *_: None)
 
 
 class MetaFalsa:

@@ -4,7 +4,41 @@
 > Status: **Fases 1–10 concluídas em código. O que resta não é código** —
 > conta na Meta, licença do M365, planos Vercel/Supabase e as variáveis da
 > virada. A lista exata está no § 17 e o passo a passo em [PRODUCAO.md](PRODUCAO.md).  
-> Versão: 1.1
+> Versão: 1.2
+
+> **Mudança de 2026-09-06 — o WhatsApp deixou de ser da instalação.**
+> Este documento foi escrito assumindo um número só, configurado por variável
+> de ambiente pelo administrador. Não é mais assim: cada conta conecta o
+> próprio WhatsApp Business em Configurações (tabela `whatsapp_connections`,
+> migração `0009`), e o envio sai pelo número do dono da conversa. O que muda
+> em relação ao que está escrito abaixo:
+>
+> - **§ 6 e § 17 (WhatsApp):** as variáveis `WHATSAPP_*` viram **reserva** para
+>   quem ainda não conectou. Continuam funcionando; perdem a precedência.
+> - **§ 9 (banco):** entra `whatsapp_connections` — um número por conta,
+>   `phone_number_id` único, credenciais cifradas com `SECRETS_KEY`.
+> - **§ 10 (segurança):** o webhook passa a resolver o dono pelo
+>   `phone_number_id` do corpo **antes** de conferir a assinatura, porque cada
+>   conta tem o próprio App Secret. As mensagens recebidas passam a ser
+>   filtradas pelo dono do número — sem isso, duas contas falando com o mesmo
+>   lead se misturariam.
+> - **`SECRETS_KEY` passa a ser crítica:** se ela mudar, o sistema **recusa o
+>   envio** daquela conta em vez de cair para o número do servidor.
+
+> ⚠️ **Nota de atualização (2026-09-05/06):** Duas mudanças foram implementadas
+> **após** este documento ser escrito, afetando pontos específicos:
+> 1. **Modelo de IA trocado:** de Claude Haiku (§7, itens da Fase 1, item 17)
+>    para **Groq `openai/gpt-oss-120b`** (commit `9cbc836`). A arquitetura
+>    de prompt/intenção/rascunho que o doc descreve permanece igual; só o
+>    motor LLM mudou.
+> 2. **Restrições de horário removidas:** a checagem de silêncio noturno /
+>    horário comercial / fim de semana (descrita em detalhe na Fase 3, §5,
+>    §11 e §17) foi **removida do código** (commit `98331e1`). O portão
+>    `can_send()` hoje sempre libera envio, a qualquer hora. As variáveis
+>    `WA_QUIET_START`, `WA_SERVICE_START`, etc. continuam a existir, mas sem
+>    efeito — decisão de remover foi consciente, não um bug.
+> A arquitetura de estados, portão, orquestrador e handoff vigente permanece
+> como descrito; são recortes localizados sobre escolhas de implementação.
 
 ---
 
