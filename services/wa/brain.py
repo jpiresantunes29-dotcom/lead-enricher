@@ -26,9 +26,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_API_URL = "https://api.anthropic.com/v1/messages"
-_API_VERSION = "2023-06-01"
-_MODEL = os.getenv("WA_AI_MODEL", os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001"))
+_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+_MODEL = os.getenv("WA_AI_MODEL", os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"))
 _TIMEOUT = int(os.getenv("WA_AI_TIMEOUT", "20"))
 
 # Resposta de qualificação é curta por natureza. O teto existe também para o
@@ -73,7 +72,7 @@ class Leitura:
 
 
 def is_configured() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY"))
+    return bool(os.getenv("GROQ_API_KEY"))
 
 
 _INSTRUCOES = """Você lê mensagens de WhatsApp que chegam para um vendedor brasileiro \
@@ -157,21 +156,24 @@ def _extrair_json(texto: str) -> Optional[dict]:
 
 
 def _chamar(prompt: str) -> Optional[str]:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         return None
     try:
         resp = requests.post(
             _API_URL,
-            headers={"x-api-key": api_key, "anthropic-version": _API_VERSION,
+            headers={"Authorization": f"Bearer {api_key}",
                      "content-type": "application/json"},
             json={"model": _MODEL, "max_tokens": _MAX_TOKENS,
+                  "response_format": {"type": "json_object"},
                   "messages": [{"role": "user", "content": prompt}]},
             timeout=_TIMEOUT,
         )
         resp.raise_for_status()
-        blocos = (resp.json() or {}).get("content", [])
-        return "".join(b.get("text", "") for b in blocos if b.get("type") == "text").strip()
+        escolhas = (resp.json() or {}).get("choices", [])
+        if not escolhas:
+            return None
+        return (escolhas[0].get("message", {}).get("content") or "").strip()
     except Exception as e:
         # A mensagem do lead pode estar no corpo do erro; só o tipo vai ao log.
         logger.warning("Falha na chamada de classificação: %s", type(e).__name__)

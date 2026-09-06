@@ -117,7 +117,7 @@ def test_ia_desligada_nao_finge_que_respondeu(monkeypatch):
     monkeypatch.setattr(brain, "is_configured", lambda: False)
     turno = sandbox.enviar_do_lead("u1", "oi")
     assert turno.acao == sandbox.CHAMOU_HUMANO
-    assert "ANTHROPIC_API_KEY" in (turno.erro or "")
+    assert "GROQ_API_KEY" in (turno.erro or "")
 
 
 # ── A conversa de teste ──────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ from tests.test_api import client, clean_db  # noqa: E402,F401
 
 
 def test_status_diz_o_que_falta_quando_a_ia_esta_desligada(client, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     dados = client.get("/api/wa/sandbox/status").json()
     assert dados["ia_configurada"] is False
     assert dados["modelo"] is None

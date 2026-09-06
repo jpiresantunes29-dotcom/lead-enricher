@@ -19,7 +19,7 @@ def ambiente_limpo(monkeypatch):
     """Parte de um servidor sem nenhuma integração configurada."""
     for var in ("WHATSAPP_APP_SECRET", "WHATSAPP_VERIFY_TOKEN",
                 "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN",
-                "WHATSAPP_TEMPLATE_NAME", "ANTHROPIC_API_KEY",
+                "WHATSAPP_TEMPLATE_NAME", "GROQ_API_KEY",
                 "RESEND_API_KEY", "SITE_URL", "CRON_SECRET",
                 "SUPABASE_ANON_KEY"):
         monkeypatch.delenv(var, raising=False)

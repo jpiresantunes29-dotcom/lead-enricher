@@ -64,7 +64,7 @@ def ai_summary(
 ):
     """Resumo executivo pré-ligação. Cacheado no lead; force=true regenera."""
     if not ai_insights.is_configured():
-        raise HTTPException(status_code=503, detail="IA não configurada (ANTHROPIC_API_KEY ausente).")
+        raise HTTPException(status_code=503, detail="IA não configurada (GROQ_API_KEY ausente).")
 
     user_id = current_user.get("sub")
     lead = _get_user_lead(db, lead_id, user_id)

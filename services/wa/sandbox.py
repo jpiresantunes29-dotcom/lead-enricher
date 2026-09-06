@@ -192,7 +192,7 @@ def _decidir(s: Sessao, ignorar_horario: bool) -> Turno:
         return Turno(
             CHAMOU_HUMANO,
             motivo="A IA não está configurada neste servidor.",
-            erro="Falta ANTHROPIC_API_KEY.",
+            erro="Falta GROQ_API_KEY.",
             fora_do_horario=fora_do_horario,
         )
 

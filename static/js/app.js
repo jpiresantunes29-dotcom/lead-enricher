@@ -1691,7 +1691,7 @@ function renderSimulador(){
     <strong>A IA não está configurada neste servidor.</strong>
     Toda mensagem enviada aqui vai cair em "chamou você", que é o
     comportamento correto quando não há como classificar.
-    <span class="cv-vars"><code>ANTHROPIC_API_KEY</code></span></div>`;
+    <span class="cv-vars"><code>GROQ_API_KEY</code></span></div>`;
 
   const horario=st.pode_enviar_agora
     ? (st.fora_do_horario

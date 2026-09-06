@@ -113,7 +113,7 @@ def test_handoff_da_automacao_fica_distinguivel_do_clique(client, monkeypatch):
     histórias diferentes — e depois alguém vai precisar saber qual foi.
     """
     monkeypatch.undo()   # devolve o orquestrador de verdade
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "chave-de-teste")
+    monkeypatch.setenv("GROQ_API_KEY", "chave-de-teste")
 
     db = _Session()
     try:

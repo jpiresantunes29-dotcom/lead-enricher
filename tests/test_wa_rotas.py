@@ -57,7 +57,7 @@ def ia_desligada(monkeypatch):
     testa é o recebimento e a abertura; deixar a automação ligada faria cada
     mensagem recebida disparar um turno e embaralhar as contagens.
     """
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
 
 def _lead(db=None, phone=TELEFONE, relationship="LEAD", user_id="test-user-123"):

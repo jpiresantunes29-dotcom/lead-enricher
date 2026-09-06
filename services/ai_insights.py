@@ -1,10 +1,11 @@
 """
-Fase 5 — Inteligência de abordagem via Claude API
+Fase 5 — Inteligência de abordagem via Groq API
 (docs/PROPOSTA_V3_PROSPECCAO_INTELIGENTE.md §9).
 
-Ativado por ANTHROPIC_API_KEY no ambiente; sem a chave, os endpoints
+Ativado por GROQ_API_KEY no ambiente; sem a chave, os endpoints
 respondem 503 e o restante do produto segue funcionando normalmente.
-Usa requests direto (sem SDK) para não adicionar dependência.
+Usa requests direto (sem SDK) para não adicionar dependência. A API do
+Groq é compatível com o formato de chat completions da OpenAI.
 """
 import json
 import logging
@@ -15,27 +16,25 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-_API_URL = "https://api.anthropic.com/v1/messages"
-_API_VERSION = "2023-06-01"
-# Haiku: resumo curto e barato — suficiente para o caso de uso
-_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+# Modelo grande e gratuito no free tier do Groq — suficiente para o caso de uso
+_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 _TIMEOUT = 30
 
 
 def is_configured() -> bool:
-    return bool(os.getenv("ANTHROPIC_API_KEY"))
+    return bool(os.getenv("GROQ_API_KEY"))
 
 
 def _call_claude(prompt: str, max_tokens: int = 600) -> Optional[str]:
-    api_key = os.getenv("ANTHROPIC_API_KEY")
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
         return None
     try:
         resp = requests.post(
             _API_URL,
             headers={
-                "x-api-key": api_key,
-                "anthropic-version": _API_VERSION,
+                "Authorization": f"Bearer {api_key}",
                 "content-type": "application/json",
             },
             json={
@@ -47,11 +46,13 @@ def _call_claude(prompt: str, max_tokens: int = 600) -> Optional[str]:
         )
         resp.raise_for_status()
         data = resp.json()
-        blocks = data.get("content", [])
-        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+        choices = data.get("choices", [])
+        if not choices:
+            return None
+        text = choices[0].get("message", {}).get("content") or ""
         return text.strip() or None
     except Exception as e:
-        logger.warning("Claude API call failed: %s", e)
+        logger.warning("Groq API call failed: %s", e)
         return None
 
 

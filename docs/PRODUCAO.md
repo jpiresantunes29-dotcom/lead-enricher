@@ -196,7 +196,7 @@ Só depois disso, um lead de verdade.
 
 ## 7. IA
 
-`ANTHROPIC_API_KEY` liga a automação. Sem ela nada se perde: toda resposta de
+`GROQ_API_KEY` liga a automação. Sem ela nada se perde: toda resposta de
 lead vira pendência humana com o motivo escrito, e aparece com badge na barra
 lateral. Ligue depois de o passo 6 ter funcionado sem IA.
 
@@ -213,7 +213,7 @@ Do mais cirúrgico para o mais bruto:
 | situação | o que fazer |
 |---|---|
 | uma conversa saiu do controle | **Assumir agora** na aba Conversas — vale imediatamente |
-| a IA está respondendo mal | apague `ANTHROPIC_API_KEY` e faça deploy: tudo vira pendência humana, nada se perde |
+| a IA está respondendo mal | apague `GROQ_API_KEY` e faça deploy: tudo vira pendência humana, nada se perde |
 | o número está sendo denunciado | apague `WHATSAPP_ACCESS_TOKEN`: nada mais sai, o recebimento continua |
 | precisa parar tudo | apague `WHATSAPP_APP_SECRET` **e** `WHATSAPP_ACCESS_TOKEN` |
 

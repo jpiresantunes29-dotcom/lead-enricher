@@ -182,22 +182,19 @@ def test_sem_credencial_nao_consulta_qualidade(monkeypatch):
 # ── A chamada da IA ──────────────────────────────────────────────────────────
 
 def test_chamada_da_ia_monta_o_pedido_e_extrai_o_texto(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-teste")
-    resposta = _resposta(200, {"content": [{"type": "text", "text": '{"ok":true}'}]})
+    monkeypatch.setenv("GROQ_API_KEY", "sk-teste")
+    resposta = _resposta(200, {"choices": [{"message": {"content": '{"ok":true}'}}]})
     with patch.object(brain.requests, "post", return_value=resposta) as post:
         texto = brain._chamar("classifique isto")
 
     assert texto == '{"ok":true}'
-    assert post.call_args.kwargs["headers"]["x-api-key"] == "sk-teste"
+    assert post.call_args.kwargs["headers"]["Authorization"] == "Bearer sk-teste"
     assert post.call_args.kwargs["json"]["messages"][0]["content"] == "classifique isto"
 
 
 def test_blocos_que_nao_sao_texto_sao_ignorados(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-teste")
-    resposta = _resposta(200, {"content": [
-        {"type": "thinking", "thinking": "hmm"},
-        {"type": "text", "text": "resposta"},
-    ]})
+    monkeypatch.setenv("GROQ_API_KEY", "sk-teste")
+    resposta = _resposta(200, {"choices": [{"message": {"content": "resposta"}}]})
     with patch.object(brain.requests, "post", return_value=resposta):
         assert brain._chamar("x") == "resposta"
 
@@ -207,7 +204,7 @@ def test_erro_http_da_ia_vira_none_e_nao_excecao(monkeypatch):
     O turno inteiro depende disto não levantar: `None` vira AMBIGUO, que o
     orquestrador trata como "chame o humano".
     """
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-teste")
+    monkeypatch.setenv("GROQ_API_KEY", "sk-teste")
     erro = _resposta(500)
     erro.raise_for_status.side_effect = requests.HTTPError("500")
     with patch.object(brain.requests, "post", return_value=erro):
@@ -215,7 +212,7 @@ def test_erro_http_da_ia_vira_none_e_nao_excecao(monkeypatch):
 
 
 def test_sem_chave_a_ia_nem_e_chamada(monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     with patch.object(brain.requests, "post") as post:
         assert brain._chamar("x") is None
     assert post.call_count == 0
@@ -270,7 +267,7 @@ def test_a_mensagem_do_lead_nao_vaza_no_log_de_erro(monkeypatch):
     O corpo do erro pode conter o que o lead escreveu. Só o tipo da exceção
     vai para o log — o resto é dado pessoal em arquivo de texto.
     """
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-teste")
+    monkeypatch.setenv("GROQ_API_KEY", "sk-teste")
     registros, soltar = _capturar(brain.logger)
     try:
         with patch.object(brain.requests, "post",

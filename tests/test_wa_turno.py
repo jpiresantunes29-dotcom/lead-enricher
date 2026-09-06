@@ -32,7 +32,7 @@ TELEFONE = "+5511988887777"
 @pytest.fixture(autouse=True)
 def ambiente(monkeypatch):
     """Servidor configurado, horário comercial, IA ligada — tudo mockado."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "chave-de-teste")
+    monkeypatch.setenv("GROQ_API_KEY", "chave-de-teste")
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1234567890")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
     monkeypatch.setattr(gate, "service_window", lambda agora=None: (True, False))
@@ -226,7 +226,7 @@ def test_rascunho_vazio_nao_envia_mensagem_em_branco(db):
 
 
 def test_ia_nao_configurada_passa_para_o_humano(db, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     lead, conversa = _conversa(db)
     with patch.object(wa_client, "send_text") as envio:
         turno = orchestrator.responder(db, conversa)

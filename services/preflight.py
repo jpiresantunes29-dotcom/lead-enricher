@@ -235,7 +235,7 @@ def _checar_whatsapp(rel: Relatorio) -> None:
             ATENCAO, "IA desligada com WhatsApp ligado",
             "Toda resposta de lead vira pendência humana com o motivo escrito. "
             "Não se perde nada, mas ninguém responde sozinho.",
-            "Defina ANTHROPIC_API_KEY para a automação responder.",
+            "Defina GROQ_API_KEY para a automação responder.",
         ))
 
 
@@ -291,7 +291,7 @@ def _checar_opcionais(rel: Relatorio) -> None:
         rel.achados.append(Achado(
             ATENCAO, "Resumo executivo por IA desligado",
             "Os endpoints de resumo e roteiro de ligação respondem 503.",
-            "Defina ANTHROPIC_API_KEY.",
+            "Defina GROQ_API_KEY.",
         ))
 
     if not _env("RESEND_API_KEY"):

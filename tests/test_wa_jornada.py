@@ -49,7 +49,7 @@ def servidor_completo(monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1234567890")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "token-de-teste")
     monkeypatch.setenv("WHATSAPP_TEMPLATE_NAME", "primeiro_contato")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "chave-de-teste")
+    monkeypatch.setenv("GROQ_API_KEY", "chave-de-teste")
     monkeypatch.setattr(gate, "service_window", lambda agora=None: (True, False))
     # A consulta de qualidade do número é um GET à Graph API, fora do caminho
     # que esta jornada percorre. Sem este mock a suíte sai para a internet ao

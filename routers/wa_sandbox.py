@@ -56,7 +56,7 @@ def status_do_simulador(current_user: dict = Depends(get_current_user)):
     O que o simulador consegue fazer agora.
 
     A tela usa isto para explicar o que falta em vez de simplesmente falhar no
-    primeiro envio: sem `ANTHROPIC_API_KEY` não há classificação nenhuma, e
+    primeiro envio: sem `GROQ_API_KEY` não há classificação nenhuma, e
     descobrir isso por uma mensagem de erro genérica custa meia hora de dúvida.
     """
     pode, fora = gate.service_window()

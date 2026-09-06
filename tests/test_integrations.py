@@ -21,7 +21,7 @@ def _make_lead(client):
 
 # ── status de integrações ─────────────────────────────────────────────────────
 def test_integrations_status_unconfigured(client, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.delenv("CRM_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("HUNTER_API_KEY", raising=False)
     resp = client.get("/api/integrations/status")
@@ -221,7 +221,7 @@ def test_push_upstream_failure_returns_502(client, monkeypatch):
 
 # ── IA ────────────────────────────────────────────────────────────────────────
 def test_ai_summary_unconfigured_returns_503(client, monkeypatch):
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
     lead = _make_lead(client)
     resp = client.post(f"/api/leads/{lead['id']}/ai-summary")
     assert resp.status_code == 503
@@ -229,7 +229,7 @@ def test_ai_summary_unconfigured_returns_503(client, monkeypatch):
 
 def test_ai_summary_nao_depende_de_plano(client, monkeypatch):
     """A IA era feature de plano pago. Com a chave configurada, ela é de todos."""
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
     lead = _make_lead(client)
 
     with patch("services.ai_insights._call_claude", return_value="Resumo."):
@@ -238,7 +238,7 @@ def test_ai_summary_nao_depende_de_plano(client, monkeypatch):
 
 
 def test_ai_summary_generates_and_caches(client, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
     lead = _make_lead(client)
 
     with patch("services.ai_insights._call_claude", return_value="Resumo executivo da Nubank.") as mock_ai:
