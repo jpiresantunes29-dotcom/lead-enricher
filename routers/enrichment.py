@@ -10,8 +10,10 @@ from models.schemas import (
 )
 from services import enrichment_service
 from services.decision_finder import find_decision_makers
+from services.providers import lusha
 from middleware.auth import get_current_user, rate_limit_key
 from routers.auth import get_or_create_profile
+from routers.extension import _lusha_key_utilizavel
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,8 @@ def buscar_decisores(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
 
+    profile = get_or_create_profile(db, user_id)
+
     try:
         results = find_decision_makers(
             domain=lead.domain or lead.raw_input_domain,
@@ -131,6 +135,23 @@ def buscar_decisores(
         )
         db.add(dm)
         saved.append(dm)
+
+    # TESTE: completa com a Lusha quem ficou sem celular, se o usuário tiver
+    # a conta conectada. Só entra aqui quem o caminho gratuito não resolveu.
+    chave_lusha = _lusha_key_utilizavel(profile)
+    if chave_lusha:
+        for dm in saved:
+            if dm.phone:
+                continue
+            achado = lusha.find_contacts(
+                full_name=dm.name,
+                domain=lead.domain or lead.raw_input_domain,
+                company_name=lead.company_name,
+                linkedin_url=dm.linkedin_url,
+                api_key=chave_lusha,
+            )
+            if achado and achado.get("phones"):
+                dm.phone = achado["phones"][0]["e164"]
 
     db.commit()
     for dm in saved:
