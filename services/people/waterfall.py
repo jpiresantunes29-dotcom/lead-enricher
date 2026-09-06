@@ -421,10 +421,15 @@ def _resolve_phones(db: Session, person: Person, company: Optional[Company]) -> 
 # ── Ponto de entrada ─────────────────────────────────────────────────────────
 
 def reveal(db: Session, person: Person, company: Optional[Company] = None,
-           kind: str = "both", budget_seconds: float = 12.0) -> dict:
+           kind: str = "both", budget_seconds: float = 12.0,
+           lusha_api_key: Optional[str] = None) -> dict:
     """
     Revela contatos da pessoa. Devolve:
       {emails, phones, chain, from_cache, blocked, found_email, found_phone}
+
+    `lusha_api_key` é a chave da conta Lusha DO USUÁRIO (modelo BYOA), já
+    decifrada. Nula é o estado normal: sem ela a revelação roda inteira no
+    caminho gratuito, sem nenhuma chamada paga.
 
     Não commita e não cobra crédito — quem chama (router) decide isso.
     """
@@ -464,7 +469,40 @@ def reveal(db: Session, person: Person, company: Optional[Company] = None,
         if phones:
             chain.append("company_phone")
 
-    # 5. Provedores pagos — desligados enquanto não houver chave configurada
+    # 5. Lusha com a chave do próprio usuário (BYOA), só se ele conectou.
+    #
+    # Sempre depois do gratuito: a Lusha cobra no mínimo 1 crédito por chamada
+    # MESMO quando não acha ninguém, então consultá-la para um contato que o
+    # padrão de domínio já resolveu é dinheiro do usuário queimado à toa.
+    if lusha_api_key and (not repo.best_email(person) or not repo.best_phone(person)):
+        from services.providers import lusha as lusha_provider
+
+        achado = lusha_provider.find_contacts(
+            full_name=person.full_name,
+            domain=domain,
+            company_name=person.company_name_raw,
+            linkedin_url=(f"https://www.linkedin.com/in/{person.linkedin_slug}"
+                          if person.linkedin_slug else None),
+            api_key=lusha_api_key,
+        )
+        if achado:
+            chain.append("lusha")
+            for item in achado.get("emails", []):
+                repo.add_email(db, person, item["email"],
+                               status=item.get("status", "unknown"),
+                               confidence=int(item.get("confidence", 0)),
+                               source="lusha")
+            for item in achado.get("phones", []):
+                repo.add_phone(db, person, item["e164"],
+                               formatted=item.get("formatted"),
+                               type_=item.get("type", "unknown"),
+                               confidence=int(item.get("confidence", 0)),
+                               source="lusha")
+            # O cargo confirmado pela Lusha vale mais que o inferido de busca
+            if achado.get("title"):
+                person.title = achado["title"]
+
+    # 6. Provedores pagos globais — desligados enquanto não houver chave
     if not repo.best_email(person) or not repo.best_phone(person):
         premium = premium_find_contacts(
             full_name=person.full_name,

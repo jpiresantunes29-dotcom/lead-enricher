@@ -65,6 +65,10 @@ class Profile(Base):
     # Liga/desliga o resumo diário por e-mail. Ligado por padrão: é o
     # comportamento que a maioria quer, e quem não quer desliga uma vez.
     digest_diario = Column(Boolean, nullable=False, default=True)
+    #: Chave da Lusha do próprio usuário (modelo BYOA). Nula é o estado normal:
+    #: sem ela o produto roda inteiro no caminho gratuito. Cifrada porque é
+    #: credencial de terceiro — quem a tiver gasta os créditos pagos dele.
+    lusha_api_key = Column(SegredoCriptografado, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -757,7 +761,7 @@ class WhatsAppConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "b8ded539b15b"
+ALEMBIC_HEAD = "c5a71f0e3b92"
 
 
 def _stamp_alembic_head() -> None:

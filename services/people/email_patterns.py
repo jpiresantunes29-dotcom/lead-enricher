@@ -73,17 +73,31 @@ def domain_part(email: str) -> str:
 
 
 def is_generic(email_or_local: str) -> bool:
-    """True para caixas funcionais (contato@, vendas@...)."""
+    """True para caixas funcionais (contato@, vendas@...) incluindo com sufixo colado."""
     local = local_part(email_or_local) if "@" in email_or_local else (email_or_local or "").lower()
     local = strip_accents(local)
     if not local:
         return True
-    if local in {strip_accents(g) for g in GENERIC_LOCALS}:
+    genericos = {strip_accents(g) for g in GENERIC_LOCALS}
+    if local in genericos:
         return True
     # contato1@, vendas.sp@, rh-brasil@
     base = re.split(r"[._\-]", local)[0]
     base = re.sub(r"\d+$", "", base)
-    return base in {strip_accents(g) for g in GENERIC_LOCALS}
+    if base in genericos:
+        return True
+    # ouvidoriaip@, vendasbr@ — sufixo colado sem separador.
+    #
+    # Exige prefixo de 6+ letras e sobra de no máximo 2. Os dois limites são
+    # calibrados contra nome de gente: com 5 letras, "geraldo" vira "geral"+"do"
+    # e "salesio" vira "sales"+"io"; sem o teto de sobra, "mailson" vira
+    # "mail"+"son". Descartar um nome real custa mais que deixar passar um
+    # "vagasbr@": o e-mail nominal é o recurso mais escasso do motor de custo
+    # zero — é ele que ensina o padrão do domínio inteiro.
+    return any(
+        len(g) >= 6 and base.startswith(g) and len(base) - len(g) <= 2
+        for g in genericos
+    )
 
 
 def render(pattern: str, first: str, last: Optional[str]) -> Optional[str]:

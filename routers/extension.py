@@ -39,6 +39,23 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/extension", tags=["extension"])
 limiter = Limiter(key_func=rate_limit_key)
 
+
+def _lusha_key_utilizavel(profile: Optional[Profile]) -> Optional[str]:
+    """
+    Chave da Lusha do usuário pronta para uso, ou None.
+
+    Recusa explicitamente o marcador de segredo ilegível: quando a SECRETS_KEY
+    muda, a coluna devolve `ILEGIVEL` em vez do valor real, e mandá-lo para a
+    Lusha gastaria uma chamada para receber 401. Sem chave utilizável a
+    revelação simplesmente segue no caminho gratuito.
+    """
+    from services.crypto import ILEGIVEL
+
+    chave = getattr(profile, "lusha_api_key", None)
+    if not chave or chave == ILEGIVEL:
+        return None
+    return chave.strip() or None
+
 _bearer = HTTPBearer()
 
 PAIR_CODE_TTL_MINUTES = 10
@@ -269,7 +286,7 @@ def reveal(
     current_user: dict = Depends(get_ext_user),
 ):
     user_id = current_user.get("sub")
-    get_or_create_profile(db, user_id)
+    profile = get_or_create_profile(db, user_id)
 
     person = None
     if body.person_id:
@@ -285,6 +302,9 @@ def reveal(
     company = repo.get_company(db, person.company_domain) if person.company_domain else None
     result = waterfall.reveal(
         db, person, company=company, kind=body.kind, budget_seconds=REVEAL_BUDGET_SECONDS,
+        # Só chega preenchida se este usuário conectou a própria conta Lusha.
+        # A coluna decifra sozinha na leitura (SegredoCriptografado).
+        lusha_api_key=_lusha_key_utilizavel(profile),
     )
 
     if result["blocked"]:

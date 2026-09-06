@@ -336,3 +336,25 @@ def test_match_confidence_ignora_cargo_antigo_e_falso_positivo(title, snippet, r
 def test_nome_extraido_precisa_parecer_gente(nome, esperado):
     from services import decision_finder as df
     assert df._is_plausible_person_name(nome) is esperado
+
+
+# ── is_generic: caixa funcional com sufixo colado ────────────────────────────
+
+@pytest.mark.parametrize("email", [
+    "contato@x.com", "contato1@x.com", "vendas.sp@x.com", "rh-brasil@x.com",
+    "ouvidoriaip@x.com", "vendasbr@x.com", "marketingbr@x.com",
+    "suportebr@x.com", "comercialsp@x.com", "atendimento2@x.com",
+])
+def test_caixa_funcional_e_reconhecida(email):
+    assert ep.is_generic(email) is True
+
+
+@pytest.mark.parametrize("email", [
+    # Nomes reais que a regra de sufixo colado não pode engolir: perder um
+    # e-mail nominal custa o padrão do domínio inteiro.
+    "mailson@x.com", "rhea@x.com", "geraldo@x.com", "geralda@x.com",
+    "salesio@x.com", "salete@x.com", "helena@x.com", "infante@x.com",
+    "vendramin@x.com", "contadora@x.com", "informar@x.com", "joao.silva@x.com",
+])
+def test_nome_real_nao_e_confundido_com_caixa_funcional(email):
+    assert ep.is_generic(email) is False

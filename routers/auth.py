@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request, Security
+from fastapi import APIRouter, Depends, HTTPException, Request, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from slowapi import Limiter
@@ -88,3 +88,75 @@ def atualizar_preferencias(
     profile.digest_diario = body.digest_diario
     db.commit()
     return {"digest_diario": profile.digest_diario}
+
+
+# ── Lusha do próprio usuário (BYOA) ─────────────────────────────────────────
+
+class LushaConectar(BaseModel):
+    api_key: str
+
+
+def _lusha_conectado(profile: Profile) -> bool:
+    from services.crypto import ILEGIVEL
+
+    chave = profile.lusha_api_key
+    return bool(chave) and chave != ILEGIVEL
+
+
+@router.get("/me/lusha")
+def status_lusha(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Se a conta tem Lusha conectada. Nunca devolve a chave — nem mascarada:
+    o usuário já a tem no painel da Lusha, e ecoá-la só cria mais um lugar de
+    onde ela pode vazar.
+    """
+    profile = get_or_create_profile(db, current_user.get("sub"))
+    return {"conectado": _lusha_conectado(profile)}
+
+
+@router.put("/me/lusha")
+def conectar_lusha(
+    body: LushaConectar,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Conecta a conta Lusha do usuário. A chave é validada com uma chamada real
+    antes de gravar: guardar uma chave inválida faria toda revelação futura
+    gastar tempo para receber 401.
+
+    Grava cifrada (SegredoCriptografado) — é credencial de terceiro, e quem a
+    tiver gasta os créditos pagos por ele.
+    """
+    from services.providers import lusha
+
+    chave = (body.api_key or "").strip()
+    if not chave:
+        raise HTTPException(status_code=422, detail="Informe a chave da API da Lusha.")
+
+    if not lusha.credencial_valida(chave):
+        raise HTTPException(
+            status_code=422,
+            detail="A Lusha não aceitou esta chave. Confira em app.lusha.com → "
+                   "Hub de APIs → Copiar chave da API.",
+        )
+
+    profile = get_or_create_profile(db, current_user.get("sub"))
+    profile.lusha_api_key = chave
+    db.commit()
+    return {"conectado": True}
+
+
+@router.delete("/me/lusha")
+def desconectar_lusha(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Remove a chave. As revelações voltam a rodar só no caminho gratuito."""
+    profile = get_or_create_profile(db, current_user.get("sub"))
+    profile.lusha_api_key = None
+    db.commit()
+    return {"conectado": False}
