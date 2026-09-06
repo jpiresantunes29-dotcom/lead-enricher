@@ -166,19 +166,18 @@ def test_falha_no_envio_e_contabilizada(clean_db):
     assert resumo == {"total_usuarios": 1, "enviados": 0, "sem_atividade": 0, "falhas": 1}
 
 
-# ── POST /api/internal/digest ────────────────────────────────────────────────
+# ── POST /api/internal/jobs/run (inclui digest) ────────────────────────────
 
-def test_rota_interna_exige_segredo(client):
-    assert client.post("/api/internal/digest").status_code == 401
-
-
-def test_rota_interna_chama_o_digest(client):
+def test_jobs_run_chama_o_digest(client):
+    """O digest roda junto com a fila de jobs (consolidado para Vercel grátis)."""
     _perfil()
     _lead()
     with patch("services.mailer.send", return_value=True):
-        resp = client.post("/api/internal/digest", headers=_auth())
+        with patch("services.enrichment_service.enrich_company", side_effect=Exception("não deve rodar")):
+            resp = client.post("/api/internal/jobs/run", headers=_auth())
     assert resp.status_code == 200
-    assert resp.json()["enviados"] == 1
+    dados = resp.json()
+    assert dados["digest"]["enviados"] == 1
 
 
 # ── PATCH /api/me (liga/desliga o digest) ────────────────────────────────────

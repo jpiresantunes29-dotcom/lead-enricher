@@ -119,12 +119,15 @@ contexto ("indicação do fulano") e marcar campos como confirmados.
 - Esforço: 1 dia.
 
 ### 1.3 Digest diário por e-mail ✅ feito em 2026-09-06
-`services/digest.py` + `POST /api/internal/digest` (cron 11h UTC,
-`vercel.json`), via Resend (`services/mailer.py`, já existia para o opt-out).
-Cobre: novos leads, conversas de WhatsApp iniciadas, respostas recebidas e
-conversas aguardando resposta do usuário nas últimas 24h — usuário sem
-nenhuma atividade não recebe nada, para não virar e-mail que ninguém abre.
-Liga/desliga em `PATCH /api/me` (`digest_diario`, ligado por padrão).
+`services/digest.py`, integrado ao `POST /api/internal/jobs/run` (9h UTC,
+consolidado com a fila para caber em 2 cron jobs do Vercel gratuito).
+Via Resend (`services/mailer.py`, já existia). Cobre: novos leads, conversas
+de WhatsApp iniciadas, respostas recebidas e conversas aguardando resposta do
+usuário nas últimas 24h — usuário sem nenhuma atividade não recebe nada, para
+não virar e-mail que ninguém abre. Liga/desliga em `PATCH /api/me`
+(`digest_diario`, ligado por padrão).
+- Nota: consolidado com a fila de jobs (item 0.2) para não ultrapassar o
+  limite de 2 cron jobs no Vercel Hobby (grátis).
 - Pendente: não cobre follow-ups atrasados especificamente (isso ainda
   depende da tela de atividades, `routers/activities.py`) — se quiser esse
   recorte, é uma extensão pequena de `services/digest.py`.
