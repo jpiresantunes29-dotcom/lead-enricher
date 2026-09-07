@@ -451,6 +451,28 @@ def _tipos_de_pagina(domain: str, company_name: Optional[str]) -> tuple:
     return ("company",)
 
 
+# Palavras que só QUALIFICAM um nome. Um palpite feito apenas delas não
+# identifica empresa nenhuma — é um prefixo solto à procura de uma vítima.
+_TOKENS_DE_QUALIFICADOR = frozenset({
+    "cia", "grupo", "group", "o", "a", "do", "de", "da", "dos", "das",
+    "brasil", "brazil", "br", "latam", "americas", "oficial", "official",
+})
+
+
+def _palpite_utilizavel(slug: str) -> bool:
+    """
+    Sobra alguma marca no palpite depois de tirar os qualificadores?
+
+    Bug real: com o site fora do ar, `company_name` chega vazio e os prefixos
+    eram colados em nada — saíam os palpites "o-", "cia-", "grupo-" e
+    "-brasil". E `linkedin.com/company/o-` EXISTE: é a "ООО Мануфактура Дом
+    Природы", de Simferopol. Foi assim que a ficha do Boticário ganhou uma
+    sede na Crimeia.
+    """
+    nucleo = [t for t in slug.split("-") if t and t not in _TOKENS_DE_QUALIFICADOR]
+    return bool(nucleo) and len("".join(nucleo)) >= 3
+
+
 def _guess_slug_candidates(company_name: Optional[str], domain: str) -> List[str]:
     """
     Palpites de slug do LinkedIn a partir do nome da empresa e do domínio.
@@ -500,7 +522,8 @@ def _guess_slug_candidates(company_name: Optional[str], domain: str) -> List[str
     seen = set()
     unique = []
     for c in candidates:
-        if c and c not in seen and is_public_linkedin_slug(c):
+        if (c and c not in seen and is_public_linkedin_slug(c)
+                and _palpite_utilizavel(c)):
             seen.add(c)
             unique.append(c)
     return unique[:_MAX_SLUG_CANDIDATES]
@@ -548,7 +571,11 @@ def _names_match(page_name: Optional[str], company_name: Optional[str], domain: 
     if not page_name:
         return False
     page_key = re.sub(r"[^a-z0-9]", "", _slugify(page_name))
-    if not page_key:
+    # Mesmo piso exigido do nome buscado, logo abaixo. Sem ele, a página
+    # "ООО Мануфактура Дом Природы" virava a chave "o" — o único caractere
+    # latino do nome — e "o" está dentro de "boticario", então a empresa russa
+    # passava como sendo a brasileira.
+    if len(page_key) < 4:
         return False
 
     conhecidos = _tokens_fortes(company_name) | _tokens_fortes(domain.split(".")[0])

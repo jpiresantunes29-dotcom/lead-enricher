@@ -6,10 +6,13 @@ Etapa 2 (depende do scraping): LinkedIn search com company_name conhecido
 Etapa 3 (depende do LinkedIn): employee_count via cascata multi-fonte
 Etapa 2b (paralela às 2/3, depende do CNPJ achado na etapa 1): localização e
           setor oficiais via Receita Federal — cobre o caso comum de site
-          institucional sem dados estruturados (JSON-LD, meta geo.*).
+          institucional sem dados estruturados (JSON-LD, meta geo.*). O CNPJ
+          vem do site quando ele o publica e, quando não, do titular do
+          domínio no registro.br.
 """
 import logging
 import os
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from .scraper import scrape_website
@@ -18,8 +21,10 @@ from .linkedin_search import find_company_linkedin, inspect_company_page
 from .employee_count import fetch_employee_count, normalize_employee_count
 from .providers.cnpj_receita import (
     lookup_cnpj, location_from_cnpj, sector_from_cnpj, employee_band_from_cnpj,
+    is_valid_cnpj,
 )
 from ._utils import normalize_domain
+from .dns_intel import fetch_rdap
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +58,28 @@ ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "50"))
 #       (o "19 colaboradores" da PUCPR saía de um <option> "Microempresa (até
 #       19 colaboradores)") e passa a preferir o numberOfEmployees declarado
 #       em JSON-LD. Ficha do v6 é recoletada.
-ENRICHMENT_VERSION = 7
+#   8 — localização e setor oficiais deixam de depender de o site publicar o
+#       próprio CNPJ: o registro.br publica o do TITULAR de qualquer domínio
+#       .br, e ele entra como fallback. O scraper também passa a seguir os
+#       links institucionais do próprio site em vez de só adivinhar caminhos
+#       (/sobre, /contato), que não existem na maioria dos sites grandes.
+#       A metatag geo.* do site cai para último recurso na localização:
+#       boticario.com.br declara Simferopol (Crimeia) no template e isso
+#       entrava por cima da sede correta da Receita e do LinkedIn.
+ENRICHMENT_VERSION = 8
+
+
+def _cnpj_do_titular(rdap_data) -> str:
+    """
+    CNPJ do titular do domínio, como o registro.br o publica ("76.659.820/0003-13").
+
+    Devolve só dígitos e só se os verificadores baterem — o campo é texto livre
+    do RDAP, e um CPF de titular pessoa física cairia aqui do mesmo jeito.
+    """
+    if not isinstance(rdap_data, dict):
+        return ""
+    digitos = re.sub(r"\D", "", rdap_data.get("owner_cnpj") or "")
+    return digitos if is_valid_cnpj(digitos) else ""
 
 
 def enrich_company(domain_input: str) -> dict:
@@ -103,13 +129,15 @@ def enrich_company(domain_input: str) -> dict:
         """Quanto ainda podemos gastar sem estourar o orçamento da requisição."""
         return max(0.5, deadline - time.monotonic() - reserve)
 
-    # Etapa 1: scraping + DNS em paralelo
+    # Etapa 1: scraping + DNS + titular do domínio, em paralelo
     site_data = None
     dns_data = None
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    rdap_data = None
+    with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {
             pool.submit(scrape_website, website_url): "site",
             pool.submit(get_dns_report, domain): "dns",
+            pool.submit(fetch_rdap, domain): "rdap",
         }
         for fut in as_completed(futures):
             kind = futures[fut]
@@ -122,13 +150,25 @@ def enrich_company(domain_input: str) -> dict:
                 site_data = data
             elif kind == "dns":
                 dns_data = data
+            elif kind == "rdap":
+                rdap_data = data
 
-    # Consolida site
+    # Consolida site.
+    #
+    # `location` fica de fora de propósito: no site ela sai das metatags
+    # `geo.region`/`geo.placename`, que um site em cada tantos herda do
+    # template e nunca corrige. Real e medido: boticario.com.br declara
+    # "г.Симферополь, АР Крым" (Simferopol, Crimeia) — e como o site vinha
+    # primeiro, isso entrava na ficha por cima da sede que o LinkedIn e a
+    # Receita informam corretamente (Curitiba/São José dos Pinhais). A
+    # metatag continua valendo, mas como ÚLTIMO recurso, lá embaixo.
+    location_do_site = None
     if site_data and isinstance(site_data, dict):
-        for key in ("company_name", "description", "location", "sector",
+        for key in ("company_name", "description", "sector",
                     "corporate_email", "phone", "linkedin_url", "cnpj"):
             if site_data.get(key):
                 result[key] = site_data[key]
+        location_do_site = site_data.get("location")
         result["site_emails"] = site_data.get("emails") or []
         result["site_phones"] = site_data.get("phones") or []
         result["site_block_reason"] = site_data.get("block_reason")
@@ -142,6 +182,22 @@ def enrich_company(domain_input: str) -> dict:
     # o porte também alimenta a faixa de funcionários, e a consulta já
     # acontecia de qualquer jeito logo depois (waterfall.ingest_enrichment),
     # com cache — antecipá-la não custa requisição nova.
+    # Site que não publica o próprio CNPJ deixava localização e setor vazios
+    # para sempre — e é a maioria fora do varejo. O registro.br publica o CNPJ
+    # do TITULAR de todo domínio .br, então a ficha tem uma segunda porta para
+    # o dado oficial. Medido: pucpr.br devolve 76.659.820/0003-13, a Associação
+    # Paranaense de Cultura — a mantenedora da universidade.
+    #
+    # Fica como fallback, nunca por cima do CNPJ achado no site: o titular do
+    # domínio é quase sempre a empresa, mas pode ser a holding do grupo ou a
+    # agência que registrou. Com os dois disponíveis, o que a empresa publica
+    # sobre si mesma vale mais.
+    if not result.get("cnpj"):
+        do_titular = _cnpj_do_titular(rdap_data)
+        if do_titular:
+            result["cnpj"] = do_titular
+            logger.info("CNPJ obtido do titular do domínio domain=%s", domain)
+
     cnpj_pool = cnpj_future = None
     if result.get("cnpj"):
         cnpj_pool = ThreadPoolExecutor(max_workers=1)
@@ -260,6 +316,18 @@ def enrich_company(domain_input: str) -> dict:
             # como estimativa do que campo vazio na tela do vendedor.
             if not result.get("employee_count"):
                 result["employee_count"] = employee_band_from_cnpj(cnpj_data)
+
+    # Nem a Receita nem o LinkedIn responderam: aí sim a metatag do site é
+    # melhor que campo vazio — sabendo que ela pode ser lixo de template.
+    if not result.get("location") and location_do_site:
+        result["location"] = location_do_site
+
+    # "curitiba, parana" está certo e lê como descuido na tela do vendedor.
+    # Só mexe quando a string inteira veio em caixa baixa: "Curitiba, PR" tem
+    # sigla de UF, e title() a estragaria ("Pr").
+    localizacao = result.get("location")
+    if localizacao and localizacao.islower():
+        result["location"] = localizacao.title()
 
     # Site fora do ar ou bloqueando robôs: o domínio ainda dá um nome
     # utilizável na ficha — melhor que campo vazio na tela do vendedor.

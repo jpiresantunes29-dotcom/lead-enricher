@@ -2,8 +2,10 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -76,6 +78,39 @@ def _fetch(url: str, timeout: Optional[int] = None) -> Optional[tuple]:
     """Devolve (soup, html) ou None. Para quem não precisa saber o motivo."""
     fetched, _ = _fetch_com_motivo(url, timeout)
     return fetched
+
+
+def _localizacao_plausivel(valor: Optional[str]) -> bool:
+    """
+    A localização declarada pelo site está em alfabeto latino?
+
+    As metatags `geo.region`/`geo.placename` são das mais copiadas junto com o
+    template e das menos revisadas: boticario.com.br declara
+    "г.Симферополь, АР Крым" (Simferopol, Crimeia) — sobra do tema que
+    originou o site. Não é ambiguidade de fonte, é lixo, e lixo não deve
+    entrar na ficha nem como último recurso.
+
+    Acento não atrapalha: NFKD separa o diacrítico da letra, então "São Paulo"
+    e "Paraná" continuam contando como latinos.
+    """
+    if not valor:
+        return False
+    letras = [c for c in unicodedata.normalize("NFKD", valor) if c.isalpha()]
+    if not letras:
+        return False
+    latinas = sum(1 for c in letras if "a" <= c.lower() <= "z")
+    return latinas / len(letras) >= 0.8
+
+
+def _geo_do_site(soup: BeautifulSoup) -> Optional[str]:
+    """
+    Localização das metatags geo.*, descartada quando não é plausível.
+
+    A mesma checagem roda de novo na saída de `scrape_website`, porque o
+    JSON-LD — que vem antes desta fonte — carrega o mesmo tipo de lixo.
+    """
+    valor = _meta(soup, "geo.region") or _meta(soup, "geo.placename")
+    return valor if _localizacao_plausivel(valor) else None
 
 
 def _meta(soup: BeautifulSoup, name: str) -> Optional[str]:
@@ -198,6 +233,90 @@ def _has_personal_email(emails, domain: str) -> bool:
     )
 
 
+# Palavras que denunciam página institucional ou legal — é nelas que o CNPJ
+# aparece quando não está no rodapé da home. São PALAVRAS, e não caminhos,
+# porque o que varia entre sites é justamente o caminho: /pt/politica (Madero),
+# /aviso-de-privacidade/ (PUCPR) e /a-universidade/sobre-a-pucpr/ não têm nada
+# em comum além deste vocabulário.
+_PISTAS_INSTITUCIONAIS = (
+    "privacidade", "privacy", "termos", "terms", "lgpd", "cookies",
+    "institucional", "quem-somos", "quem somos", "sobre", "about",
+    "empresa", "contato", "contact", "transparencia", "transparência",
+    "politica", "política", "juridico", "jurídico", "regulamento",
+)
+
+# Teto de páginas seguidas. Cada uma é uma requisição a mais dentro do
+# orçamento da coleta, e passar disso troca latência por um ganho que rareia.
+_MAX_LINKS_INSTITUCIONAIS = 8
+
+
+def _links_institucionais(base_url: str, soup: BeautifulSoup, domain: str) -> list:
+    """
+    Páginas institucionais/legais que o PRÓPRIO site publica, no mesmo domínio.
+
+    Adivinhar caminhos (/sobre, /contato, /privacidade) só funciona em site que
+    segue a convenção, e os que mais interessam não seguem: medido ao vivo,
+    nenhum dos caminhos adivinhados existe em pucpr.br, e o CNPJ do Madero mora
+    em /pt/politica. Seguir o que o site linka dispensa a convenção.
+
+    Só o mesmo domínio: link para fora leva ao CNPJ de outra empresa — agência,
+    parceiro, gateway de pagamento — e gravaria a ficha do lead errado.
+    """
+    encontrados = []
+    base_normal = base_url.rstrip("/")
+    for a in soup.find_all("a", href=True):
+        texto = a.get_text(" ", strip=True).lower()
+        href = a["href"]
+        if not any(p in texto or p in href.lower() for p in _PISTAS_INSTITUCIONAIS):
+            continue
+        try:
+            full = urljoin(base_url, href).split("#")[0]
+        except ValueError:
+            continue
+        if not full.startswith(("http://", "https://")):
+            continue
+        if normalize_domain(urlparse(full).netloc) != domain:
+            continue
+        if full.rstrip("/") == base_normal or full in encontrados:
+            continue
+        encontrados.append(full)
+        if len(encontrados) >= _MAX_LINKS_INSTITUCIONAIS:
+            break
+    return encontrados
+
+
+def _cnpj_seguindo_links_do_site(base_url: str, soup: BeautifulSoup,
+                                 domain: str) -> Optional[str]:
+    """
+    Segunda tentativa de achar o CNPJ, pelas páginas que o site declara.
+
+    O CNPJ é a chave que abre localização, setor e porte OFICIAIS na Receita —
+    campos que, sem ele, ficam vazios na ficha mesmo quando o site está no ar.
+    Por isso vale uma rodada extra de requisições só por ele.
+    """
+    urls = _links_institucionais(base_url, soup, domain)
+    if not urls:
+        return None
+    deadline = time.monotonic() + INNER_PAGES_BUDGET
+    with ThreadPoolExecutor(max_workers=min(len(urls), 6)) as pool:
+        futures = [pool.submit(_fetch, u, INNER_PAGE_TIMEOUT) for u in urls]
+        for future in futures:
+            restante = deadline - time.monotonic()
+            if restante <= 0:
+                break
+            try:
+                fetched = future.result(timeout=restante)
+            except Exception:
+                continue
+            if not fetched:
+                continue
+            achado = extract_cnpj(fetched[0].get_text(" ", strip=True))
+            if achado:
+                logger.info("CNPJ achado seguindo link do site domain=%s", domain)
+                return achado
+    return None
+
+
 def scrape_website(url: str) -> dict:
     """Scrapes a company homepage and returns extracted fields."""
     if not url.startswith(("http://", "https://")):
@@ -243,7 +362,7 @@ def scrape_website(url: str) -> dict:
         if isinstance(loc_obj, dict):
             location = loc_obj.get("name")
     if not location:
-        location = _meta(soup, "geo.region") or _meta(soup, "geo.placename")
+        location = _geo_do_site(soup)
 
     # Guarda TODOS os e-mails do domínio: cada um pode ensinar o padrão da
     # empresa (services/people/email_patterns.py), o que zera o custo dos
@@ -321,8 +440,21 @@ def scrape_website(url: str) -> dict:
                 if not linkedin_url:
                     linkedin_url = _extract_linkedin(about_soup, about_text)
                 if not location:
-                    location = _meta(about_soup, "geo.region") or _meta(about_soup, "geo.placename")
+                    location = _geo_do_site(about_soup)
         corporate_email = corporate_email or _pick_corporate_email(all_emails, domain)
+
+    # Os caminhos adivinhados acima cobrem o site que segue a convenção.
+    # Quando não cobrem, ainda resta o que o próprio site linka — e é o
+    # CNPJ que decide se a ficha terá localização e setor oficiais.
+    if not cnpj:
+        cnpj = _cnpj_seguindo_links_do_site(url, soup, domain)
+
+    # Guarda na saída, e não só na metatag: em boticario.com.br o
+    # "г.Симферополь, АР Крым" vem do JSON-LD (addressLocality), que é a
+    # PRIMEIRA fonte de localização — o template foi copiado inteiro, dados
+    # estruturados junto. Onde nasce muda; que é lixo, não.
+    if not _localizacao_plausivel(location):
+        location = None
 
     return {
         # A home abriu, então houve coleta — mas se as páginas internas

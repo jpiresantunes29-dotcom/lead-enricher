@@ -13,6 +13,7 @@ from services.employee_count import (
 )
 from services.scraper import (
     _looks_like_slogan, _pick_company_name, _pick_corporate_email, _extract_linkedin,
+    _links_institucionais,    _localizacao_plausivel,
 )
 from services._utils import (
     LINKEDIN_PAGE_RE, is_public_linkedin_slug, looks_like_search_block,
@@ -21,7 +22,7 @@ from services._utils import (
 from services.linkedin_search import (
     _confidence, _normalize, _slug_from_url, parse_company_page,
     _guess_slug_candidates, _names_match, _extract_candidates_from_html,
-    _pick_best_candidate, _tipos_de_pagina,
+    _pick_best_candidate, _tipos_de_pagina,    _palpite_utilizavel,
 )
 from services.providers.cnpj_receita import (
     location_from_cnpj, sector_from_cnpj, employee_band_from_cnpj,
@@ -573,3 +574,207 @@ def test_universidade_prefere_a_pagina_de_escola():
     assert escolhido == (
         "https://www.linkedin.com/school/pontificia-universidade-catolica-do-parana"
     )
+
+# ── CNPJ: a porta para localização e setor oficiais ─────────────────────────
+
+def test_cnpj_do_titular_do_dominio_e_validado():
+    """
+    O registro.br publica o CNPJ do titular de qualquer domínio .br — é o que
+    dá localização e setor oficiais a sites que não publicam o próprio CNPJ
+    (a maioria fora do varejo). Campo de texto livre, então os verificadores
+    decidem: um CPF de titular pessoa física cairia aqui do mesmo jeito.
+    """
+    from services.enricher import _cnpj_do_titular
+
+    assert _cnpj_do_titular({"owner_cnpj": "76.659.820/0003-13"}) == "76659820000313"
+    assert _cnpj_do_titular({"owner_cnpj": "11.111.111/1111-11"}) == ""
+    assert _cnpj_do_titular({"owner_cnpj": "123.456.789-00"}) == ""
+    assert _cnpj_do_titular({}) == ""
+    assert _cnpj_do_titular(None) == ""
+
+
+def test_links_institucionais_saem_do_proprio_site_e_so_do_mesmo_dominio():
+    """
+    Adivinhar /sobre e /contato só acha o site que segue a convenção: medido ao
+    vivo, nenhum caminho adivinhado existe em pucpr.br, e o CNPJ do Madero mora
+    em /pt/politica. Link para fora fica de fora — levaria ao CNPJ da agência
+    ou do gateway de pagamento, gravando a ficha do lead errado.
+    """
+    html = """
+    <a href="/pt/politica">Política de Privacidade</a>
+    <a href="/a-universidade/sobre-a-pucpr/">Sobre a PUCPR</a>
+    <a href="https://outrodominio.com.br/termos">Termos do parceiro</a>
+    <a href="/produtos">Produtos</a>
+    """
+    achados = _links_institucionais("https://acme.com.br", BeautifulSoup(html, "html.parser"),
+                                    "acme.com.br")
+    assert "https://acme.com.br/pt/politica" in achados
+    assert "https://acme.com.br/a-universidade/sobre-a-pucpr/" in achados
+    assert not any("outrodominio" in u for u in achados)
+    assert not any("/produtos" in u for u in achados)
+
+
+def _stub_coleta(monkeypatch, *, site, rdap=None, cnpj_data=None, page=None):
+    """Isola o enricher da rede para testar só a precedência entre as fontes."""
+    from services import enricher
+
+    monkeypatch.setattr(enricher, "scrape_website", lambda url: site)
+    monkeypatch.setattr(enricher, "get_dns_report", lambda d: None)
+    monkeypatch.setattr(enricher, "fetch_rdap", lambda d: rdap)
+    monkeypatch.setattr(enricher, "fetch_employee_count", lambda *a, **k: None)
+    monkeypatch.setattr(enricher, "lookup_cnpj", lambda c, timeout=6: cnpj_data)
+    monkeypatch.setattr(
+        enricher, "find_company_linkedin",
+        lambda d, n: {"url": None, "confidence": "none", "source": None, "page": page},
+    )
+    return enricher
+
+
+_SITE_COM_GEO_LIXO = {
+    "status": "enriched", "company_name": "Boticario", "sector": None,
+    # Metatag geo.placename real do boticario.com.br: resquício de template
+    "location": "г.Симферополь, АР Крым",
+    "cnpj": None, "linkedin_url": None, "description": None,
+    "emails": [], "phones": [], "block_reason": None,
+}
+
+
+def test_metatag_geo_do_site_nao_ganha_da_sede_oficial(monkeypatch):
+    """
+    Bug real: a ficha do Boticário mostrava "г.Симферополь, АР Крым"
+    (Simferopol, Crimeia) como localização. Sai da metatag geo.* que o site
+    herdou do template e nunca corrigiu — e, por vir do site, ganhava da sede
+    que a Receita e o LinkedIn informam certo.
+    """
+    enricher = _stub_coleta(
+        monkeypatch, site=dict(_SITE_COM_GEO_LIXO),
+        rdap={"owner_cnpj": "11.137.051/0719-54"},
+        cnpj_data={"municipio": "SAO JOSE DOS PINHAIS", "uf": "PR",
+                   "cnae": "Fabricação de cosméticos"},
+    )
+    resultado = enricher.enrich_company("boticario.com.br")
+
+    assert resultado["location"] == "Sao Jose Dos Pinhais, PR"
+    assert resultado["sector"] == "Fabricação de cosméticos"
+    # O CNPJ do titular do domínio abriu os dois campos
+    assert resultado["cnpj"] == "11137051071954"
+
+
+def test_metatag_geo_ainda_vale_quando_nao_ha_fonte_melhor(monkeypatch):
+    """Rebaixar a metatag não pode cegá-la: vazio seria pior."""
+    enricher = _stub_coleta(
+        monkeypatch,
+        site={**_SITE_COM_GEO_LIXO, "location": "Curitiba, PR"},
+        rdap=None, cnpj_data=None,
+    )
+    assert enricher.enrich_company("acme.com.br")["location"] == "Curitiba, PR"
+
+
+def test_cnpj_publicado_no_site_prevalece_sobre_o_do_titular(monkeypatch):
+    """
+    O titular do domínio é quase sempre a empresa, mas pode ser a holding do
+    grupo ou a agência que registrou. Com os dois em mãos, o que a empresa
+    publica sobre si mesma vale mais.
+    """
+    enricher = _stub_coleta(
+        monkeypatch,
+        site={**_SITE_COM_GEO_LIXO, "cnpj": "76484013000145"},
+        rdap={"owner_cnpj": "11.137.051/0719-54"},
+        cnpj_data={"municipio": "CURITIBA", "uf": "PR", "cnae": "Saneamento"},
+    )
+    assert enricher.enrich_company("sanepar.com.br")["cnpj"] == "76484013000145"
+
+
+def test_localizacao_em_alfabeto_nao_latino_e_lixo_de_template():
+    """
+    boticario.com.br declara "г.Симферополь, АР Крым" (Simferopol, Crimeia) na
+    metatag geo.* — sobra do tema que originou o site. Não é fonte ambígua, é
+    lixo, e não deve entrar na ficha nem como último recurso. Acento não pode
+    ser confundido com isso.
+    """
+    assert _localizacao_plausivel("г.Симферополь, АР Крым") is False
+    assert _localizacao_plausivel("东京") is False
+    assert _localizacao_plausivel("São Paulo") is True
+    assert _localizacao_plausivel("Paraná") is True
+    assert _localizacao_plausivel("Curitiba, PR") is True
+    assert _localizacao_plausivel(None) is False
+
+
+def test_json_ld_com_endereco_de_template_nao_vira_localizacao(monkeypatch):
+    """
+    Em boticario.com.br o "г.Симферополь, АР Крым" não vem da metatag geo.*:
+    vem do JSON-LD (addressLocality), que é a PRIMEIRA fonte de localização —
+    o template foi copiado inteiro, dados estruturados junto. Por isso a
+    guarda tem de estar na saída da coleta, não só na metatag.
+    """
+    from services import scraper
+
+    html = """
+    <html><head><title>Boticario</title>
+    <script type="application/ld+json">
+    {"@type": "Organization", "name": "Boticario",
+     "address": {"addressLocality": "г.Симферополь", "addressRegion": "АР Крым"}}
+    </script></head><body><p>site</p></body></html>
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    monkeypatch.setattr(scraper, "_fetch_com_motivo", lambda url, timeout=None: ((soup, html), None))
+    monkeypatch.setattr(scraper, "_fetch", lambda url, timeout=None: None)
+    monkeypatch.setattr(scraper, "_cnpj_seguindo_links_do_site", lambda *a, **k: None)
+
+    assert scraper.scrape_website("https://boticario.com.br")["location"] is None
+
+
+def test_site_fora_do_ar_nao_gera_palpite_que_e_so_prefixo():
+    """
+    Bug real, e o mais perigoso da série: com boticario.com.br devolvendo 403,
+    o nome da empresa chegava vazio e os prefixos eram colados em NADA — saíam
+    os palpites "o-", "cia-", "grupo-" e "-brasil". E linkedin.com/company/o-
+    existe: é a "ООО Мануфактура Дом Природы", de Simferopol. Era daí que vinha
+    a sede na Crimeia na ficha do Boticário.
+    """
+    palpites = _guess_slug_candidates(None, "boticario.com.br")
+
+    assert "o-" not in palpites
+    assert "cia-" not in palpites
+    assert "grupo-" not in palpites
+    assert "-brasil" not in palpites
+    # A raiz do domínio ainda sustenta os palpites bons
+    assert "boticario" in palpites
+    assert "grupo-boticario" in palpites
+
+    assert _palpite_utilizavel("o-") is False
+    assert _palpite_utilizavel("-do-brasil") is False
+    assert _palpite_utilizavel("cia-hering") is True
+    assert _palpite_utilizavel("farmatex-do-brasil") is True
+
+
+def test_nome_de_pagina_curto_demais_nao_confirma_empresa():
+    """
+    A segunda trava do mesmo caso: "ООО Мануфактура Дом Природы" vira a chave
+    "o" — o único caractere latino do nome — e "o" está dentro de "boticario".
+    Uma letra não prova identidade; o piso é o mesmo já exigido do nome buscado.
+    """
+    assert _names_match("ООО Мануфактура Дом Природы", None, "boticario.com.br") is False
+    assert _names_match("東京", "Acme", "acme.com.br") is False
+    # Nomes de verdade seguem passando
+    assert _names_match("Grupo Boticário", None, "boticario.com.br") is True
+
+
+def test_localizacao_toda_em_caixa_baixa_ganha_capitalizacao(monkeypatch):
+    """
+    "curitiba, parana" está certo e lê como descuido. Sigla de UF não pode ser
+    estragada no caminho: "Curitiba, PR" tem de sair intacto.
+    """
+    enricher = _stub_coleta(
+        monkeypatch,
+        site={**_SITE_COM_GEO_LIXO, "location": "curitiba, parana"},
+        rdap=None, cnpj_data=None,
+    )
+    assert enricher.enrich_company("acme.com.br")["location"] == "Curitiba, Parana"
+
+    enricher = _stub_coleta(
+        monkeypatch, site=dict(_SITE_COM_GEO_LIXO),
+        rdap={"owner_cnpj": "76.484.013/0001-45"},
+        cnpj_data={"municipio": "CURITIBA", "uf": "PR", "cnae": "Saneamento"},
+    )
+    assert enricher.enrich_company("sanepar.com.br")["location"] == "Curitiba, PR"
