@@ -19,7 +19,7 @@
 | **Segurança & Conformidade** | ⚠️ 70% pronto | Rate limit, LGPD, Anti-SSRF | ALTA |
 | **Infraestrutura & DevOps** | ✅ 80% pronto | Alembic, Supabase | MÉDIA |
 | **Extensão Chrome** | ✅ 85% pronto | Pareamento, revelação | MÉDIA |
-| **Provedores Premium** | 🔴 0% pronto | Hunter, Apollo, Lusha | BAIXA |
+| **Provedores Premium** | ⚠️ 60% pronto | Hunter e **Lusha (BYOA) feitos**; Apollo/Dropcontact pendentes | BAIXA |
 
 ---
 
@@ -476,13 +476,32 @@
    - [ ] **PENDENTE**: Priorização por confiança
    - [ ] **PENDENTE**: Testes
 
-3. **Lusha** (legacy — consideração futura)
-   - [ ] **PENDENTE**: Módulo `services/providers/lusha.py` (se houver ROI)
+3. **Lusha** ✅ feito em 2026-09-06 — no modelo **BYOA**: cada usuário conecta a
+   própria chave e gasta os próprios créditos, então não há custo para a
+   instalação e o produto continua inteiro para quem não conecta.
+   - [x] `services/providers/lusha.py` — revela uma pessoa pelo nome (`/v2/person`)
+   - [x] `services/providers/lusha_prospecting.py` — lista contatos de uma
+         empresa (search, 1 crédito/25) e revela sob clique (enrich, 1 crédito
+         por e-mail e 5 por telefone)
+   - [x] `GET /api/leads/{id}/contacts`, `POST /api/decision-makers/{id}/reveal`,
+         `GET /api/lusha/filters`
+   - [x] Tela com filtros, paginação e custo escrito no botão antes do clique
+   - [x] 87 testes (60 de provedor, 27 de endpoint)
+   - [ ] **PENDENTE**: capturar a resposta real da API numa fixture. Custa
+         1 crédito. Enquanto não for feito, o parser está escrito contra o
+         formato **documentado**, não contra o observado — que é o mesmo tipo
+         de risco que fez a primeira tentativa chamar o endpoint errado. Ver
+         §11 de `docs/LUSHA_PROSPECTING_IMPLEMENTACAO.md`.
 
 ### Testes
-- [ ] **PENDENTE**: Testes de fallback (API provider falha)
-- [ ] **PENDENTE**: Testes de dedupe
-- [ ] **PENDENTE**: Testes de billing
+- [x] Fallback quando o provedor falha — coberto para a Lusha
+      (`test_contatos_prospecting.py`): sem chave, 401, 402, 429 e Lusha fora
+      do ar caem no caminho gratuito sem derrubar a tela
+- [x] Não cobrar duas vezes pelo mesmo dado — revelar um contato já revelado
+      devolve o gravado sem chamar a Lusha
+- [ ] **PENDENTE**: Testes de dedupe entre provedores (só faz sentido com dois
+      provedores pagos ativos)
+- [ ] **PENDENTE**: Testes de billing para Apollo/Dropcontact
 
 ---
 
