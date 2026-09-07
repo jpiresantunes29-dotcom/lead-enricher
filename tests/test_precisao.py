@@ -796,20 +796,16 @@ def test_rotulo_administrativo_e_reconhecido_como_generico():
     assert not setor_generico("Serviços combinados para apoio a edifícios")
 
 
-def test_setor_generico_cede_a_vez_nas_duas_direcoes():
+def test_setor_generico_cede_a_vez_para_o_proximo_candidato():
     """
-    Nenhuma das duas fontes é sempre a boa, e foi por isso que a escolha
-    deixou de ser por ordem fixa. Medido ao vivo:
-
-      positivo.com.br  LinkedIn administrativo  → vale o CNAE "Ensino médio"
-      madero           CNAE da unidade fabril   → vale o LinkedIn "Restaurantes"
+    A escolha não é por ordem fixa: o primeiro rótulo que descreve o negócio
+    ganha, seja qual for a fonte que o trouxe.
     """
     from services.enricher import _melhor_setor
 
-    assert _melhor_setor(None, "Serviços combinados de escritório e apoio administrativo",
-                         "Ensino médio") == "Ensino médio"
-    assert _melhor_setor(None, "Restaurantes e outros serviços de alimentação",
-                         "Fabricação de produtos de carne") ==         "Restaurantes e outros serviços de alimentação"
+    assert _melhor_setor("Holdings de instituições não-financeiras",
+                         "Fabricação de cosméticos") == "Fabricação de cosméticos"
+    assert _melhor_setor("Ensino médio", "Serviços combinados para apoio a edifícios") ==         "Ensino médio"
 
 
 def test_setor_generico_ainda_e_melhor_que_campo_vazio():
@@ -839,3 +835,54 @@ def test_cnae_generico_perde_para_o_setor_do_linkedin(monkeypatch):
                       "confidence": "verified", "source": "site", "page": pagina},
     )
     assert enricher_mod.enrich_company("acme.com.br")["sector"] == "Tecnologia da informação"
+
+
+def _setor_resolvido(monkeypatch, *, cnae, linkedin):
+    """Roda a coleta inteira com as duas fontes fixadas, e devolve o setor."""
+    from services import enricher
+
+    pagina = {"confidence": "verified", "sector": linkedin, "location": None,
+              "size": None, "name": "Empresa", "html": None}
+    mod = _stub_coleta(
+        monkeypatch, site=dict(_SITE_COM_GEO_LIXO),
+        rdap={"owner_cnpj": "76.484.013/0001-45"},
+        cnpj_data={"municipio": "CURITIBA", "uf": "PR", "cnae": cnae},
+        page=pagina,
+    )
+    monkeypatch.setattr(
+        mod, "find_company_linkedin",
+        lambda d, n: {"url": "https://www.linkedin.com/company/x",
+                      "confidence": "verified", "source": "site", "page": pagina},
+    )
+    return mod.enrich_company("acme.com.br")["sector"]
+
+
+def test_setor_sai_do_cnae_e_nao_do_rotulo_do_linkedin(monkeypatch):
+    """
+    O CNAE é a atividade que a empresa REGISTRA para operar. O "setor" do
+    LinkedIn é escolhido a dedo numa lista curta por quem montou o perfil, e
+    erra muito — medido ao vivo, o Grupo Positivo aparece como "apoio a
+    edifícios" e a Unimed Curitiba como "bem-estar e condicionamento físico".
+    """
+    assert _setor_resolvido(
+        monkeypatch, cnae="Ensino médio",
+        linkedin="Serviços combinados para apoio a edifícios") == "Ensino médio"
+
+    assert _setor_resolvido(
+        monkeypatch, cnae="Planos de saúde",
+        linkedin="Atividades de bem-estar e condicionamento físico") == "Planos de saúde"
+
+
+def test_cnae_administrativo_devolve_a_vez_ao_linkedin(monkeypatch):
+    """
+    A outra trava, sem a qual preferir o CNAE quebraria os casos em que ele é
+    que é o rótulo inútil: Boticário e Nubank têm CNAE de holding.
+    """
+    assert _setor_resolvido(
+        monkeypatch, cnae="Gestão de ativos intangíveis não-financeiros",
+        linkedin="Fabricação de cosméticos") == "Fabricação de cosméticos"
+
+    assert _setor_resolvido(
+        monkeypatch,
+        cnae="Outras atividades auxiliares dos serviços financeiros não especificadas anteriormente",
+        linkedin="Atividades de serviços financeiros") == "Atividades de serviços financeiros"

@@ -69,7 +69,12 @@ ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "50"))
 #   9 — o setor deixa de sair por ordem fixa de fonte: rótulo que descreve a
 #       administração (holding, sede, apoio administrativo) cede a vez para o
 #       que descreve o negócio, venha ele do LinkedIn ou da Receita.
-ENRICHMENT_VERSION = 9
+#  10 — o setor passa a sair primeiro do CNAE da Receita (atividade que a
+#       empresa registra para operar) e só depois do rótulo do LinkedIn, que
+#       é escolhido a dedo numa lista curta e erra muito: "apoio a edifícios"
+#       para o Grupo Positivo, "bem-estar e condicionamento físico" para a
+#       Unimed Curitiba.
+ENRICHMENT_VERSION = 10
 
 
 # Rótulos de setor que descrevem a ADMINISTRAÇÃO de uma empresa, não o que
@@ -118,12 +123,20 @@ def _melhor_setor(*candidatos) -> str:
     Primeiro setor que descreve o negócio; se todos forem genéricos, o
     primeiro que existir.
 
-    A ordem dos argumentos continua sendo a de confiança (site, LinkedIn,
-    Receita) — o que muda é que um rótulo administrativo cede a vez para o
-    seguinte. Medido: a Receita diz "Ensino médio" para o Grupo Positivo
-    enquanto o LinkedIn diz "Serviços combinados para apoio a edifícios"; e o
-    LinkedIn diz "Restaurantes" para o Madero enquanto o CNPJ da unidade diz
-    "Fabricação de produtos de carne". Nenhuma das duas fontes é sempre a boa.
+    Os argumentos vêm na ordem de confiança, e ela é **Receita → LinkedIn →
+    site**. O CNAE é a atividade que a empresa REGISTRA para operar; o
+    "setor" do LinkedIn é escolhido numa lista curta por quem montou o perfil,
+    e erra com frequência. Medido em 9 domínios reais:
+
+        positivo.com.br   LinkedIn "apoio a edifícios"   CNAE "Ensino médio"
+        unimedcuritiba    LinkedIn "bem-estar e fitness" CNAE "Planos de saúde"
+        sanepar.com.br    LinkedIn "eletricidade, gás"   CNAE "Captação e
+                                                          tratamento de água"
+
+    Nos três o CNAE é o certo — e nos dois casos em que o CNAE é que era
+    administrativo (Boticário, Nubank) quem corrige é a regra do genérico
+    logo acima, devolvendo a vez ao LinkedIn. As duas travas juntas é que
+    dão o setor certo em qualquer domínio.
     """
     validos = [c for c in candidatos if c]
     for candidato in validos:
@@ -384,7 +397,7 @@ def enrich_company(domain_input: str) -> dict:
     # Setor decidido com as três fontes em mãos: quem descreve o negócio ganha
     # de quem descreve a administração, seja qual for a origem.
     result["sector"] = _melhor_setor(
-        result.get("sector"), setor_do_linkedin, setor_da_receita
+        setor_da_receita, setor_do_linkedin, result.get("sector")
     )
 
     # Nem a Receita nem o LinkedIn responderam: aí sim a metatag do site é
