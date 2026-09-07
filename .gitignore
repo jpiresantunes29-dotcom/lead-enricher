@@ -1,12 +1,3 @@
-__pycache__/
-*.pyc
-*.pyo
-.pytest_cache/
-.coverage
-htmlcov/
-.env
-lead_enricher.db
-
-.vercel
-.env*
-!.env.example
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+.claude/worktrees/
