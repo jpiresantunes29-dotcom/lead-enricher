@@ -1012,7 +1012,7 @@ function renderResult(data){
         <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
         <div><div class="result-name">${esc(data.company_name||data.domain||'Empresa')}</div><div class="result-domain">${esc(data.domain||'')}</div></div>
       </div>
-      <div class="result-hdr-right"><span class="status-pill ${sc}">${sl}</span></div>
+      <div class="result-hdr-right"><span id="result-score-badge">${scoreBadgeHtml(data,data.id)}</span><span class="status-pill ${sc}">${sl}</span></div>
     </div>
     <div class="lead-actions" id="lead-actions"></div>
     <div class="sec-head"><span class="sec-num">1</span><h4>Ficha da empresa</h4><span>Dados públicos coletados a partir do domínio</span></div>
@@ -2953,18 +2953,123 @@ function _histEmpMin(l){
   if(!e||typeof e!=='object')return -1;
   return e.exact||e.min||-1;
 }
+/* ══════ PRIORIDADE (score do lead) ══════
+   A nota vem pronta do servidor (services/lead_scorer.py). Aqui só se pinta —
+   nenhuma régua é recalculada no navegador, senão a tela e o banco passariam a
+   discordar sobre o mesmo lead. */
+
+const PRIORITY_META={
+  alta:{dot:'🔴',label:'Alta prioridade',cls:'alta'},
+  media:{dot:'🟡',label:'Prioridade média',cls:'media'},
+  baixa:{dot:'🔵',label:'Prioridade baixa',cls:'baixa'},
+};
+
+/* Badge da nota. `leadId` liga o clique ao detalhamento; sem ele o badge é só
+   leitura (usado onde não cabe abrir modal). */
+function scoreBadgeHtml(lead,leadId){
+  if(lead.score==null)return '';
+  const m=PRIORITY_META[lead.priority]||PRIORITY_META.baixa;
+  const titulo=`${m.label} · nota ${lead.score} de 100`;
+  if(leadId==null)return `<span class="score-badge ${m.cls}" title="${titulo}"><span class="score-dot">${m.dot}</span>${lead.score}</span>`;
+  return `<button class="score-badge ${m.cls} clickable" title="${titulo} — clique para ver como foi calculada" onclick="openScoreBreakdown(${leadId})"><span class="score-dot">${m.dot}</span>${lead.score}<span class="score-why">por quê?</span></button>`;
+}
+
+/* Detalhamento sinal a sinal. Mostra também o que NÃO pontuou: é a parte que
+   diz ao vendedor o que buscar em seguida para o lead subir na lista. */
+function scoreBreakdownHtml(lead){
+  const b=lead.score_breakdown;
+  if(!b||!b.groups)return '<div class="muted-box">Esta ficha ainda não foi pontuada.</div>';
+  const m=PRIORITY_META[b.priority]||PRIORITY_META.baixa;
+  const grupos=b.groups.map(g=>{
+    const linhas=g.signals.map(sig=>`
+      <div class="score-sig${sig.hit?'':' miss'}">
+        <span class="score-sig-chk">${sig.hit?'✓':'○'}</span>
+        <span class="score-sig-txt"><strong>${esc(sig.label)}</strong><small>${esc(sig.detail)}</small></span>
+        <span class="score-sig-pts">${sig.points}<small>/${sig.max}</small></span>
+      </div>`).join('');
+    const pct=g.max?Math.round(100*g.points/g.max):0;
+    return `<div class="score-group">
+      <div class="score-group-hdr">
+        <span class="score-group-name">${esc(g.label)}</span>
+        <span class="score-group-pts">${g.points} de ${g.max}</span>
+      </div>
+      <div class="score-bar"><span style="width:${pct}%"></span></div>
+      ${linhas}
+    </div>`;
+  }).join('');
+  return `<div class="score-detail">
+    <div class="score-detail-hdr">
+      <div class="score-big ${m.cls}"><span>${b.score}</span><small>/100</small></div>
+      <div class="score-detail-meta">
+        <div class="score-detail-prio">${m.dot} ${m.label}</div>
+        <div class="score-detail-sub">${b.points} de ${b.max_points} pontos possíveis · régua ${esc(b.version)}</div>
+      </div>
+    </div>
+    <p class="score-detail-help">O peso segue quem vai ligar: conseguir falar com um decisor vale mais que um domínio bem configurado. O que aparece apagado é o que ainda falta — e é por aí que a nota sobe.</p>
+    ${grupos}
+  </div>`;
+}
+
+/* O detalhamento não vem na listagem (é grande e nenhuma coluna usa), então
+   aqui ele é buscado sob demanda na ficha completa. */
+async function openScoreBreakdown(leadId){
+  const modal=document.getElementById('score-modal');
+  const body=document.getElementById('score-modal-body');
+  body.innerHTML='<div class="muted-box">Carregando…</div>';
+  modal.classList.add('open');
+  let lead=(currentLeadData&&currentLeadData.id===leadId&&currentLeadData.score_breakdown)?currentLeadData:null;
+  if(!lead){
+    try{
+      const resp=await authFetch(`/api/leads/${leadId}`);
+      if(!resp.ok)throw new Error('falhou');
+      lead=await resp.json();
+    }catch(e){
+      if(e.message==='not_authenticated')return;
+      body.innerHTML='<div class="muted-box">Não foi possível carregar o detalhamento.</div>';
+      return;
+    }
+  }
+  body.innerHTML=scoreBreakdownHtml(lead);
+}
+function closeScoreModal(){document.getElementById('score-modal').classList.remove('open');}
+
+/* Recalcula sob demanda. Existe porque a nota é gravada, não calculada na
+   leitura: telefone corrigido à mão ou contato revelado na Lusha não passam
+   por nenhum dos dois pontos que repontuam sozinhos. */
+async function rescoreLead(leadId){
+  try{
+    const resp=await authFetch(`/api/leads/${leadId}/rescore`,{method:'POST'});
+    if(!resp.ok)return;
+    const lead=await resp.json();
+    if(currentLeadData&&currentLeadData.id===leadId){
+      currentLeadData.score=lead.score;
+      currentLeadData.priority=lead.priority;
+      currentLeadData.score_breakdown=lead.score_breakdown;
+    }
+    const i=_histLeads.findIndex(l=>l.id===leadId);
+    if(i>=0){_histLeads[i].score=lead.score;_histLeads[i].priority=lead.priority;}
+    const badge=document.getElementById('result-score-badge');
+    if(badge)badge.innerHTML=scoreBadgeHtml(lead,leadId);
+    const body=document.getElementById('score-modal-body');
+    if(body&&document.getElementById('score-modal').classList.contains('open'))body.innerHTML=scoreBreakdownHtml(lead);
+  }catch(e){/* silencioso: recalcular é conveniência, não o caminho crítico */}
+}
+
 function _histSortVal(l,key){
   switch(key){
     case 'company':return (l.company_name||l.domain||'').toLowerCase();
     case 'domain':return (l.domain||'').toLowerCase();
     case 'stage':return STAGE_ORDER.indexOf(l.stage||'novo');
     case 'employees':return _histEmpMin(l);
+    // Nao pontuada vai para o fim, nao para o topo — mesmo criterio do
+    // `nullslast` do servidor em GET /api/leads?sort=score.
+    case 'score':return l.score==null?-1:l.score;
     default:return l.created_at||'';
   }
 }
 function sortHistory(key){
   if(_histSort.key===key)_histSort.dir*=-1;
-  else _histSort={key,dir:(key==='created_at'||key==='employees')?-1:1};
+  else _histSort={key,dir:(key==='created_at'||key==='employees'||key==='score')?-1:1};
   renderHistory(document.getElementById('history-filter').value);
 }
 
@@ -2999,6 +3104,7 @@ function renderHistory(q){
     const emp=e?(typeof e==='object'?(e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'—')):e):'—';
     return `<tr id="row-${l.id}">
       <td class="td-co"><button class="td-name" onclick="openLeadSummary(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
+      <td class="td-score">${scoreBadgeHtml(l,l.id)||'<span class="muted">—</span>'}</td>
       <td class="td-mono">${esc(l.domain||'—')}</td>
       <td><span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
       <td class="td-mono">${esc(String(emp))}</td>
@@ -3011,7 +3117,7 @@ function renderHistory(q){
   }).join('');
   body.innerHTML=`<div class="tbl-scroll"><table class="lead-tbl">
     <thead><tr>
-      ${th('Empresa','company')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Pessoas associadas','employees')}${th('Data','created_at')}${th('Ações',null)}
+      ${th('Empresa','company')}${th('Prioridade','score')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Pessoas associadas','employees')}${th('Data','created_at')}${th('Ações',null)}
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -3058,6 +3164,7 @@ function renderLeadSummary(l){
     row('Setor',l.sector?esc(l.sector):''),
     row('Provedor de e-mail',l.mx_provider?`<span class="mx-tag">${esc(l.mx_provider)}</span>${cb(l.mx_provider_confidence)}`:''),
     row('Estágio',`<span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span>`),
+    row('Prioridade',scoreBadgeHtml(l,l.id)),
     row('Criado em',new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'})),
   ].join('');
   const ai=l.ai_summary?`<div class="ai-box" style="margin:16px 0 0"><div class="ai-title">${IC_SPARK} Resumo IA</div><div class="ai-text">${esc(l.ai_summary)}</div></div>`:'';

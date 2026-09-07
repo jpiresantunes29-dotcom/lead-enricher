@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import dns.resolver
 import requests
 
-from ._utils import HEADERS, is_public_host, normalize_domain
+from ._utils import HEADERS, is_public_host, normalize_domain, safe_get
 # Reaproveita a inteligência de rede do lookup do enriquecimento — mesma tabela
 # de provedores, mesmo WHOIS/PTR com cache por IP.
 from .dns_lookup import (
@@ -559,9 +559,14 @@ def fetch_http_banner(host: str) -> Optional[dict]:
         return None
     for scheme in ("https", "http"):
         try:
-            with requests.get(f"{scheme}://{host}", timeout=(3, HTTP_TIMEOUT),
-                              headers=HEADERS, allow_redirects=True,
-                              stream=True) as resp:
+            # `safe_get` e não `requests.get`: o host vem do domínio que o
+            # usuário digitou, e um 302 para a rede interna não passaria por
+            # validação nenhuma se os redirects fossem seguidos pelo requests.
+            resp = safe_get(f"{scheme}://{host}", timeout=(3, HTTP_TIMEOUT),
+                            headers=HEADERS, stream=True)
+            if resp is None:
+                continue
+            with resp:
                 chunk = b""
                 for part in resp.iter_content(8192):
                     chunk = part or b""

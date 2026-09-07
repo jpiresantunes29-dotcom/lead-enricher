@@ -7,6 +7,7 @@ from models.schemas import (
     StageUpdate,
 )
 from services.activity_rules import PIPELINE_STAGES
+from services.lead_scorer import apply_score, PRIORITIES
 from services.phone_normalizer import normalize_input
 from middleware.auth import get_current_user
 
@@ -44,9 +45,18 @@ def list_leads(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     stage: Optional[str] = Query(None),
+    priority: Optional[str] = Query(None),
+    sort: str = Query("recent", pattern="^(recent|score)$"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    """
+    Histórico de fichas do usuário.
+
+    `sort=score` é o que dá utilidade à nota: sem uma ordem por prioridade, a
+    pontuação seria um enfeite no card e a lista continuaria em ordem de
+    chegada, que é justamente a ordem que o scoring existe para substituir.
+    """
     user_id = current_user.get("sub")
     q = db.query(Lead).filter(
         Lead.user_id == user_id, Lead.status.notin_(HIDDEN_LEAD_STATUSES)
@@ -55,8 +65,48 @@ def list_leads(
         if stage not in PIPELINE_STAGES:
             raise HTTPException(status_code=422, detail="Estágio inválido.")
         q = q.filter(Lead.stage == stage)
+    if priority:
+        if priority not in PRIORITIES:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Prioridade inválida. Use: {', '.join(PRIORITIES)}.",
+            )
+        q = q.filter(Lead.priority == priority)
+
+    if sort == "score":
+        # `nullslast`: ficha ainda não pontuada vai para o fim em vez de
+        # encabeçar a lista, que é o que um NULL faz por padrão em Postgres
+        # na ordem decrescente. Empate cai no mais recente.
+        q = q.order_by(Lead.score.desc().nullslast(), Lead.created_at.desc())
+    else:
+        q = q.order_by(Lead.created_at.desc())
+
     offset = (page - 1) * per_page
-    return q.order_by(Lead.created_at.desc()).offset(offset).limit(per_page).all()
+    return q.offset(offset).limit(per_page).all()
+
+
+@router.post("/leads/{lead_id}/rescore", response_model=LeadOut)
+def rescore_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Recalcula a nota da ficha sob demanda.
+
+    Existe porque a nota é gravada, não calculada na leitura — e dado gravado
+    envelhece. Três situações deixam a nota atrás da realidade e nenhuma delas
+    passa pelos dois pontos que repontuam sozinhos (coleta e busca de
+    decisores): telefone corrigido à mão, contato revelado na Lusha, e ficha
+    pontuada por uma régua anterior à vigente.
+
+    É idempotente e não vai à rede: só relê o que já está no banco.
+    """
+    lead = _get_user_lead(db, lead_id, current_user.get("sub"))
+    apply_score(lead, decision_makers=list(lead.decision_makers))
+    db.commit()
+    db.refresh(lead)
+    return lead
 
 
 @router.get("/leads/{lead_id}", response_model=LeadOut)

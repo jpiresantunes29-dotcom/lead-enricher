@@ -242,6 +242,45 @@ def test_resposta_enviada_nao_estende_a_janela(db):
     assert conversa.window_expires_at == prazo
 
 
+# ── A ordem das mensagens não pode depender da resolução do relógio ─────────
+
+def test_quem_falou_por_ultimo_sobrevive_ao_relogio_grosseiro(db, monkeypatch):
+    """
+    Duas mensagens no mesmo tique do relógio ainda têm ordem.
+
+    `utcnow()` anda de ~15 ms em ~15 ms no Windows, e um convite seguido da
+    resposta do lead cabe no mesmo tique. Com os dois timestamps iguais,
+    "entrada > saída" dá falso e a conversa deixa de aparecer como pendência —
+    o lead escreveu e ninguém fica sabendo. Aqui o relógio é congelado de
+    propósito: é o pior caso, e é o que ele tem que aguentar.
+    """
+    lead, conversa = _conversa(db, ai_status=HUMAN_HANDOFF)
+    monkeypatch.setattr(states, "utcnow", lambda: COMERCIAL)
+
+    states.register_outbound(db, conversa, "olá! aqui é o João")
+    states.register_inbound(db, conversa, "oi, quem fala?")
+    db.commit()
+    assert gate.aguardando_voce(conversa) is True
+
+    states.register_outbound(db, conversa, "sou eu, do LeadEnricher")
+    db.commit()
+    assert gate.aguardando_voce(conversa) is False
+
+
+def test_data_informada_a_mao_nao_e_empurrada(db):
+    """
+    O empurrão de `_depois_de` vale só para o relógio. Quem passa `quando`
+    está reconstruindo um histórico — importar conversa antiga, simular — e
+    ver a data chegar mudada tornaria a reconstrução impossível de conferir.
+    """
+    lead, conversa = _conversa(db)
+    states.register_outbound(db, conversa, "olá!", quando=COMERCIAL)
+    ontem = COMERCIAL - timedelta(days=1)
+    states.register_inbound(db, conversa, "oi", quando=ontem)
+
+    assert conversa.last_inbound_at == ontem
+
+
 # ── Horário: restrições desativadas, a IA responde 24/7 ─────────────────────
 
 def test_madrugada_envia_normalmente(db):

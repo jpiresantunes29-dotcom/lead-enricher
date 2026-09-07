@@ -23,6 +23,7 @@ from services._utils import normalize_domain
 from services.domain_finder import find_domain
 from services.importer import looks_like_domain
 from services.enricher import enrich_company, ENRICHMENT_VERSION
+from services.lead_scorer import apply_score
 from services.people.waterfall import ingest_enrichment
 
 logger = logging.getLogger(__name__)
@@ -228,6 +229,15 @@ def finish_enrichment(db: Session, profile: Profile, domain: str, lead: Lead,
             setattr(lead, key, value)
     lead.user_id = profile.id
     lead.refreshed_at = datetime.now(UTC)
+
+    # Pontua com o que acabou de ser coletado. Aqui a ficha normalmente ainda
+    # não tem decisores (a busca é um passo separado, que o usuário dispara),
+    # então esta é a nota "só com dados do domínio" — `POST /api/decisores`
+    # repontua depois e a nota sobe. Pontuar mesmo assim é o que faz a ficha
+    # nascer ordenável: sem isso ela entraria no histórico sem nota e ficaria
+    # invisível em qualquer lista ordenada por prioridade.
+    apply_score(lead, decision_makers=[])
+
     db.commit()
     db.refresh(lead)
 

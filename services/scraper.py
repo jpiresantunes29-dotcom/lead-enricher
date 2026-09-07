@@ -5,11 +5,10 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
-import requests
 from bs4 import BeautifulSoup
 
 from ._utils import (
-    HEADERS, normalize_domain, tld_to_region, is_public_url,
+    HEADERS, normalize_domain, tld_to_region, safe_get,
     jsonld_organization, linkedin_from_sameas, looks_like_bot_wall,
     is_public_linkedin_slug, LINKEDIN_COMPANY_RE, fix_response_encoding,
 )
@@ -32,15 +31,18 @@ INNER_PAGES_BUDGET = int(os.getenv("SCRAPING_INNER_BUDGET", "10"))
 
 
 def _fetch(url: str, timeout: Optional[int] = None) -> Optional[tuple]:
-    """Devolve (soup, html) ou None. Bloqueia alvos de rede interna (anti-SSRF)."""
-    if not is_public_url(url):
-        logger.warning("Blocked non-public fetch target url=%s", url)
-        return None
+    """
+    Devolve (soup, html) ou None.
+
+    Bloqueia alvos de rede interna (anti-SSRF) — na URL de entrada e em cada
+    redirect, via `safe_get`. O domínio de partida vem do usuário, então a
+    cadeia inteira é entrada não confiável, não só o primeiro elo.
+    """
     try:
         # (connect, read): um servidor lento não pode segurar a busca inteira
-        resp = requests.get(
-            url, headers=HEADERS, timeout=(5, timeout or TIMEOUT), allow_redirects=True,
-        )
+        resp = safe_get(url, headers=HEADERS, timeout=(5, timeout or TIMEOUT))
+        if resp is None:
+            return None
         resp.raise_for_status()
         fix_response_encoding(resp)
         if looks_like_bot_wall(resp.text):

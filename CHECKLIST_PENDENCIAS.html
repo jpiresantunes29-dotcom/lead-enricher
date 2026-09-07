@@ -386,9 +386,10 @@
         <header>
             <h1>📋 LeadEnricher — Checklist de Pendências</h1>
             <div class="meta">
-                <span><strong>Data:</strong> 2026-09-06</span>
+                <span><strong>Data:</strong> 2026-09-07</span>
                 <span><strong>Versão:</strong> v2.x (FastAPI + Supabase + Stripe)</span>
-                <span><strong>Status geral:</strong> ~60% implementado</span>
+                <span><strong>Status geral:</strong> ~75% implementado</span>
+                <span><strong>Testes:</strong> 926 passando</span>
             </div>
         </header>
 
@@ -411,16 +412,42 @@
             </div>
         </div>
 
+        <div class="notes" style="border-left:4px solid #d29922">
+            <h3>⚠️ Conferência de 2026-09-07 — o que este documento dizia de errado</h3>
+            <p style="margin:.5rem 0 1rem">A versão anterior foi auditada linha a linha contra o
+            código. Ela errava <strong>nos dois sentidos</strong>, e o erro mais caro era o
+            otimista: quem lesse o documento priorizaria a coisa errada.</p>
+            <ul>
+                <li><strong>Dava como pronto o que não existia.</strong> A Fase 1 (Lead Scoring)
+                aparecia como “✅ 80% pronto”, CRÍTICA. Estava em <strong>0%</strong>: não havia
+                <code>services/lead_scorer.py</code>, nem as colunas <code>score</code> /
+                <code>priority</code> / <code>score_breakdown</code>, nem uma ocorrência de
+                <code>score_lead</code> no projeto. Os “badges 🔴🟡🔵” marcados como feitos também
+                não existiam — os <code>priority</code> em <code>app.js</code> eram prioridade de
+                registro MX, outra coisa.</li>
+                <li><strong>Dava como pendente o que já estava pronto</strong> — a maior parte das
+                Fases 2 a 5: endpoints de atividades e <code>.ics</code>, regras automáticas,
+                migração de <code>activities</code>/<code>crm_connections</code> (já na 0001),
+                rate limit por JWT, webhook CRM assinado e o <code>ai_insights.py</code>
+                (descrito como “0% implementado”).</li>
+                <li><strong>Moral, para quem for atualizar isto:</strong> marque estado por leitura
+                do código, não por memória da última sessão. Um checklist que mente para o lado
+                otimista é pior que não ter checklist — ele esconde a lacuna crítica.</li>
+            </ul>
+        </div>
+
         <div class="notes">
             <h3>⚡ Resumo de Status</h3>
             <ul>
-                <li><strong>Core de Enriquecimento:</strong> ✅ 90% pronto (lead scoring, decisores)</li>
-                <li><strong>Execução Comercial:</strong> ⚠️ 50% (atividades, pipeline)</li>
-                <li><strong>Dashboard:</strong> ⚠️ 30% (métricas, KPIs)</li>
-                <li><strong>Integrações CRM:</strong> 🔴 10% (Dynamics, HubSpot, Pipedrive)</li>
-                <li><strong>WhatsApp Business:</strong> 🔴 Iniciado (automação de conversa)</li>
+                <li><strong>Core de Enriquecimento:</strong> ✅ 90% (coleta, decisores)</li>
+                <li><strong>Lead Scoring:</strong> ✅ 90% (régua, badge, popover, recálculo)</li>
+                <li><strong>Execução Comercial:</strong> ✅ 85% (atividades, regras, .ics, pipeline)</li>
+                <li><strong>Dashboard:</strong> ⚠️ 50% (endpoint pronto; faltam os gráficos)</li>
+                <li><strong>Integrações CRM:</strong> ⚠️ 35% (webhook pronto; faltam Dynamics/HubSpot/Pipedrive)</li>
+                <li><strong>WhatsApp Business:</strong> ⚠️ 60% (orquestrador e portão prontos; falta o painel)</li>
+                <li><strong>IA (Claude API):</strong> ⚠️ 60% (resumo executivo pronto)</li>
                 <li><strong>Landing V3:</strong> ⚠️ 20% (design visual, marketing)</li>
-                <li><strong>Segurança & Conformidade:</strong> ⚠️ 70% (rate limit, LGPD, anti-SSRF)</li>
+                <li><strong>Segurança &amp; Conformidade:</strong> ✅ 85% (rate limit, anti-SSRF, LGPD)</li>
                 <li><strong>Extensão Chrome:</strong> ✅ 85% (pareamento, revelação)</li>
             </ul>
         </div>
@@ -431,42 +458,72 @@
                 <div class="category-header">
                     <div class="category-title">🎯 Fase 1: Lead Scoring</div>
                     <div class="category-meta">
-                        <span class="badge badge-ready">✅ 80% pronto</span>
+                        <span class="badge badge-ready">✅ 90% pronto</span>
                         <span class="badge badge-priority-critical">CRÍTICA</span>
                     </div>
-                    <div class="progress-bar"><div class="progress-fill" style="width: 80%"></div></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 90%"></div></div>
                 </div>
                 <div class="category-content">
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">✓ Serviço lead_scorer.py implementado</span>
+                            <span class="item-text">✓ services/lead_scorer.py — função pura score_lead()</span>
+                            <span class="item-note">Sem banco, rede nem relógio: testável e recalculável em lote</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">✓ Colunas no modelo Lead (score, priority, breakdown)</span>
+                            <span class="item-text">✓ 14 sinais em três eixos, com peso desigual</span>
+                            <span class="item-note">Alcance 38 pts, maturidade 17, porte 20 — a nota responde "consigo falar com quem decide?"</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">✓ Badges de prioridade (🔴🟡🔵)</span>
+                            <span class="item-text">✓ Colunas em Lead + migração 0015</span>
+                            <span class="item-note">score, priority, score_breakdown, score_version — score e priority indexados</span>
                         </label>
                     </div>
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Endpoint POST /api/leads/{id}/rescore</span>
-                            <span class="item-note">Para recálculo sob demanda</span>
+                            <span class="item-text">✓ Cálculo na coleta e recálculo pós-decisores</span>
+                            <span class="item-note">finish_enrichment cobre busca avulsa e fila de lote</span>
                         </label>
                     </div>
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Popover com breakdown detalhado</span>
-                            <span class="item-note">"Por que 47 pontos?" — sem isso, score não é crível</span>
+                            <span class="item-text">✓ Endpoint POST /api/leads/{id}/rescore</span>
+                            <span class="item-note">Cobre telefone corrigido à mão, contato revelado na Lusha e régua antiga</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Badge de prioridade (🔴🟡🔵) com a nota</span>
+                            <span class="item-note">Ficha, Histórico e resumo rápido</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Popover com o detalhamento sinal a sinal</span>
+                            <span class="item-note">"Por que 47?" — mostra também o que NÃO pontuou, que é o que orienta a próxima ação</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Ordenação e filtro por prioridade na listagem</span>
+                            <span class="item-note">GET /api/leads?sort=score&amp;priority=alta (nullslast)</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ 25 testes em tests/test_lead_scorer.py</span>
                         </label>
                     </div>
                     <div class="checklist-item">
@@ -474,6 +531,12 @@
                         <label class="checklist-label">
                             <span class="item-text">[ ] Pesos configuráveis por usuário</span>
                             <span class="item-note">Tabela scoring_profiles (ICP próprio)</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox">
+                        <label class="checklist-label">
+                            <span class="item-text">[ ] Recálculo em lote ao subir SCORING_VERSION</span>
                         </label>
                     </div>
                 </div>
@@ -484,58 +547,68 @@
                 <div class="category-header">
                     <div class="category-title">📞 Fase 2: Execução Comercial</div>
                     <div class="category-meta">
-                        <span class="badge badge-wip">⚠️ 50% pronto</span>
+                        <span class="badge badge-ready">✅ 85% pronto</span>
                         <span class="badge badge-priority-critical">CRÍTICA</span>
                     </div>
-                    <div class="progress-bar"><div class="progress-fill" style="width: 50%"></div></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 85%"></div></div>
                 </div>
                 <div class="category-content">
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">✓ Tabela activities criada</span>
+                            <span class="item-text">✓ Tabela activities + migração</span>
+                            <span class="item-note">Já vinha na 0001 — não faltava, ao contrário do que dizia a versão anterior</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Regras automáticas em activity_rules.py</span>
+                            <span class="item-note">meeting_scheduled, no_answer, busy, talked, com dias úteis</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Endpoints de atividades, follow-ups e pipeline</span>
+                            <span class="item-note">routers/activities.py + PATCH /leads/{id}/stage</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Geração de .ics (VCALENDAR)</span>
+                            <span class="item-note">Download direto, sem salvar no servidor</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Fila do dia, timeline por lead e registro rápido de ligação</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ tests/test_activities.py</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Migração Alembic para activities</span>
-                            <span class="item-note">Sair de create_all, adotar versionamento</span>
+                            <span class="item-text">[ ] Drag-and-drop no kanban</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Regras automáticas (activity_rules.py)</span>
-                            <span class="item-note">meeting_scheduled, no_answer, busy, talked</span>
+                            <span class="item-text">[ ] Notificações de follow-ups atrasados</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Geração de .ics (VCALENDAR universal)</span>
-                            <span class="item-note">Outlook, Google, Apple Calendar</span>
-                        </label>
-                    </div>
-                    <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
-                        <label class="checklist-label">
-                            <span class="item-text">[ ] UI: Visão kanban por estágio</span>
-                            <span class="item-note">Drag-and-drop, muda stage via PATCH</span>
-                        </label>
-                    </div>
-                    <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
-                        <label class="checklist-label">
-                            <span class="item-text">[ ] Fila do dia (follow-ups de hoje)</span>
-                            <span class="item-note">Ordenado por prioridade do lead</span>
-                        </label>
-                    </div>
-                    <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
-                        <label class="checklist-label">
-                            <span class="item-text">[ ] Timeline de atividades no lead</span>
-                            <span class="item-note">Histórico completo com notas</span>
+                            <span class="item-text">[ ] Sync com CRM ao agendar reunião</span>
                         </label>
                     </div>
                 </div>
@@ -546,45 +619,43 @@
                 <div class="category-header">
                     <div class="category-title">📊 Fase 3: Dashboard Comercial</div>
                     <div class="category-meta">
-                        <span class="badge badge-pending">🔴 30% pronto</span>
+                        <span class="badge badge-wip">⚠️ 50% pronto</span>
                         <span class="badge badge-priority-high">ALTA</span>
                     </div>
-                    <div class="progress-bar"><div class="progress-fill" style="width: 30%"></div></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 50%"></div></div>
                 </div>
                 <div class="category-content">
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Endpoint GET /api/dashboard/metrics</span>
-                            <span class="item-note">Leads pesquisados, taxa de contato, conversão</span>
+                            <span class="item-text">✓ GET /api/dashboard/metrics</span>
+                            <span class="item-note">Parâmetro é days, não period — a versão anterior documentava errado</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ leads_por_prioridade, leads_nao_pontuados e score_medio</span>
+                            <span class="item-note">Acrescentados em 2026-09-07, junto com o scoring</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] UI: Cards de KPI</span>
-                            <span class="item-note">Leads, calls, meetings, deals</span>
+                            <span class="item-text">[ ] UI do dashboard: cards de KPI</span>
+                            <span class="item-note">Maior retorno agora — o endpoint já entrega tudo</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Funil por estágio (barras/funnel)</span>
-                            <span class="item-note">Visualização novo→contatado→reunião→ganho</span>
+                            <span class="item-text">[ ] Funil por estágio e histograma de score</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Distribuição de scores (histograma)</span>
-                            <span class="item-note">Cores por prioridade (🔴🟡🔵)</span>
-                        </label>
-                    </div>
-                    <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
-                        <label class="checklist-label">
-                            <span class="item-text">[ ] Filtros (período, usuário, team)</span>
-                            <span class="item-note">7d, 30d, 90d, custom</span>
+                            <span class="item-text">[ ] Comparação com período anterior (delta %)</span>
                         </label>
                     </div>
                     <div class="checklist-item">
@@ -601,59 +672,68 @@
                 <div class="category-header">
                     <div class="category-title">🔗 Fase 4: Integrações CRM</div>
                     <div class="category-meta">
-                        <span class="badge badge-pending">🔴 10% pronto</span>
+                        <span class="badge badge-wip">⚠️ 35% pronto</span>
                         <span class="badge badge-priority-high">ALTA</span>
                     </div>
-                    <div class="progress-bar"><div class="progress-fill" style="width: 10%"></div></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 35%"></div></div>
                 </div>
                 <div class="category-content">
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Protocolo CRMConnector</span>
-                            <span class="item-note">Interface para todos os conectores</span>
+                            <span class="item-text">✓ Webhook genérico assinado (HMAC-SHA256)</span>
+                            <span class="item-note">services/crm/webhook.py — cobre Zapier, Make e n8n</span>
                         </label>
                     </div>
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Criptografia de credenciais (Fernet)</span>
-                            <span class="item-note">Tabela crm_connections com credentials encriptados</span>
+                            <span class="item-text">✓ Tabela crm_connections com credenciais criptografadas</span>
+                            <span class="item-note">Fernet, via SegredoCriptografado</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Tela de conexões</span>
+                            <span class="item-note">routers/crm_config.py: listar, criar, ativar/desativar, remover</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Dedup para não empurrar o mesmo lead duas vezes</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
                             <span class="item-text">[ ] Conector Dynamics 365</span>
-                            <span class="item-note">OAuth2, Web API, mapeamento lead→phonecall</span>
+                            <span class="item-note">OAuth2 client-credentials via Entra ID</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
                             <span class="item-text">[ ] Conector HubSpot</span>
-                            <span class="item-note">Token privado, company+contact+engagement</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
                             <span class="item-text">[ ] Conector Pipedrive</span>
-                            <span class="item-note">API token, organization+person+deal</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Webhook genérico (HMAC-SHA256)</span>
-                            <span class="item-note">Para Zapier, Make, n8n</span>
+                            <span class="item-text">[ ] Botão "Testar conexão" antes de salvar</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Sync automático pós-stage</span>
-                            <span class="item-note">Fase 2: automático quando lead muda de estágio</span>
+                            <span class="item-text">[ ] Retry com backoff exponencial</span>
                         </label>
                     </div>
                 </div>
@@ -805,23 +885,36 @@
                 <div class="category-header">
                     <div class="category-title">🤖 IA Insights (Claude API)</div>
                     <div class="category-meta">
-                        <span class="badge badge-pending">🔴 0% pronto</span>
+                        <span class="badge badge-wip">⚠️ 60% pronto</span>
                         <span class="badge badge-priority-medium">MÉDIA</span>
                     </div>
-                    <div class="progress-bar"><div class="progress-fill" style="width: 0%"></div></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 60%"></div></div>
                 </div>
                 <div class="category-content">
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Serviço ai_insights.py</span>
+                            <span class="item-text">✓ Serviço ai_insights.py</span>
+                            <span class="item-note">Estava dado como 0% — já existia e está ligado a um endpoint</span>
                         </label>
                     </div>
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Resumo executivo da empresa</span>
-                            <span class="item-note">Prompt com description + sector + DNS + decisores</span>
+                            <span class="item-text">✓ Resumo executivo da empresa</span>
+                            <span class="item-note">generate_summary com descrição, setor, DNS e decisores</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Cache do resumo em Lead.ai_summary</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Card "Insights de IA" com botão regenerar</span>
                         </label>
                     </div>
                     <div class="checklist-item">
@@ -844,18 +937,24 @@
                             <span class="item-text">[ ] Gate por plano (free=0, pro=ilimitado)</span>
                         </label>
                     </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox">
+                        <label class="checklist-label">
+                            <span class="item-text">[ ] Testes com mock da Claude API</span>
+                        </label>
+                    </div>
                 </div>
             </div>
 
             <!-- Segurança -->
             <div class="category-card">
                 <div class="category-header">
-                    <div class="category-title">🔐 Segurança & Conformidade</div>
+                    <div class="category-title">🔐 Segurança &amp; Conformidade</div>
                     <div class="category-meta">
-                        <span class="badge badge-wip">⚠️ 70% pronto</span>
+                        <span class="badge badge-ready">✅ 85% pronto</span>
                         <span class="badge badge-priority-high">ALTA</span>
                     </div>
-                    <div class="progress-bar"><div class="progress-fill" style="width: 70%"></div></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width: 85%"></div></div>
                 </div>
                 <div class="category-content">
                     <div class="checklist-item">
@@ -865,17 +964,49 @@
                         </label>
                     </div>
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Rate limit por usuário JWT (não IP)</span>
-                            <span class="item-note">Crítico atrás de proxy (Vercel)</span>
+                            <span class="item-text">✓ Rate limit por usuário JWT, com queda para IP</span>
+                            <span class="item-note">Já estava feito — middleware/auth.py:692. Atrás de proxy, limitar só por IP puniria todos juntos</span>
                         </label>
                     </div>
                     <div class="checklist-item">
-                        <input type="checkbox" class="checkbox">
+                        <input type="checkbox" class="checkbox" checked>
                         <label class="checklist-label">
-                            <span class="item-text">[ ] Anti-SSRF no scraper</span>
-                            <span class="item-note">Resolver IP, bloquear privadas/metadata</span>
+                            <span class="item-text">✓ Anti-SSRF: resolve o host e recusa privada, loopback, link-local e reservada</span>
+                            <span class="item-note">Cobre o metadata 169.254.169.254 de AWS, GCP e Azure</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Revalidação a cada salto de redirect (safe_get)</span>
+                            <span class="item-note">Era o buraco real: a checagem valia só para a URL inicial e allow_redirects seguia o Location sem perguntar de novo</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Testes de SSRF com alvo interno alcançável</span>
+                            <span class="item-note">Quatro alvos parametrizados; falham de verdade se o guard cair</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ Credenciais criptografadas (Fernet) em CRM, Lusha e WhatsApp</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ HMAC-SHA256 em webhooks de saída</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox" checked>
+                        <label class="checklist-label">
+                            <span class="item-text">✓ LGPD: oposição/eliminação, anti-enumeração, sem nova base pessoal</span>
                         </label>
                     </div>
                     <div class="checklist-item">
@@ -889,13 +1020,19 @@
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
                             <span class="item-text">[ ] LGPD: retenção de dados</span>
-                            <span class="item-note">Purga decisores de leads inativos > N meses</span>
+                            <span class="item-note">Purga decisores de leads inativos &gt; N meses</span>
                         </label>
                     </div>
                     <div class="checklist-item">
                         <input type="checkbox" class="checkbox">
                         <label class="checklist-label">
-                            <span class="item-text">[ ] HMAC em webhooks de saída</span>
+                            <span class="item-text">[ ] Rate limit diferenciado por plano e no /reveal</span>
+                        </label>
+                    </div>
+                    <div class="checklist-item">
+                        <input type="checkbox" class="checkbox">
+                        <label class="checklist-label">
+                            <span class="item-text">[ ] Documentar como o destinatário verifica a assinatura HMAC</span>
                         </label>
                     </div>
                 </div>
@@ -992,24 +1129,29 @@
         <div class="roadmap">
             <h2>📅 Roadmap Consolidado</h2>
 
+            <p style="margin:0 0 1.25rem;color:#8b949e">A versão anterior marcava
+            <strong>todos</strong> os itens com ✅, inclusive os que nunca começaram — ali o ✅
+            significava “planejado”, não “pronto”, o que tornava o roadmap ilegível.
+            Aqui <strong>✅ é feito</strong> e <strong>⬜ é a fazer</strong>.</p>
+
             <div class="sprint">
-                <div class="sprint-title">🚀 Sprint 1 (AGORA) — Fundação comercial</div>
+                <div class="sprint-title">🚀 Sprint 1 — Fundação comercial ✅ concluído</div>
                 <ul class="sprint-items">
-                    <li>Lead scoring completo (popover breakdown)</li>
-                    <li>Tabela de atividades + regras automáticas</li>
-                    <li>Endpoints de atividades</li>
-                    <li>.ics generation</li>
+                    <li>✅ Tabela de atividades + regras automáticas</li>
+                    <li>✅ Endpoints de atividades e .ics</li>
+                    <li>✅ Lead scoring completo, com popover de detalhamento <em>(2026-09-07)</em></li>
                 </ul>
-                <div class="sprint-duration">⏱️ 2-3 sessões de código</div>
             </div>
 
             <div class="sprint">
-                <div class="sprint-title">📊 Sprint 2 — Dashboard & CRM</div>
+                <div class="sprint-title">📊 Sprint 2 (AGORA) — Dashboard &amp; CRM</div>
                 <ul class="sprint-items">
-                    <li>Endpoint de métricas</li>
-                    <li>UI do dashboard (aba nova)</li>
-                    <li>Conector Dynamics 365</li>
-                    <li>Conector HubSpot</li>
+                    <li>✅ Endpoint de métricas, com distribuição por prioridade</li>
+                    <li>✅ Webhook CRM assinado + tela de conexões</li>
+                    <li>⬜ <strong>UI do dashboard</strong>: KPIs, funil, histograma de score — o
+                        endpoint já entrega tudo o que os gráficos precisam</li>
+                    <li>⬜ Conector Dynamics 365</li>
+                    <li>⬜ Conector HubSpot</li>
                 </ul>
                 <div class="sprint-duration">⏱️ 2-3 sessões de código</div>
             </div>
@@ -1017,31 +1159,33 @@
             <div class="sprint">
                 <div class="sprint-title">💬 Sprint 3 — WhatsApp</div>
                 <ul class="sprint-items">
-                    <li>Testes de orchestrator + brain</li>
-                    <li>UI de conversas</li>
-                    <li>Handoff automático</li>
-                    <li>Meta approval + submissão</li>
+                    <li>✅ Orquestrador, portão, brain e persistência</li>
+                    <li>✅ Testes de cliente, portão, turno e jornada</li>
+                    <li>⬜ Painel de conversas (aba no app)</li>
+                    <li>⬜ Handoff com contexto para o humano</li>
+                    <li>⬜ Meta approval + submissão</li>
                 </ul>
                 <div class="sprint-duration">⏱️ 2-3 sessões de código</div>
             </div>
 
             <div class="sprint">
-                <div class="sprint-title">🎨 Sprint 4 — Landing & IA</div>
+                <div class="sprint-title">🎨 Sprint 4 — Landing &amp; IA</div>
                 <ul class="sprint-items">
-                    <li>Landing Page V3 (completa)</li>
-                    <li>AI Insights (resumo + roteiro)</li>
-                    <li>Integração Claude API</li>
+                    <li>✅ Integração Claude API + resumo executivo</li>
+                    <li>⬜ Landing Page V3 (design, scrollytelling, copy)</li>
+                    <li>⬜ Roteiro de ligação personalizado</li>
                 </ul>
                 <div class="sprint-duration">⏱️ 2-3 sessões de código</div>
             </div>
 
             <div class="sprint">
-                <div class="sprint-title">🔒 Sprint 5 — Provedores & Polish</div>
+                <div class="sprint-title">🔒 Sprint 5 — Provedores &amp; Polish</div>
                 <ul class="sprint-items">
-                    <li>Provedores premium (Dropcontact, Apollo)</li>
-                    <li>Segurança & compliance (rate limit, anti-SSRF, LGPD)</li>
-                    <li>Testes completos</li>
-                    <li>Documentação</li>
+                    <li>✅ Anti-SSRF, rate limit por usuário, criptografia, LGPD</li>
+                    <li>⬜ Fixture real da Lusha (ferramenta pronta; falta a chave)</li>
+                    <li>⬜ Provedores premium (Dropcontact, Apollo)</li>
+                    <li>⬜ CI/CD (ruff, mypy, pytest, bandit)</li>
+                    <li>⬜ Suíte determinística (instabilidade pré-existente nos testes de WhatsApp)</li>
                 </ul>
                 <div class="sprint-duration">⏱️ 2-3 sessões de código</div>
             </div>

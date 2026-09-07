@@ -6,7 +6,10 @@ Centraliza:
   - normalize_domain() para limpar input do usuário
   - tld_to_region() para inferir região default do número de telefone
   - LINKEDIN_COMPANY_RE para extrair slug de URLs do LinkedIn
-  - is_public_host() — guard anti-SSRF para fetches de URLs derivadas de input
+  - is_public_host() / is_public_url() — guard anti-SSRF para URLs derivadas
+    de input do usuário
+  - safe_get() — o mesmo guard aplicado a CADA salto de um redirect, que é
+    onde a checagem só da URL inicial deixa passar
   - jsonld_organization() / linkedin_from_sameas() — dado estruturado que a
     própria empresa publica (schema.org), fonte de LinkedIn mais confiável
     que um link solto no body e que não depende de busca externa
@@ -15,12 +18,16 @@ Centraliza:
 """
 import ipaddress
 import json
+import logging
 import re
 import socket
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
+import requests
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 
 LINKEDIN_COMPANY_RE = re.compile(
@@ -143,6 +150,63 @@ def is_public_url(url: str) -> bool:
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return False
     return is_public_host(parsed.hostname)
+
+
+#: Redirects seguidos antes de desistir. O mesmo teto que o `requests` usa por
+#: padrão — cadeia mais longa que isso é laço ou armadilha, não navegação.
+MAX_REDIRECTS = 30
+
+
+def safe_get(url: str, *, headers: Optional[dict] = None, timeout=None,
+             stream: bool = False, session: Optional[object] = None):
+    """
+    GET que aplica `is_public_url()` na URL inicial **e em cada redirect**.
+
+    `requests.get(..., allow_redirects=True)` valida o que você mandou e depois
+    segue para onde o servidor apontar, sem perguntar de novo. Isso reabre por
+    dentro o buraco que a checagem inicial fecha: um domínio público responde
+    302 para `http://169.254.169.254/` (metadata da nuvem) ou para `10.0.0.5`,
+    e o fetch vai — porque o alvo interno nunca passou por validação nenhuma.
+    O host de partida é do usuário, então a cadeia inteira é atacável.
+
+    Por isso os redirects são seguidos à mão: cada `Location` vira uma URL
+    absoluta, passa pelo mesmo guard e só então é buscada.
+
+    Devolve a `Response` final, ou `None` se qualquer salto for barrado, a
+    cadeia estourar o teto ou a rede falhar. `None` é o mesmo sinal que quem
+    chama já tratava como "não deu" — nenhum chamador precisa saber por quê.
+    """
+    getter = getattr(session, "get", None) or requests.get
+    atual = url
+    for _ in range(MAX_REDIRECTS):
+        if not is_public_url(atual):
+            logger.warning("Blocked non-public fetch target url=%s", atual)
+            return None
+        try:
+            resp = getter(atual, headers=headers, timeout=timeout,
+                          allow_redirects=False, stream=stream)
+        except Exception as e:
+            logger.debug("Fetch failed url=%s: %s", atual, e)
+            return None
+
+        if resp.status_code not in (301, 302, 303, 307, 308):
+            return resp
+
+        destino = resp.headers.get("location")
+        if not destino:
+            # Redirect sem destino: nada a seguir, devolve como veio para quem
+            # chamou decidir (raise_for_status tratará o status estranho).
+            return resp
+        # Fecha o corpo do salto intermediário antes de abrir o próximo —
+        # com stream=True a conexão ficaria pendurada até o GC.
+        try:
+            resp.close()
+        except Exception:
+            pass
+        atual = urljoin(atual, destino)
+
+    logger.warning("Redirect chain too long url=%s", url)
+    return None
 
 
 def jsonld_organization(soup: BeautifulSoup) -> dict:

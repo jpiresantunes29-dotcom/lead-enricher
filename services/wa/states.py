@@ -11,7 +11,7 @@ Nenhuma função aqui commita. Quem chama decide o limite da transação — o
 webhook precisa gravar mensagem e estado juntos, ou nenhum dos dois.
 """
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from models.database import (
     RELATIONSHIP_DO_NOT_CONTACT, RELATIONSHIP_LEAD, RELATIONSHIPS, utcnow,
 )
 from services.people import optout
+from services.wa import gate
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +251,34 @@ def _encerrar_conversas(db: Session, lead: Lead, motivo: str,
 
 # ── Registro das mensagens ───────────────────────────────────────────────────
 
+#: Menor distância que separa dois instantes nas colunas de data (SQLite e
+#: Postgres guardam microssegundos). É o empurrão de `_depois_de`.
+_INSTANTE = timedelta(microseconds=1)
+
+
+def _depois_de(quando: datetime, anterior: Optional[datetime]) -> datetime:
+    """
+    `quando`, garantidamente depois de `anterior`.
+
+    Quem responde a uma mensagem responde *depois* dela, mas o relógio do
+    sistema não tem resolução para provar isso: no Windows, `utcnow()` anda de
+    ~15 ms em ~15 ms, e um convite seguido da resposta do lead cabe folgado no
+    mesmo tique. Os dois timestamps saem iguais e a ordem entre eles se perde —
+    e é só dela que três decisões dependem (`gate.aguardando_voce`,
+    `gate.can_start` e `orchestrator.conversas_pendentes`, todas na forma
+    "entrada > saída"). Empatado vira "ninguém está esperando": a conversa some
+    da barra lateral e o cron não a retoma.
+
+    Por isso o empurrão de um microssegundo. Ele não inventa nada que não tenha
+    acontecido — a ordem é a real, o relógio é que não a enxergou — e some
+    diante de qualquer intervalo que um humano perceba.
+    """
+    if anterior is None:
+        return quando
+    anterior = gate._com_fuso(anterior)
+    return quando if quando > anterior else anterior + _INSTANTE
+
+
 def register_inbound(db: Session, conversa: Conversation, corpo: Optional[str],
                      quando=None) -> Conversation:
     """
@@ -257,8 +286,12 @@ def register_inbound(db: Session, conversa: Conversation, corpo: Optional[str],
 
     A janela é da Meta e conta da última mensagem *do lead* — por isso ela
     nasce aqui e em nenhum outro lugar.
+
+    Sem `quando`, o instante vem do relógio e é corrigido para ficar depois da
+    última saída (ver `_depois_de`). Com `quando` explícito, vale o que veio:
+    quem informa a data está reconstruindo um histórico, não registrando agora.
     """
-    quando = quando or utcnow()
+    quando = quando or _depois_de(utcnow(), conversa.last_outbound_at)
     conversa.last_inbound_at = quando
     conversa.window_expires_at = quando + timedelta(hours=WINDOW_HOURS)
     conversa.last_message_body = (corpo or "")[:500] or None
@@ -269,7 +302,7 @@ def register_inbound(db: Session, conversa: Conversation, corpo: Optional[str],
 def register_outbound(db: Session, conversa: Conversation, corpo: Optional[str],
                       quando=None) -> Conversation:
     """Mensagem enviada. Não mexe na janela: responder não estende prazo."""
-    quando = quando or utcnow()
+    quando = quando or _depois_de(utcnow(), conversa.last_inbound_at)
     conversa.last_outbound_at = quando
     conversa.last_message_body = (corpo or "")[:500] or None
     conversa.updated_at = quando

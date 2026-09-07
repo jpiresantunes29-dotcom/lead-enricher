@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from models.database import get_db, utcnow, Lead, Activity, HIDDEN_LEAD_STATUSES
 from middleware.auth import get_current_user
+from services.lead_scorer import PRIORITIES
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
@@ -47,6 +48,43 @@ def dashboard_metrics(
         .all()
     )
 
+    # Distribuição por prioridade. Vive fora da janela de período de propósito:
+    # o funil responde "o que andou nos últimos 30 dias", este responde "o que
+    # tenho na mão para trabalhar amanhã" — recortar por data esconderia
+    # justamente o lead bom que entrou há 40 dias e nunca foi tocado.
+    por_prioridade = dict(
+        db.query(Lead.priority, func.count(Lead.id))
+        .filter(
+            Lead.user_id == user_id,
+            Lead.status.notin_(HIDDEN_LEAD_STATUSES),
+            Lead.priority.isnot(None),
+        )
+        .group_by(Lead.priority)
+        .all()
+    )
+    # Faixa sem nenhum lead precisa aparecer como zero, não sumir: um gráfico
+    # que omite a barra vazia sugere que a faixa não existe.
+    leads_por_prioridade = {p: por_prioridade.get(p, 0) for p in PRIORITIES}
+    nao_pontuados = (
+        db.query(func.count(Lead.id))
+        .filter(
+            Lead.user_id == user_id,
+            Lead.status.notin_(HIDDEN_LEAD_STATUSES),
+            Lead.priority.is_(None),
+        )
+        .scalar()
+    ) or 0
+
+    score_medio = (
+        db.query(func.avg(Lead.score))
+        .filter(
+            Lead.user_id == user_id,
+            Lead.status.notin_(HIDDEN_LEAD_STATUSES),
+            Lead.score.isnot(None),
+        )
+        .scalar()
+    )
+
     pendentes_q = db.query(Activity).filter(
         Activity.user_id == user_id,
         Activity.due_at.isnot(None),
@@ -65,6 +103,9 @@ def dashboard_metrics(
         "taxa_reuniao": round(reunioes / ligacoes, 3) if ligacoes else 0.0,
         "conversao_oportunidade": round(oportunidades / leads_pesquisados, 3) if leads_pesquisados else 0.0,
         "funil_por_estagio": funil,
+        "leads_por_prioridade": leads_por_prioridade,
+        "leads_nao_pontuados": nao_pontuados,
+        "score_medio": round(float(score_medio), 1) if score_medio is not None else None,
         "followups_pendentes": followups_pendentes,
         "followups_atrasados": followups_atrasados,
     }

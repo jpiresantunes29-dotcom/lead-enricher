@@ -435,6 +435,16 @@
   </div>
 </div>
 
+<!-- DETALHAMENTO DA NOTA ("por que 47 pontos?") -->
+<div class="modal-overlay" id="score-modal" onclick="closeIfBackdrop(event,'score-modal')">
+  <div class="modal lead-summary-modal">
+    <button class="modal-close" onclick="closeScoreModal()" aria-label="Fechar">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div id="score-modal-body"></div>
+  </div>
+</div>
+
 <!-- AUTH -->
 <div class="modal-overlay" id="auth-modal" onclick="closeIfBackdrop(event,'auth-modal')">
   <div class="auth-card">
