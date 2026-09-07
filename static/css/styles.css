@@ -2417,3 +2417,14 @@ button.score-badge:hover{filter:brightness(.96);transform:translateY(-1px)}
    seguida para o lead subir, não um rodapé de erros a ser escondido. */
 .score-sig.miss{opacity:.55}
 .score-sig.miss .score-sig-chk{color:var(--text-3)}
+
+/* Aviso de coleta bloqueada pelo site (403 / desafio anti-bot). Fica dentro
+   da ficha, colado na grade de dados, porque é a explicação dos travessões
+   que aparecem logo abaixo — não um erro da aplicação. */
+.block-note{
+  display:flex;gap:8px;align-items:flex-start;
+  margin:0 0 12px;padding:10px 12px;border-radius:8px;
+  background:var(--warn-bg);border:1px solid var(--warn-border);
+  color:var(--text-2);font-size:12.5px;line-height:1.45;
+}
+.block-note b{color:var(--text-1)}

@@ -31,6 +31,8 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 import dns.resolver
+
+from . import dns_resolver
 import requests
 
 from ._utils import HEADERS, is_public_host, normalize_domain, safe_get
@@ -185,7 +187,7 @@ _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 def _query(name: str, rtype: str, lifetime: float = 4.0) -> Tuple[List[Any], Optional[int]]:
     """Consulta um tipo e devolve (rdatas, ttl). TTL é dado do painel."""
     try:
-        answer = dns.resolver.resolve(name, rtype, lifetime=lifetime)
+        answer = dns_resolver.resolve(name, rtype, lifetime=lifetime)
         ttl = int(answer.rrset.ttl) if answer.rrset is not None else None
         return list(answer), ttl
     except Exception:

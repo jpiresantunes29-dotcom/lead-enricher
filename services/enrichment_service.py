@@ -204,6 +204,88 @@ def enrich_for_user(db: Session, profile: Profile, raw_domain: str,
     return finish_enrichment(db, profile, prepared.domain, prepared.lead, data, error)
 
 
+# Campos que só a coleta preenche. Uma coleta que volta vazia significa "desta
+# vez não deu" — DNS fora do ar, site bloqueando robô, orçamento de tempo
+# estourado — e não "esta empresa não tem mais MX". Sobrescrever com vazio
+# apagava dados bons de uma ficha que já estava certa: foi assim que uma ficha
+# com MX do Google e status "partial" virou uma ficha vazia com status
+# "failed" 22 segundos depois, num refresh que pegou o DNS mudo.
+_CAMPOS_COLETADOS = (
+    "company_name", "website", "linkedin_url", "linkedin_confidence",
+    "mx_provider", "mx_provider_confidence", "mx_records", "dns_report",
+    "hosting_provider", "employee_count", "employee_count_linkedin",
+    "sector", "location", "description", "corporate_email", "phone",
+)
+
+# Do pior para o melhor. "pending" é o placeholder de uma ficha que ainda não
+# coletou nada, então vale menos que qualquer resultado real.
+_ORDEM_STATUS = {"failed": 0, "pending": 0, "partial": 1, "enriched": 2}
+
+# Os mesmos campos que `enricher.enrich_company` usa para decidir o status. Se
+# nenhum deles sobreviveu na ficha, não há o que proteger e o status novo vale.
+_CAMPOS_ALVO = ("linkedin_url", "mx_provider", "employee_count", "location", "sector")
+
+
+def _vazio(valor) -> bool:
+    """None, string em branco, lista/dict vazios. `0` e `False` são valores."""
+    if valor is None:
+        return True
+    if isinstance(valor, str):
+        return not valor.strip()
+    if isinstance(valor, (list, dict, tuple, set)):
+        return len(valor) == 0
+    return False
+
+
+def _relatorio_dns_vazio(rel) -> bool:
+    """
+    Um relatório de DNS que não achou nada não vem vazio: vem com a estrutura
+    inteira montada e todas as listas em branco (`{"mx": [], "a": [], ...}`).
+    Pelo tamanho do dict ele parece um dado; pelo conteúdo não é nada — e era
+    assim que um relatório bom era substituído por um relatório mudo.
+    """
+    if not isinstance(rel, dict):
+        return _vazio(rel)
+    return not any(
+        not _vazio(v) for k, v in rel.items() if k != "domain"
+    )
+
+
+def merge_collected(lead: Lead, data: dict) -> None:
+    """
+    Grava a coleta na ficha sem apagar o que já estava lá.
+
+    Valor novo preenchido substitui o antigo (a coleta é a fonte da verdade
+    para esses campos). Valor novo vazio preserva o antigo. O `status` é o
+    melhor entre o antigo e o novo — se a ficha continua com MX e setor de uma
+    coleta anterior, ela não é "failed" só porque esta tentativa não trouxe
+    nada.
+    """
+    for key, value in data.items():
+        if not hasattr(Lead, key):
+            continue
+        if key == "status":
+            continue
+        if key in _CAMPOS_COLETADOS:
+            checar = _relatorio_dns_vazio if key == "dns_report" else _vazio
+            if checar(value) and not checar(getattr(lead, key, None)):
+                continue
+        setattr(lead, key, value)
+
+    novo = data.get("status")
+    if novo:
+        atual = lead.status
+        preservou = any(not _vazio(getattr(lead, k, None)) for k in _CAMPOS_ALVO)
+        rebaixa = _ORDEM_STATUS.get(novo, 0) < _ORDEM_STATUS.get(atual, 0)
+        if rebaixa and preservou:
+            logger.info(
+                "Coleta voltou %s mas a ficha mantém %s: dados anteriores preservados domain=%s",
+                novo, atual, lead.domain,
+            )
+        else:
+            lead.status = novo
+
+
 def finish_enrichment(db: Session, profile: Profile, domain: str, lead: Lead,
                       data: Optional[dict], error: Optional[Exception] = None) -> EnrichOutcome:
     """
@@ -224,9 +306,7 @@ def finish_enrichment(db: Session, profile: Profile, domain: str, lead: Lead,
             message=f"Erro ao enriquecer: {error}", error=str(error)[:500],
         )
 
-    for key, value in data.items():
-        if hasattr(Lead, key):
-            setattr(lead, key, value)
+    merge_collected(lead, data)
     lead.user_id = profile.id
     lead.refreshed_at = datetime.now(UTC)
 
@@ -251,8 +331,12 @@ def finish_enrichment(db: Session, profile: Profile, domain: str, lead: Lead,
         logger.exception("ingest_enrichment falhou domain=%s", domain)
         db.rollback()
 
-    status = data.get("status")
-    logger.info("Enriched domain=%s status=%s user=%s", domain, status, profile.id)
+    # O que vale para o usuário é o estado da ficha depois do merge, não o
+    # resultado isolado desta tentativa: uma coleta que voltou vazia sobre uma
+    # ficha já enriquecida não é "não conseguimos coletar nada".
+    status = lead.status
+    logger.info("Enriched domain=%s status=%s (coleta=%s) user=%s",
+                domain, status, data.get("status"), profile.id)
 
     if status == "failed":
         return EnrichOutcome(

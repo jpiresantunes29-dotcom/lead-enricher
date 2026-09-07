@@ -97,6 +97,11 @@ class Lead(Base):
     corporate_email = Column(String(255))
     phone = Column(String(100))
     status = Column(String(50), default="enriched")
+    #: Por que o site não entregou conteúdo nesta coleta: `http_403`,
+    #: `http_429`, `http_451` ou `bot_wall`. Nulo quando não houve bloqueio —
+    #: inclusive quando o site simplesmente não respondeu, que é outra
+    #: história e não rende aviso na tela.
+    site_block_reason = Column(String(30), nullable=True)
     # Que relação esta empresa tem com o usuário — ver RELATIONSHIPS.
     #
     # Separado de `stage` de propósito: `stage` é onde a negociação está e
@@ -811,7 +816,7 @@ class WhatsAppConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "a1c7e93b4d20"
+ALEMBIC_HEAD = "c4b8f21a7e35"
 
 
 def _stamp_alembic_head() -> None:

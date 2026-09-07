@@ -29,6 +29,7 @@ try:
 except Exception:
     IPWHOIS_OK = False
 
+from . import dns_resolver
 from ._utils import normalize_domain
 
 logger = logging.getLogger(__name__)
@@ -171,11 +172,19 @@ ASN_PATTERNS = [
 
 def _resolve(domain: str, rtype: str, lifetime: int = 5) -> List:
     try:
-        return list(dns.resolver.resolve(domain, rtype, lifetime=lifetime))
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN,
-            dns.resolver.NoNameservers, dns.exception.Timeout):
+        return list(dns_resolver.resolve(domain, rtype, lifetime=lifetime))
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        # Resposta legítima: o domínio existe e não publica esse registro.
         return []
-    except Exception:
+    except (dns.resolver.NoNameservers, dns.exception.Timeout) as e:
+        # Aqui ninguém respondeu — nem o sistema, nem o fallback. É um buraco
+        # no relatório, não um domínio sem registro, e precisa aparecer no log
+        # para não virar "ficha vazia" sem explicação.
+        logger.warning("DNS sem resposta domain=%s type=%s: %s",
+                       domain, rtype, type(e).__name__)
+        return []
+    except Exception as e:
+        logger.warning("DNS erro inesperado domain=%s type=%s: %s", domain, rtype, e)
         return []
 
 

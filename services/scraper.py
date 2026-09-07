@@ -30,9 +30,20 @@ INNER_PAGE_TIMEOUT = int(os.getenv("SCRAPING_INNER_TIMEOUT", "6"))
 INNER_PAGES_BUDGET = int(os.getenv("SCRAPING_INNER_BUDGET", "10"))
 
 
-def _fetch(url: str, timeout: Optional[int] = None) -> Optional[tuple]:
+# Códigos que significam "o site viu um robô e recusou", não "o site caiu".
+# 401 fica de fora: é área logada, e coletar por trás de login nunca foi a
+# proposta — não há bloqueio a reportar ali.
+_BLOQUEIO_HTTP = {403: "http_403", 429: "http_429", 451: "http_451"}
+
+
+def _fetch_com_motivo(url: str, timeout: Optional[int] = None) -> tuple:
     """
-    Devolve (soup, html) ou None.
+    Devolve ((soup, html), None) ou (None, motivo).
+
+    O motivo distingue as duas maneiras de não ter conteúdo, que davam na
+    mesma ficha vazia: o site não respondeu (motivo None — pode ser DNS, TLS,
+    timeout, 5xx) ou o site respondeu recusando o robô (`http_403`,
+    `bot_wall`). Só a segunda vira aviso na tela.
 
     Bloqueia alvos de rede interna (anti-SSRF) — na URL de entrada e em cada
     redirect, via `safe_get`. O domínio de partida vem do usuário, então a
@@ -42,7 +53,11 @@ def _fetch(url: str, timeout: Optional[int] = None) -> Optional[tuple]:
         # (connect, read): um servidor lento não pode segurar a busca inteira
         resp = safe_get(url, headers=HEADERS, timeout=(5, timeout or TIMEOUT))
         if resp is None:
-            return None
+            return None, None
+        motivo = _BLOQUEIO_HTTP.get(resp.status_code)
+        if motivo:
+            logger.info("Coleta recusada pelo site url=%s status=%s", url, resp.status_code)
+            return None, motivo
         resp.raise_for_status()
         fix_response_encoding(resp)
         if looks_like_bot_wall(resp.text):
@@ -50,11 +65,17 @@ def _fetch(url: str, timeout: Optional[int] = None) -> Optional[tuple]:
             # Cloudflare), não a página real — tratar como falha de fetch em
             # vez de extrair o título do desafio como se fosse a empresa.
             logger.info("Bot wall detected url=%s", url)
-            return None
-        return BeautifulSoup(resp.text, "html.parser"), resp.text
+            return None, "bot_wall"
+        return (BeautifulSoup(resp.text, "html.parser"), resp.text), None
     except Exception as e:
         logger.debug("Fetch failed url=%s: %s", url, e)
-        return None
+        return None, None
+
+
+def _fetch(url: str, timeout: Optional[int] = None) -> Optional[tuple]:
+    """Devolve (soup, html) ou None. Para quem não precisa saber o motivo."""
+    fetched, _ = _fetch_com_motivo(url, timeout)
+    return fetched
 
 
 def _meta(soup: BeautifulSoup, name: str) -> Optional[str]:
@@ -182,9 +203,16 @@ def scrape_website(url: str) -> dict:
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    fetched = _fetch(url)
+    fetched, bloqueio = _fetch_com_motivo(url)
     if not fetched:
-        return {"status": "failed", "raw_input_url": url}
+        motivo = bloqueio
+        # `blocked` e `failed` levam ao mesmo lugar aqui (nenhum campo
+        # coletado), mas só o primeiro tem uma explicação para dar ao vendedor.
+        return {
+            "status": "blocked" if motivo else "failed",
+            "block_reason": motivo,
+            "raw_input_url": url,
+        }
     soup, html = fetched
 
     # Detecta região para parsing de telefone
@@ -263,16 +291,23 @@ def scrape_website(url: str) -> dict:
         deadline = time.monotonic() + INNER_PAGES_BUDGET
         with ThreadPoolExecutor(max_workers=len(suffixes)) as pool:
             futures = {
-                pool.submit(_fetch, base + s, INNER_PAGE_TIMEOUT): s for s in suffixes
+                pool.submit(_fetch_com_motivo, base + s, INNER_PAGE_TIMEOUT): s
+                for s in suffixes
             }
             for fut in as_completed(futures, timeout=None):
                 if time.monotonic() > deadline:
                     break
                 try:
-                    result = fut.result(timeout=max(0.1, deadline - time.monotonic()))
+                    result, motivo_pagina = fut.result(
+                        timeout=max(0.1, deadline - time.monotonic()))
                 except Exception:
                     continue
                 if not result:
+                    # /sobre e /contato são de onde saem setor, localização e
+                    # CNPJ. Home aberta e páginas internas recusando o robô é
+                    # o caso comum no varejo grande — e sem registrar isso a
+                    # ficha volta vazia sem dizer por quê.
+                    bloqueio = bloqueio or motivo_pagina
                     continue
                 about_soup, about_html = result
                 about_text = about_soup.get_text(separator=" ", strip=True)
@@ -290,7 +325,11 @@ def scrape_website(url: str) -> dict:
         corporate_email = corporate_email or _pick_corporate_email(all_emails, domain)
 
     return {
+        # A home abriu, então houve coleta — mas se as páginas internas
+        # recusaram o robô, o motivo vai junto: é o que explica os campos que
+        # ficaram vazios.
         "status": "enriched",
+        "block_reason": bloqueio,
         "raw_input_url": url,
         "company_name": company_name,
         "website": url,

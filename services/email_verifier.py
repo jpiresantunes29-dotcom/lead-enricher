@@ -29,6 +29,8 @@ from functools import lru_cache
 from typing import List, Optional, Tuple
 
 import dns.resolver
+
+from . import dns_resolver
 import dns.exception
 
 logger = logging.getLogger(__name__)
@@ -204,7 +206,7 @@ def _note_connect_success() -> None:
 @lru_cache(maxsize=512)
 def _get_mx_host(domain: str) -> Optional[str]:
     try:
-        answers = dns.resolver.resolve(domain, "MX", lifetime=4)
+        answers = dns_resolver.resolve(domain, "MX", lifetime=4)
         records = sorted(answers, key=lambda r: r.preference)
         return str(records[0].exchange).rstrip(".") if records else None
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN,
