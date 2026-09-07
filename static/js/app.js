@@ -482,7 +482,16 @@ async function enrich(){
     renderResult(json.data);
     if(json.data.id)history.replaceState(null,'','#lead-'+json.data.id);
   }catch(e){
-    if(e.message!=='not_authenticated')showError('Erro de conexão com o servidor.');
+    if(e.message==='not_authenticated')return;
+    // Um erro de render (elemento que sumiu da ficha, campo inesperado na
+    // resposta) caia no mesmo catch da falha de rede e virava "erro de
+    // conexao" — mensagem que mandava o usuario olhar para o lugar errado.
+    // TypeError/ReferenceError so acontecem no nosso proprio codigo.
+    console.error('enrich:',e);
+    const bug=(e instanceof TypeError)||(e instanceof ReferenceError);
+    showError(bug
+      ? 'Os dados vieram, mas houve uma falha ao montar a ficha na tela. Detalhes no console do navegador.'
+      : 'Erro de conexão com o servidor.');
   }finally{setLoading(false);stopLoad();}
 }
 
@@ -961,6 +970,27 @@ function loadLeadIntoView(leadId){
   else location.hash=h;
 }
 
+/* Site que recusou o robô (403, 429, desafio anti-bot) deixa setor,
+   localização e descrição vazios — exatamente como uma empresa sobre a qual
+   não há nada publicado. A ficha precisa dizer qual dos dois casos é: no
+   primeiro, o dado existe e vale abrir o site na mão. */
+const BLOCK_LABELS={
+  http_403:'o site recusou a leitura automática (HTTP 403)',
+  http_429:'o site limitou o número de acessos (HTTP 429)',
+  http_451:'o site bloqueou o acesso por motivo legal (HTTP 451)',
+  bot_wall:'o site respondeu com um desafio anti-robô',
+};
+function blockNoteHtml(data){
+  const motivo=data&&data.site_block_reason;
+  if(!motivo)return'';
+  const txt=BLOCK_LABELS[motivo]||'o site bloqueou a coleta automática';
+  const site=data.website||('https://'+(data.domain||''));
+  return `<div class="block-note">
+    <span aria-hidden="true">⚠</span>
+    <span><b>Coleta parcial:</b> ${esc(txt)}. Os campos vazios abaixo não significam que a empresa não tem esses dados — significam que não conseguimos lê-los. <a href="${esc(site)}" target="_blank" rel="noopener">Abrir o site</a> para conferir à mão. DNS, MX e LinkedIn não dependem do site e seguem válidos.</span>
+  </div>`;
+}
+
 function renderResult(data){
   currentLeadId=data.id;
   currentLeadData=data;
@@ -1016,6 +1046,7 @@ function renderResult(data){
     </div>
     <div class="lead-actions" id="lead-actions"></div>
     <div class="sec-head"><span class="sec-num">1</span><h4>Ficha da empresa</h4><span>Dados públicos coletados a partir do domínio</span></div>
+    ${blockNoteHtml(data)}
     <div class="result-grid">${cards.join('')}</div>
     ${dns}
     <div class="dec-section">
@@ -1023,8 +1054,8 @@ function renderResult(data){
       <div id="decisores-list" class="dec-list">
         <div class="empty-state-box">
           <div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
-          <div class="empty-title">Nenhum cargo buscado ainda</div>
-          <div class="empty-sub">Escolha um cargo acima (ou digite o seu) e clique em <strong>Buscar decisores</strong>.</div>
+          <div class="empty-title">Buscando contatos da empresa…</div>
+          <div class="empty-sub">Os cargos mais comuns (CEO, CTO, CFO, diretoria) sao carregados automaticamente.</div>
         </div>
       </div>
     </div>
@@ -1053,9 +1084,13 @@ function renderResult(data){
     box.style.display='block';
     box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo <small>(cacheado)</small> <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(data.ai_summary).replace(/\n/g,'<br/>')}</div>`;
   }
-  document.getElementById('role-input').addEventListener('keydown',e=>{if(e.key==='Enter')searchDecisores()});
-  const top=root.closest('.results-wrap').getBoundingClientRect().top+window.scrollY-100;
-  window.scrollTo({top,behavior:'smooth'});
+  // Os contatos chegam sozinhos (loadPopularContacts): nao ha mais campo de
+  // cargo na ficha, entao nao ha listener de teclado para prender aqui.
+  const wrap=root.closest('.results-wrap');
+  if(wrap){
+    const top=wrap.getBoundingClientRect().top+window.scrollY-100;
+    window.scrollTo({top,behavior:'smooth'});
+  }
 }
 
 /* ══════ CONVERSAS DE WHATSAPP ══════
@@ -2177,7 +2212,6 @@ async function savePhone(){
   }catch(e){msg.className='data-sub sub-err';msg.textContent='Erro de conexão. O telefone não foi salvo.';}
 }
 
-function setRole(v){const el=document.getElementById('role-input');if(el)el.value=v;}
 
 /* ══════ CONTATOS DA EMPRESA (Lusha Prospecting) ══════
 
@@ -2451,25 +2485,6 @@ async function prospRevelar(id,btn){
 function prospCopiar(txt){
   if(!txt)return;
   if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt);
-}
-
-async function searchDecisores(){
-  if(!currentLeadId)return;
-  const input=document.getElementById('role-input');
-  const role=(input.value||'').trim();if(!role){input.focus();return;}
-  const list=document.getElementById('decisores-list');
-  const btn=document.getElementById('role-btn');
-  const bText=document.getElementById('role-btn-text');
-  const bSpin=document.getElementById('role-btn-spinner');
-  btn.disabled=true;bText.textContent='Buscando...';bSpin.style.display='inline-block';
-  list.innerHTML=`<div class="muted-box">Procurando pessoas com o cargo “${esc(role)}” nesta empresa… (até 15s)</div>`;
-  try{
-    const resp=await authFetch('/api/decisores',{method:'POST',body:JSON.stringify({lead_id:currentLeadId,roles:[role]})});
-    const json=await resp.json();
-    if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">${esc(json.detail||json.message||'Erro.')}</div>`;return;}
-    renderDecisoresV2(json.decisores);
-  }catch(e){list.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
-  finally{btn.disabled=false;bText.textContent='Buscar decisores';bSpin.style.display='none';}
 }
 
 function renderDecisores(list){

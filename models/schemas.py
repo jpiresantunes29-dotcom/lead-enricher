@@ -83,6 +83,7 @@ class LeadOut(BaseModel):
     corporate_email: Optional[str] = None
     phone: Optional[str] = None
     status: str
+    site_block_reason: Optional[str] = None
     stage: Optional[str] = "novo"
     score: Optional[int] = None
     priority: Optional[str] = None

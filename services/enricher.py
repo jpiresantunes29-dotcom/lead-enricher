@@ -81,6 +81,10 @@ def enrich_company(domain_input: str) -> dict:
         "cnpj": None,
         "site_emails": [],
         "site_phones": [],
+        # Preenchido só quando o site recusou o robô (403/429/desafio
+        # anti-bot). Campo vazio por bloqueio e campo vazio por ausência de
+        # dado são coisas diferentes para quem vai ligar para a empresa.
+        "site_block_reason": None,
         "status": "enriched",
     }
 
@@ -118,6 +122,7 @@ def enrich_company(domain_input: str) -> dict:
                 result[key] = site_data[key]
         result["site_emails"] = site_data.get("emails") or []
         result["site_phones"] = site_data.get("phones") or []
+        result["site_block_reason"] = site_data.get("block_reason")
 
     # CNPJ (Receita Federal): fonte oficial de localização e setor. Muita
     # empresa grande não tem JSON-LD/meta geo.* na home (ex.: varejo), então
@@ -250,6 +255,15 @@ def enrich_company(domain_input: str) -> dict:
     if not result.get("company_name"):
         root = domain.split(".")[0].replace("-", " ")
         result["company_name"] = root.title() if root else None
+
+    # Bloqueio só vira aviso na tela quando custou alguma coisa. Se o CNPJ ou
+    # outra fonte preencheu setor, localização e descrição assim mesmo, avisar
+    # que "o site recusou o robô" seria alarme sobre um problema que a ficha
+    # já contornou.
+    if result.get("site_block_reason") and all(
+        result.get(k) for k in ("sector", "location", "description")
+    ):
+        result["site_block_reason"] = None
 
     # Status final — nos 5 campos-alvo do produto (LinkedIn, MX, funcionários,
     # localização, setor). company_name fica de fora: o fallback logo acima
