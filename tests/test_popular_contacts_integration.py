@@ -106,3 +106,48 @@ def test_popular_contacts_renderiza_sem_erros():
         
         # Validar telefone (E.164)
         assert p.get("phone")
+
+
+def test_popular_contacts_filtra_sem_linkedin(client):
+    """Valida que contatos SEM LinkedIn são descartados (fidelidade)"""
+    from unittest.mock import patch
+    
+    # Mock com 2 contatos: um com LinkedIn, outro sem
+    _RESULTADO_MISTO = [
+        {
+            "name": "Com LinkedIn",
+            "title_searched": "CEO",
+            "title_found": "CEO",
+            "snippet": "CEO at Company",
+            "linkedin_url": "https://www.linkedin.com/in/com-linkedin/",
+            "probable_emails": [{"email": "com@company.com", "status": "valid", "confidence": 95}],
+            "match_confidence": "high",
+            "phone": None,
+        },
+        {
+            "name": "Sem LinkedIn",  # Este deve ser FILTRADO
+            "title_searched": "CTO",
+            "title_found": "CTO",
+            "snippet": "CTO at Company",
+            "linkedin_url": None,  # Sem LinkedIn!
+            "probable_emails": [{"email": "sem@company.com", "status": "valid", "confidence": 90}],
+            "match_confidence": "high",
+            "phone": None,
+        },
+    ]
+    
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        resp = client.post("/api/enrich", json={"domain": "company.com"})
+    
+    lead = resp.json()["data"]
+    
+    with patch("routers.enrichment.find_decision_makers", return_value=_RESULTADO_MISTO):
+        resp = client.get(f"/api/leads/{lead['id']}/popular-contacts")
+    
+    assert resp.status_code == 200
+    dados = resp.json()
+    
+    # Deve ter APENAS 1 contato (o com LinkedIn)
+    assert len(dados["decisores"]) == 1
+    assert dados["decisores"][0]["name"] == "Com LinkedIn"
+    assert "linkedin.com/in/" in dados["decisores"][0]["linkedin_url"]

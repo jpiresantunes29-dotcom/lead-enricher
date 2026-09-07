@@ -197,6 +197,13 @@ def popular_contacts(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao buscar contatos: {e}")
 
+    # FILTRO DE FIDELIDADE: só guarda quem tem LinkedIn verificado
+    # (elimina contatos de busca sem validação e ex-funcionários)
+    results = [
+        r for r in results
+        if r.get("linkedin_url") and "linkedin.com/in/" in r.get("linkedin_url", "").lower()
+    ]
+
     saved = []
     for r in results:
         dm = DecisionMaker(
