@@ -5,7 +5,10 @@ Centraliza:
   - HEADERS HTTP padrão (User-Agent, Accept-Language) para evitar duplicação
   - normalize_domain() para limpar input do usuário
   - tld_to_region() para inferir região default do número de telefone
-  - LINKEDIN_COMPANY_RE para extrair slug de URLs do LinkedIn
+  - LINKEDIN_PAGE_RE / linkedin_ref() para extrair tipo e slug de URLs de
+    organização do LinkedIn (/company/ e /school/)
+  - domain_mentioned() — o domínio aparece no texto como domínio inteiro, e não
+    como pedaço de um subdomínio de outra entidade
   - is_public_host() / is_public_url() — guard anti-SSRF para URLs derivadas
     de input do usuário
   - safe_get() — o mesmo guard aplicado a CADA salto de um redirect, que é
@@ -30,10 +33,38 @@ from bs4 import BeautifulSoup
 logger = logging.getLogger(__name__)
 
 
-LINKEDIN_COMPANY_RE = re.compile(
-    r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/company/([^\s\"'<>?#/]+)",
+# Páginas de organização no LinkedIn.
+#
+# Universidade, faculdade e escola vivem em /school/, não em /company/ — e é
+# essa a página institucional delas. Enxergar só /company/ não deixava o campo
+# vazio: fazia a coleta DESCARTAR o perfil correto (que costuma estar no rodapé
+# da home) e aceitar em seguida um /company/ de sub-marca achado numa página
+# interna. Caso real: pucpr.br publica
+# /school/pontificia-universidade-catolica-do-parana na home, e a ficha vinha
+# com /company/hotmilk-pucpr — o hub de inovação, não a universidade.
+LINKEDIN_PAGE_RE = re.compile(
+    r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/(?P<kind>company|school)/(?P<slug>[^\s\"'<>?#/]+)",
     re.IGNORECASE,
 )
+
+
+def linkedin_ref(url: str) -> Optional[tuple]:
+    """
+    `(kind, slug)` de uma URL de organização no LinkedIn, ou None.
+
+    Devolver o tipo junto com o slug é o que permite remontar a URL no caminho
+    certo: `/school/<slug>` e `/company/<slug>` são páginas diferentes, e trocar
+    um pelo outro leva a 404.
+    """
+    match = LINKEDIN_PAGE_RE.search(url or "")
+    if not match:
+        return None
+    return match.group("kind").lower(), match.group("slug").lower()
+
+
+def linkedin_page_url(kind: str, slug: str) -> str:
+    """URL canônica da página de organização (`company` ou `school`)."""
+    return f"https://www.linkedin.com/{kind}/{slug}"
 
 # Conjunto completo de headers de um Chrome real (Windows), não só o
 # User-Agent. WAFs mais simples (mod_security, Cloudflare em modo básico,
@@ -99,6 +130,31 @@ def normalize_domain(value: str) -> str:
     if value.startswith("www."):
         value = value[4:]
     return value
+
+
+def domain_mentioned(text: str, domain: str) -> bool:
+    """
+    O domínio aparece em `text` como domínio inteiro?
+
+    `"pucpr.br" in html` parece uma checagem inocente e não é: casa com
+    `hotmilk.pucpr.br`, com `naopucpr.br` e com qualquer outra entidade que
+    apenas contenha o domínio buscado. Era assim que a página do hub de
+    inovação da PUCPR passava como sendo a da universidade — e, num HTML de
+    330 KB, quase tudo passava.
+
+    As fronteiras recusam um rótulo colado antes (subdomínio) ou depois
+    (domínio maior). O ponto que separa `hotmilk` de `pucpr.br` é justamente o
+    que o lookbehind barra.
+
+    À direita são dois lookaheads porque um ponto seguinte é ambíguo: em
+    `pucpr.br.uk` ele continua o domínio (e aí não é o nosso), enquanto em
+    "Acesse pucpr.br." ele só encerra a frase. O que decide é vir letra depois.
+    """
+    if not text or not domain:
+        return False
+    padrao = (r"(?<![a-z0-9.\-])" + re.escape(domain.lower())
+              + r"(?![a-z0-9\-])(?!\.[a-z0-9])")
+    return re.search(padrao, text.lower()) is not None
 
 
 # Mapa TLD → região default ISO-3166 alpha-2 (para libphonenumber)
@@ -260,7 +316,7 @@ def linkedin_from_sameas(org: dict) -> Optional[str]:
         return None
     candidates = same_as if isinstance(same_as, list) else [same_as]
     for url in candidates:
-        if isinstance(url, str) and "linkedin.com/company/" in url:
+        if isinstance(url, str) and linkedin_ref(url):
             return url.split("?")[0].rstrip("/")
     return None
 

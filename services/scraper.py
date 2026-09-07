@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from ._utils import (
     HEADERS, normalize_domain, tld_to_region, safe_get,
     jsonld_organization, linkedin_from_sameas, looks_like_bot_wall,
-    is_public_linkedin_slug, LINKEDIN_COMPANY_RE, fix_response_encoding,
+    is_public_linkedin_slug, LINKEDIN_PAGE_RE, fix_response_encoding,
 )
 from .phone_normalizer import pick_best_phone, extract_and_normalize_phones
 from .providers.cnpj_receita import extract_cnpj
@@ -93,8 +93,8 @@ def _usable_linkedin(href: str) -> Optional[str]:
     (/company/<id>/admin) faria a ficha inteira vir vazia: quem chama
     gravaria essa URL e o enricher pularia a busca pela página pública.
     """
-    match = LINKEDIN_COMPANY_RE.search(href)
-    if not match or not is_public_linkedin_slug(match.group(1)):
+    match = LINKEDIN_PAGE_RE.search(href)
+    if not match or not is_public_linkedin_slug(match.group("slug")):
         return None
     return match.group(0).rstrip("/")
 
@@ -115,8 +115,8 @@ def _extract_linkedin(soup: BeautifulSoup, text: str) -> Optional[str]:
         if usable:
             return usable
     # 3. Fallback regex no texto
-    for match in LINKEDIN_COMPANY_RE.finditer(text):
-        if is_public_linkedin_slug(match.group(1)):
+    for match in LINKEDIN_PAGE_RE.finditer(text):
+        if is_public_linkedin_slug(match.group("slug")):
             return match.group(0).rstrip("/")
     return None
 

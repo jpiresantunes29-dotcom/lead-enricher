@@ -23,7 +23,7 @@ import phonenumbers
 from sqlalchemy.orm import Session
 
 from models.database import Company, Person
-from services._utils import normalize_domain, tld_to_region, LINKEDIN_COMPANY_RE
+from services._utils import normalize_domain, tld_to_region, linkedin_ref
 from services.email_verifier import has_mx, smtp_probe_available, verify_emails_effective
 from services.providers import cnpj_receita, premium_find_contacts
 from . import email_patterns as ep
@@ -219,8 +219,8 @@ def ingest_enrichment(db: Session, data: dict) -> Optional[Company]:
 
     linkedin_slug = None
     if data.get("linkedin_url"):
-        match = LINKEDIN_COMPANY_RE.search(data["linkedin_url"])
-        linkedin_slug = match.group(1).lower() if match else None
+        ref = linkedin_ref(data["linkedin_url"])
+        linkedin_slug = ref[1] if ref else None
 
     company = repo.upsert_company(
         db, domain,

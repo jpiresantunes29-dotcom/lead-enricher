@@ -44,7 +44,16 @@ ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "50"))
 #   6 — LinkedIn "probable" passa a ser aceito (com a confiança real marcada
 #       na ficha, não só "verified"); orçamento total e o gatilho de busca do
 #       LinkedIn aumentados para caber mais tentativas antes do teto da Vercel
-ENRICHMENT_VERSION = 6
+#   7 — páginas /school/ (universidade, faculdade, escola) passam a ser
+#       reconhecidas, e o vínculo com o domínio deixa de aceitar substring:
+#       "pucpr.br" não é mais confirmado por "hotmilk.pucpr.br". Juntas, as
+#       duas coisas punham na ficha da PUCPR o LinkedIn do hub de inovação
+#       enquanto o link certo, publicado na home, era descartado por não ser
+#       /company/. Junto: a contagem vinda do site deixa de ler formulário
+#       (o "19 colaboradores" da PUCPR saía de um <option> "Microempresa (até
+#       19 colaboradores)") e passa a preferir o numberOfEmployees declarado
+#       em JSON-LD. Ficha do v6 é recoletada.
+ENRICHMENT_VERSION = 7
 
 
 def enrich_company(domain_input: str) -> dict:
@@ -167,7 +176,9 @@ def enrich_company(domain_input: str) -> dict:
     found_url = None
     try:
         if site_linkedin_url:
-            page = inspect_company_page(site_linkedin_url, domain)
+            page = inspect_company_page(site_linkedin_url, domain,
+                                        declarado_pelo_site=True,
+                                        company_name=company_name)
             found_url = site_linkedin_url
             logger.info("LinkedIn source=site domain=%s", domain)
         elif _remaining() > 5:

@@ -9,18 +9,19 @@ from bs4 import BeautifulSoup
 
 from services.employee_count import (
     MAX_PLAUSIBLE_EMPLOYEES, _find_in_text, fetch_employee_count,
-    normalize_employee_count,
+    normalize_employee_count, _count_from_site_page,
 )
 from services.scraper import (
     _looks_like_slogan, _pick_company_name, _pick_corporate_email, _extract_linkedin,
 )
 from services._utils import (
-    LINKEDIN_COMPANY_RE, is_public_linkedin_slug, looks_like_search_block,
-    fix_response_encoding,
+    LINKEDIN_PAGE_RE, is_public_linkedin_slug, looks_like_search_block,
+    fix_response_encoding, domain_mentioned, linkedin_ref,
 )
 from services.linkedin_search import (
     _confidence, _normalize, _slug_from_url, parse_company_page,
-    _guess_slug_candidates, _names_match,
+    _guess_slug_candidates, _names_match, _extract_candidates_from_html,
+    _pick_best_candidate, _tipos_de_pagina,
 )
 from services.providers.cnpj_receita import (
     location_from_cnpj, sector_from_cnpj, employee_band_from_cnpj,
@@ -64,6 +65,49 @@ def test_numeros_plausiveis_continuam_passando():
     assert normalize_employee_count("1.001-5.000 employees")["min"] == 1001
     assert normalize_employee_count("10.000+ funcionários")["min"] == 10000
     assert _find_in_text("Visualizar todos os 12.979 funcionários")["exact"] == 12979
+
+
+def test_opcao_de_formulario_nao_vira_contagem_de_funcionarios():
+    """
+    Bug real (pucpr.br): a ficha da universidade dizia "19 colaboradores".
+    O número saía do `<option>` "Microempresa (até 19 colaboradores)" do
+    formulário de contato — o coletor lia a PERGUNTA do site como se fosse uma
+    resposta sobre ele.
+    """
+    html = """
+    <h1>PUCPR para Empresas</h1>
+    <form><label>Porte da empresa</label>
+      <select>
+        <option value="">Selecione</option>
+        <option>Microempresa (até 19 colaboradores)</option>
+        <option>Pequeno porte (de 20 a 99 colaboradores)</option>
+      </select>
+    </form>
+    """
+    assert _count_from_site_page(html) is None
+
+
+def test_classificacao_de_porte_em_prosa_tambem_e_recusada():
+    """Fora do formulário, "até N colaboradores" continua sendo faixa."""
+    html = "<p>Atendemos microempresas com até 19 colaboradores.</p>"
+    assert _count_from_site_page(html) is None
+
+
+def test_numero_declarado_pela_empresa_tem_prioridade():
+    """`numberOfEmployees` do JSON-LD é a empresa declarando o próprio tamanho."""
+    html = """
+    <script type="application/ld+json">
+    {"@type": "Organization", "name": "Acme", "numberOfEmployees": 4200}
+    </script>
+    <p>Somos uma equipe enxuta de 12 colaboradores no marketing.</p>
+    """
+    assert _count_from_site_page(html)["exact"] == 4200
+
+
+def test_contagem_institucional_legitima_continua_passando():
+    """Endurecer não pode cegar a fonte: o texto real da empresa ainda vale."""
+    html = "<main><p>Somos mais de 3.500 colaboradores em todo o Brasil.</p></main>"
+    assert _count_from_site_page(html)["exact"] == 3500
 
 
 def test_teto_de_sanidade_perto_do_limite():
@@ -157,8 +201,8 @@ def test_slug_percent_encoded_e_decodificado_para_exibicao():
 
 def test_regex_do_slug_ainda_para_no_delimitador_certo():
     """Alargar a allowlist não pode voltar a engolir path ou query string seguintes."""
-    m = LINKEDIN_COMPANY_RE.search("https://www.linkedin.com/company/acme/people/?trk=x")
-    assert m.group(1) == "acme"
+    m = LINKEDIN_PAGE_RE.search("https://www.linkedin.com/company/acme/people/?trk=x")
+    assert m.group("slug") == "acme"
 
 
 # ── localização e setor via CNPJ (fallback quando o site não tem dados estruturados) ──
@@ -224,8 +268,17 @@ def test_dominio_so_citado_na_pagina_nao_e_confirmacao():
     assert _confidence(html, "outra.com.br", None) == "unverified"
 
 
-def test_pagina_que_nao_respondeu_nao_conta_contra_a_empresa():
-    assert _confidence(None, "acme.com.br", None) == "probable"
+def test_pagina_que_nao_respondeu_vale_pelo_que_a_empresa_declarou():
+    """
+    Sem página, o que sustenta a afirmação é a origem do link.
+
+    Se a própria empresa publicou o perfil no site dela, o LinkedIn fora do ar
+    não desmente nada — segue "probable". Mas um palpite de slug ou um
+    resultado de buscador sem página não tem prova nenhuma, e mostrar isso na
+    ficha é como o perfil errado chegava à tela do vendedor.
+    """
+    assert _confidence(None, "acme.com.br", None, declarado_pelo_site=True) == "probable"
+    assert _confidence(None, "acme.com.br", None) == "unverified"
 
 
 def test_sem_orcamento_de_tempo_ainda_le_a_pagina_em_maos():
@@ -425,3 +478,98 @@ def test_pais_do_asn_sai_por_extenso_em_portugues():
     assert country_label("us") == "Estados Unidos"
     assert country_label("ZZ") == "ZZ"       # desconhecido volta como veio
     assert country_label(None) is None
+
+
+# ── LinkedIn de universidade: /school/ e a sub-marca que se passava por ela ──
+#
+# Caso real e completo (pucpr.br). A home publica UM link do LinkedIn,
+# /school/pontificia-universidade-catolica-do-parana, e a ficha saía com
+# /company/hotmilk-pucpr — o hub de inovação da universidade. Três defeitos
+# em série produziam isso, e cada teste abaixo tranca um deles.
+
+def test_link_de_escola_no_site_e_reconhecido():
+    """
+    Defeito 1: só /company/ era enxergado. O link certo da PUCPR estava na
+    home, em primeiro lugar na hierarquia de confiança, e era descartado —
+    o que empurrava a busca para páginas internas, onde estava a sub-marca.
+    """
+    html = ('<footer><a href="https://www.linkedin.com/school/'
+            'pontificia-universidade-catolica-do-parana">LinkedIn</a></footer>')
+    assert _extract_linkedin(BeautifulSoup(html, "html.parser"), html) == (
+        "https://www.linkedin.com/school/pontificia-universidade-catolica-do-parana"
+    )
+    assert linkedin_ref("https://www.linkedin.com/school/pucproficial/") == (
+        "school", "pucproficial"
+    )
+
+
+def test_caminho_da_escola_nao_e_reescrito_como_empresa():
+    """/school/<slug> e /company/<slug> são páginas diferentes; trocar dá 404."""
+    assert _normalize("pucproficial", "school") == "https://www.linkedin.com/school/pucproficial"
+    assert _normalize("acme") == "https://www.linkedin.com/company/acme"
+
+
+def test_dominio_citado_nao_casa_com_subdominio_de_outra_entidade():
+    """
+    Defeito 2, a raiz do falso-positivo: `"pucpr.br" in html` casava com
+    `hotmilk.pucpr.br`. Num HTML de 330 KB, quase tudo passava.
+    """
+    assert domain_mentioned("contato@pucpr.br", "pucpr.br") is True
+    assert domain_mentioned("https://hotmilk.pucpr.br/", "pucpr.br") is False
+    assert domain_mentioned("visite pucpr.br.uk hoje", "pucpr.br") is False
+    # Ponto de fim de frase não pode ser confundido com domínio maior
+    assert domain_mentioned("Acesse pucpr.br.", "pucpr.br") is True
+    assert domain_mentioned("pucpr.br/contato", "pucpr.br") is True
+
+
+def test_site_declarado_diferente_e_decidido_pelo_nome():
+    """
+    Endereços declarados medidos ao vivo nas três páginas reais:
+
+        hotmilk.pucpr.br             buscando pucpr.br       → outra entidade
+        international.nubank.com.br  buscando nubank.com.br  → a mesma empresa
+        totvs.com                    buscando totvs.com.br   → a mesma empresa
+
+    Os dois primeiros são subdomínios do domínio buscado e têm exatamente a
+    mesma forma, então nenhuma regra sobre o formato do domínio separa um do
+    outro. Só o nome da página separa — e rejeitar pela forma foi uma
+    regressão real: derrubou TOTVS e Nubank junto com o hub.
+    """
+    html = "<p>conteudo</p>"
+    assert _confidence(html, "pucpr.br", "https://hotmilk.pucpr.br/",
+                       page_name="HOTMILK | Ecossistema de Inovação PUCPR") == "unverified"
+    assert _confidence(html, "nubank.com.br", "https://international.nubank.com.br/about/",
+                       page_name="Nubank") == "probable"
+    assert _confidence(html, "totvs.com.br", "https://www.totvs.com",
+                       page_name="TOTVS") == "probable"
+
+
+def test_sub_marca_nao_confirma_a_instituicao():
+    """
+    Defeito 3: conter o nome não é ser a empresa. "Grupo Madero" só acrescenta
+    um qualificador; "Hotmilk ... PUCPR" acrescenta uma marca própria.
+    """
+    assert _names_match("HOTMILK | Ecossistema de Inovação PUCPR", "PUCPR", "pucpr.br") is False
+    # O que já funcionava continua funcionando
+    assert _names_match("Grupo Madero", "Madero", "restaurantemadero.com.br") is True
+    assert _names_match("Cia. Hering", "Hering", "hering.com.br") is True
+
+
+def test_universidade_prefere_a_pagina_de_escola():
+    """
+    A semelhança do slug puxa para o lado errado justamente aqui:
+    "hotmilk-pucpr" parece MAIS com "pucpr" do que o nome por extenso da
+    universidade. O tipo de página precisa desempatar.
+    """
+    assert _tipos_de_pagina("pucpr.br", "Pontifícia Universidade Católica do Paraná")[0] == "school"
+    assert _tipos_de_pagina("acme.com.br", "Acme Ltda") == ("company",)
+
+    html = ('<footer>'
+            '<a href="https://www.linkedin.com/company/hotmilk-pucpr">a</a>'
+            '<a href="https://www.linkedin.com/school/pontificia-universidade-catolica-do-parana">b</a>'
+            '</footer>')
+    candidatos = _extract_candidates_from_html(html, BeautifulSoup(html, "html.parser"))
+    escolhido = _pick_best_candidate(candidatos, "pucpr.br", "Universidade Católica do Paraná")
+    assert escolhido == (
+        "https://www.linkedin.com/school/pontificia-universidade-catolica-do-parana"
+    )

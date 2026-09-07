@@ -95,7 +95,7 @@ def _name_similarity(company_name: str, host: str) -> float:
 def _linkedin_slug(linkedin_url: Optional[str]) -> str:
     if not linkedin_url:
         return ""
-    match = re.search(r"/company/([a-zA-Z0-9\-._%]+)", linkedin_url)
+    match = re.search(r"/(?:company|school)/([a-zA-Z0-9\-._%]+)", linkedin_url)
     return _slug(match.group(1)) if match else ""
 
 

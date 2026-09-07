@@ -22,9 +22,9 @@ from difflib import SequenceMatcher
 from urllib.parse import unquote
 
 from ._utils import (
-    HEADERS, normalize_domain, LINKEDIN_COMPANY_RE,
+    HEADERS, normalize_domain, LINKEDIN_PAGE_RE, linkedin_ref, linkedin_page_url,
     jsonld_organization, linkedin_from_sameas, is_public_linkedin_slug,
-    fix_response_encoding,
+    fix_response_encoding, domain_mentioned,
 )
 from ._ddg import search_multi
 
@@ -36,21 +36,24 @@ logger = logging.getLogger(__name__)
 PAGE_TIMEOUT = (5, 14)
 
 
-def _normalize(slug: str) -> str:
+def _normalize(slug: str, kind: str = "company") -> str:
     """
     Normaliza URL do LinkedIn em formato canônico.
 
     unquote() decodifica slugs percent-encoded (ex.: "c%26a_brasil" -> "c&a_brasil")
     para que a URL exibida bata com a que a própria empresa usa.
+
+    `kind` preserva o caminho de origem: universidade e escola vivem em
+    /school/, e reescrever isso como /company/ leva a uma página que não existe.
     """
     slug = slug.lower().rstrip("/").split("?")[0].split("#")[0]
     slug = unquote(slug)
-    return f"https://www.linkedin.com/company/{slug}"
+    return linkedin_page_url(kind, slug)
 
 
 def _slug_from_url(url: str) -> Optional[str]:
-    m = LINKEDIN_COMPANY_RE.search(url)
-    return m.group(1).lower() if m else None
+    ref = linkedin_ref(url)
+    return ref[1] if ref else None
 
 
 def _similarity(a: str, b: str) -> float:
@@ -71,16 +74,20 @@ def _extract_candidates_from_html(html: str, soup: BeautifulSoup) -> List[dict]:
     seen = set()
 
     def add(url: str, source: str, weight: float):
-        slug = _slug_from_url(url)
-        if not slug or slug in seen:
+        ref = linkedin_ref(url)
+        if not ref:
+            return
+        kind, slug = ref
+        if (kind, slug) in seen:
             return
         # Slug numérico (ID interno) ou de painel exige login — seguir esse
         # link devolve a tela de /uas/login, não a ficha. Descartar aqui deixa
         # o fluxo cair na adivinhação de slug, que acha a página pública.
         if not is_public_linkedin_slug(slug):
             return
-        seen.add(slug)
-        candidates.append({"slug": slug, "url": _normalize(slug), "source": source, "weight": weight})
+        seen.add((kind, slug))
+        candidates.append({"slug": slug, "kind": kind, "url": _normalize(slug, kind),
+                           "source": source, "weight": weight})
 
     # sameAs (JSON-LD Organization) — a empresa publica isso para SEO; existe
     # mesmo quando o ícone social é montado via JS e não aparece no footer/
@@ -95,18 +102,17 @@ def _extract_candidates_from_html(html: str, soup: BeautifulSoup) -> List[dict]:
         container = soup.find(container_name)
         if container:
             for a in container.find_all("a", href=True):
-                if "linkedin.com/company/" in a["href"]:
+                if "linkedin.com/" in a["href"]:
                     add(a["href"], container_name, weight)
 
     # Qualquer âncora
     for a in soup.find_all("a", href=True):
-        if "linkedin.com/company/" in a["href"]:
+        if "linkedin.com/" in a["href"]:
             add(a["href"], "anchor", 0.5)
 
     # Regex no texto bruto
-    for url in LINKEDIN_COMPANY_RE.findall(html):
-        full = f"https://linkedin.com/company/{url}"
-        add(full, "regex", 0.3)
+    for match in LINKEDIN_PAGE_RE.finditer(html):
+        add(match.group(0), "regex", 0.3)
 
     return candidates
 
@@ -122,21 +128,33 @@ def _fetch_html(url: str, timeout: int = 10) -> Optional[tuple]:
     return None
 
 
-def _pick_best_candidate(candidates: List[dict], domain: str) -> Optional[str]:
-    """Escolhe melhor candidato: peso da origem * similaridade do slug com domínio."""
+def _pick_best_candidate(candidates: List[dict], domain: str,
+                         company_name: Optional[str] = None) -> Optional[str]:
+    """
+    Escolhe melhor candidato: peso da origem * similaridade do slug com domínio.
+
+    O tipo de página entra como desempate porque a semelhança do slug puxa para
+    o lado errado justamente onde mais importa: para `pucpr.br`, o slug do hub
+    (`hotmilk-pucpr`) parece MAIS com o domínio do que o da universidade
+    (`pontificia-universidade-catolica-do-parana`). Sendo instituição de
+    ensino, /school/ é a página institucional e ganha do /company/ de um braço.
+    """
     if not candidates:
         return None
+    tipo_esperado = _tipos_de_pagina(domain, company_name)[0]
     domain_root = domain.split(".")[0]
     scored = []
     for c in candidates:
         sim = _similarity(c["slug"], domain_root)
         score = c["weight"] * (0.5 + sim * 0.5)
+        if c.get("kind") == tipo_esperado:
+            score *= 1.6
         scored.append((score, c))
     scored.sort(key=lambda x: x[0], reverse=True)
     return scored[0][1]["url"]
 
 
-def _extract_from_site(domain: str) -> Optional[str]:
+def _extract_from_site(domain: str, company_name: Optional[str] = None) -> Optional[str]:
     """
     Tenta achar o link do LinkedIn no próprio site (home + páginas comuns).
 
@@ -152,7 +170,7 @@ def _extract_from_site(domain: str) -> Optional[str]:
             html, soup = fetched
             all_candidates.extend(_extract_candidates_from_html(html, soup))
             if all_candidates:
-                return _pick_best_candidate(all_candidates, domain)
+                return _pick_best_candidate(all_candidates, domain, company_name)
             break  # o site respondeu, só não tinha link — não tenta o outro host
 
     paths = ["/about", "/sobre", "/contato", "/contact", "/quem-somos", "/empresa"]
@@ -167,30 +185,34 @@ def _extract_from_site(domain: str) -> Optional[str]:
                 html, soup = fetched
                 all_candidates.extend(_extract_candidates_from_html(html, soup))
 
-    return _pick_best_candidate(all_candidates, domain)
+    return _pick_best_candidate(all_candidates, domain, company_name)
 
 
 def _search_engines(domain: str, company_name: Optional[str]) -> Optional[str]:
     """Busca via DDG/Bing (compartilhado), prioriza match com nome da empresa."""
+    # `linkedin.com` sem o caminho fixo para que /school/ também apareça: com
+    # `site:linkedin.com/company` o buscador nunca devolveria a página de uma
+    # universidade.
     queries = [
-        f'site:linkedin.com/company "{domain}"',
+        f'site:linkedin.com "{domain}"',
     ]
     if company_name:
-        queries.insert(0, f'site:linkedin.com/company "{company_name}"')
+        queries.insert(0, f'site:linkedin.com "{company_name}"')
 
     candidates = []
     domain_root = domain.split(".")[0]
     for query in queries:
         results = search_multi(query)
         for r in results:
-            slug = _slug_from_url(r.get("url", ""))
-            if not slug:
+            ref = linkedin_ref(r.get("url", ""))
+            if not ref:
                 continue
+            kind, slug = ref
             # Score: similaridade do slug com domínio + título com company_name
             sim_slug = _similarity(slug, domain_root)
             sim_title = _similarity(r.get("title", ""), company_name or domain_root)
             score = (sim_slug * 0.6) + (sim_title * 0.4)
-            candidates.append((score, _normalize(slug)))
+            candidates.append((score, _normalize(slug, kind)))
         if candidates:
             break
 
@@ -277,17 +299,32 @@ def parse_company_page(html: Optional[str]) -> dict:
     return out
 
 
-def _confidence(html: Optional[str], domain: str, declared_website: Optional[str]) -> str:
+def _confidence(html: Optional[str], domain: str, declared_website: Optional[str],
+                declarado_pelo_site: bool = False, page_name: Optional[str] = None,
+                company_name: Optional[str] = None) -> str:
     """
     Quanto a página confirma que este LinkedIn é o da empresa do domínio.
 
     O vínculo forte é o site que a própria empresa declara no bloco
     "Informações" — se ele bate com o domínio buscado, não há dúvida.
+
+    Sem esse vínculo, resta a menção ao domínio no HTML, e é aí que morava o
+    erro: `"pucpr.br" in html` casava com `hotmilk.pucpr.br`, o site declarado
+    pelo hub de inovação da universidade. Num documento de 330 KB, uma
+    checagem de substring aceita quase tudo — `domain_mentioned` exige o
+    domínio inteiro, com fronteira dos dois lados.
+
+    Quando a página declara um endereço diferente do buscado, quem decide é o
+    NOME, não a forma do domínio — ver o comentário no corpo da função.
+
+    Página que não respondeu é ausência de prova, e ausência de prova só
+    sustenta "probable" quando a própria empresa publicou o link no site dela.
+    Para um palpite de slug ou um resultado de buscador, sem página não há
+    nada — e afirmar na ficha um perfil que ninguém confirmou é exatamente o
+    que põe o LinkedIn errado na tela do vendedor.
     """
     if not html:
-        # A página não respondeu — não é sinal contra a empresa, só ausência
-        # de prova.
-        return "probable"
+        return "probable" if declarado_pelo_site else "unverified"
     domain_lower = (domain or "").lower()
     if not domain_lower:
         return "unverified"
@@ -296,15 +333,31 @@ def _confidence(html: Optional[str], domain: str, declared_website: Optional[str
         return "verified"
 
     text = html.lower()
-    if re.search(r'"website"\s*:\s*"https?://(?:www\.)?' + re.escape(domain_lower), text):
+    if re.search(r'"website"\s*:\s*"https?://(?:www\.)?' + re.escape(domain_lower) + r'(?![a-z0-9\-])', text):
         return "verified"
-    if domain_lower in text:
+
+    # O site declarado existe e aponta para outro endereço. Isso NÃO decide
+    # sozinho: medido nas três páginas reais, o endereço declarado é um
+    # subdomínio em dois casos opostos —
+    #   hotmilk.pucpr.br        (buscando pucpr.br)    → outra entidade
+    #   international.nubank.com.br (buscando nubank.com.br) → a mesma empresa
+    # e nenhuma regra sobre a forma do domínio separa os dois. Quem separa é o
+    # nome da página: "HOTMILK | Ecossistema de Inovação PUCPR" traz marca
+    # própria, "Nubank" não. Por isso a decisão passa para `_names_match`.
+    if declared_website:
+        if _names_match(page_name, company_name, domain_lower):
+            return "probable"
+        return "unverified"
+
+    if domain_mentioned(text, domain_lower):
         return "probable"
     return "unverified"
 
 
 def inspect_company_page(linkedin_url: str, domain: str,
-                         page_html: Optional[str] = None) -> dict:
+                         page_html: Optional[str] = None,
+                         declarado_pelo_site: bool = False,
+                         company_name: Optional[str] = None) -> dict:
     """
     Tudo que a página pública da empresa ensina, com UM download e UM parse:
       {confidence, sector, location, size, html}
@@ -312,6 +365,10 @@ def inspect_company_page(linkedin_url: str, domain: str,
     Reunir isto em uma chamada só é o que evita baixar 350 KB duas vezes (uma
     para validar, outra para contar funcionários) dentro do orçamento da
     requisição.
+
+    `declarado_pelo_site` diz que a URL veio do site da própria empresa (rodapé,
+    JSON-LD). Só isso sustenta "probable" quando o LinkedIn não devolve a
+    página — ver `_confidence`.
     """
     html = page_html if page_html is not None else fetch_company_page(linkedin_url)
     try:
@@ -321,7 +378,11 @@ def inspect_company_page(linkedin_url: str, domain: str,
         info = {key: None for key in _PAGE_FIELDS}
         info["name"] = None
     try:
-        confidence = _confidence(html, domain, info["website"]) if linkedin_url else "unverified"
+        confidence = (
+            _confidence(html, domain, info["website"], declarado_pelo_site,
+                        page_name=info["name"], company_name=company_name)
+            if linkedin_url else "unverified"
+        )
     except Exception as e:
         logger.warning("Falha ao validar vínculo do LinkedIn url=%s domain=%s: %s", linkedin_url, domain, e)
         confidence = "unverified"
@@ -363,6 +424,33 @@ def _slugify(value: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]+", "-", value).strip("-").lower()
 
 
+# Palavras que denunciam instituição de ensino. Importam porque a página
+# institucional dessas organizações fica em /school/, não em /company/ — e o
+# /company/ que existe com nome parecido costuma ser de um braço (hub de
+# inovação, editora, hospital universitário), não da instituição.
+_MARCADORES_ENSINO = (
+    "universidade", "university", "faculdade", "faculdades", "college",
+    "colegio", "escola", "school", "instituto", "institute", "centro universitario",
+    "unversidade", "uni", "puc", "ifsp", "etec", "senai", "sesi", "fatec",
+)
+
+
+def _tipos_de_pagina(domain: str, company_name: Optional[str]) -> tuple:
+    """
+    Em que caminhos do LinkedIn faz sentido procurar esta organização.
+
+    Instituição de ensino vem com /school/ na frente: é lá que está a página
+    real, e testar /company/ primeiro é o que encontrava a sub-marca.
+    """
+    domain = (domain or "").lower()
+    if domain.endswith(".edu") or ".edu." in domain:
+        return ("school", "company")
+    texto = f"{_slugify(company_name)} {_slugify(domain)}".replace("-", " ")
+    if any(re.search(rf"\b{re.escape(m)}", texto) for m in _MARCADORES_ENSINO):
+        return ("school", "company")
+    return ("company",)
+
+
 def _guess_slug_candidates(company_name: Optional[str], domain: str) -> List[str]:
     """
     Palpites de slug do LinkedIn a partir do nome da empresa e do domínio.
@@ -401,6 +489,14 @@ def _guess_slug_candidates(company_name: Optional[str], domain: str) -> List[str
         for suffix in ("-br", "-brasil", "-americas", "-latam"):
             candidates.append(f"{base}{suffix}")
 
+    # Universidade brasileira marca a página institucional com "oficial" para
+    # se separar dos perfis de curso, centro acadêmico e campus:
+    # /school/pucproficial, /school/ufprofficial.
+    if _tipos_de_pagina(domain, company_name)[0] == "school":
+        for raiz in (base, root):
+            if raiz:
+                candidates += [f"{raiz}oficial", f"{raiz}-oficial"]
+
     seen = set()
     unique = []
     for c in candidates:
@@ -408,6 +504,28 @@ def _guess_slug_candidates(company_name: Optional[str], domain: str) -> List[str
             seen.add(c)
             unique.append(c)
     return unique[:_MAX_SLUG_CANDIDATES]
+
+
+# Palavras que uma empresa acrescenta ao próprio nome sem virar outra coisa:
+# razão social, qualificador de grupo, praça de operação. "Grupo Madero" é
+# Madero; "Hotmilk PUCPR" não é a PUCPR.
+_TOKENS_GENERICOS = frozenset({
+    "grupo", "group", "cia", "companhia", "holding", "sa", "as", "ltda", "me",
+    "epp", "eireli", "inc", "corp", "corporation", "llc", "ltd", "the",
+    "do", "da", "de", "dos", "das", "e", "oficial", "official",
+    "brasil", "brazil", "br", "latam", "americas",
+})
+
+
+def _tokens_fortes(value: Optional[str]) -> set:
+    """
+    Palavras de um nome que carregam identidade — sem qualificador genérico.
+
+    Tokens de 1-2 letras saem junto: são iniciais e preposições, e casá-los
+    aceitaria qualquer coisa.
+    """
+    tokens = _slugify(value or "").split("-")
+    return {t for t in tokens if len(t) > 2 and t not in _TOKENS_GENERICOS}
 
 
 def _names_match(page_name: Optional[str], company_name: Optional[str], domain: str) -> bool:
@@ -419,11 +537,24 @@ def _names_match(page_name: Optional[str], company_name: Optional[str], domain: 
     corretos: /company/madero diz "Grupo Madero" (buscamos
     restaurantemadero.com.br) e /company/cia-hering diz "Cia. Hering" mas
     declara o site da Azzas 2154, que a incorporou.
+
+    O que separa esses dois da armadilha é O QUE SOBRA no nome da página.
+    "Grupo Madero" só acrescenta um qualificador; "HOTMILK | Ecossistema de
+    Inovação PUCPR" acrescenta uma marca própria — é o hub de inovação da
+    universidade, uma entidade diferente, e entrava na ficha da PUCPR só
+    porque continha "pucpr". Marca estranha no nome derruba o aceite antes de
+    qualquer teste de semelhança: conter o nome não é ser a empresa.
     """
     if not page_name:
         return False
     page_key = re.sub(r"[^a-z0-9]", "", _slugify(page_name))
     if not page_key:
+        return False
+
+    conhecidos = _tokens_fortes(company_name) | _tokens_fortes(domain.split(".")[0])
+    estranhos = _tokens_fortes(page_name) - conhecidos
+    if estranhos and conhecidos:
+        # Sobrou marca que não vem nem do nome nem do domínio: outra entidade.
         return False
 
     for raw in (company_name, domain.split(".")[0]):
@@ -450,13 +581,19 @@ def _guess_from_slugs(domain: str, company_name: Optional[str]) -> Optional[dict
     página batendo com o da empresa. Palpite sem nenhuma das duas provas é
     descartado.
     """
-    candidates = _guess_slug_candidates(company_name, domain)
-    if not candidates:
+    slugs = _guess_slug_candidates(company_name, domain)
+    if not slugs:
         return None
 
-    def _try(slug: str) -> Optional[dict]:
-        url = _normalize(slug)
-        page = inspect_company_page(url, domain)
+    # Cada slug é testado nos caminhos plausíveis antes de passar ao próximo:
+    # para uma universidade, /school/<slug> vem antes de /company/<slug>, que
+    # é onde moram os braços da instituição.
+    tipos = _tipos_de_pagina(domain, company_name)
+    candidates = [(kind, slug) for slug in slugs for kind in tipos][:_MAX_SLUG_CANDIDATES]
+
+    def _try(kind: str, slug: str) -> Optional[dict]:
+        url = _normalize(slug, kind)
+        page = inspect_company_page(url, domain, company_name=company_name)
         if page["confidence"] == "verified":
             return {"url": url, "page": page}
         if _names_match(page.get("name"), company_name, domain):
@@ -467,7 +604,7 @@ def _guess_from_slugs(domain: str, company_name: Optional[str]) -> Optional[dict
         return None
 
     with ThreadPoolExecutor(max_workers=len(candidates)) as pool:
-        futures = [pool.submit(_try, slug) for slug in candidates]
+        futures = [pool.submit(_try, kind, slug) for kind, slug in candidates]
         # Ordem dos candidatos importa: o primeiro palpite é o mais provável,
         # então percorremos na ordem de submissão, não na de conclusão.
         for future in futures:
@@ -492,7 +629,7 @@ def find_company_linkedin(domain: str, company_name: Optional[str] = None) -> di
 
     # Estratégia 1: extração do site (a empresa declarando o próprio perfil)
     try:
-        found = _extract_from_site(domain)
+        found = _extract_from_site(domain, company_name)
     except Exception as e:
         logger.warning("Extração de LinkedIn do site falhou domain=%s: %s", domain, e)
         found = None
@@ -524,5 +661,6 @@ def find_company_linkedin(domain: str, company_name: Optional[str] = None) -> di
         return {"url": None, "confidence": "none", "source": None, "page": None}
 
     if page is None:
-        page = inspect_company_page(found, domain)
+        page = inspect_company_page(found, domain, declarado_pelo_site=(source == "site"),
+                                    company_name=company_name)
     return {"url": found, "confidence": page["confidence"], "source": source, "page": page}

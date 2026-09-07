@@ -32,7 +32,7 @@ from html import unescape
 from urllib.parse import unquote
 from bs4 import BeautifulSoup
 
-from ._utils import normalize_domain, HEADERS, LINKEDIN_COMPANY_RE
+from ._utils import normalize_domain, HEADERS, linkedin_ref
 from ._ddg import search_multi
 from .email_verifier import verify_emails_effective
 from .people.identity import name_tokens
@@ -288,12 +288,14 @@ def _fetch_people_tab_decisors(
     Retorna lista de dicts no schema padrão.
     Requer que o LinkedIn retorne HTML sem autenticação (melhor esforço).
     """
-    slug_match = LINKEDIN_COMPANY_RE.search(linkedin_url)
-    if not slug_match:
+    ref = linkedin_ref(linkedin_url)
+    if not ref:
         return []
 
-    company_slug = slug_match.group(1).rstrip("/")
-    people_url = f"https://www.linkedin.com/company/{company_slug}/people/"
+    # /school/ tem aba de pessoas igual — forçar /company/ devolveria 404 e
+    # nenhum decisor para instituição de ensino.
+    kind, company_slug = ref
+    people_url = f"https://www.linkedin.com/{kind}/{company_slug}/people/"
 
     try:
         resp = requests.get(people_url, headers=HEADERS, timeout=timeout, allow_redirects=True)

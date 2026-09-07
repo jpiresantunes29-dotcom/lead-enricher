@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openpyxl import Workbook, load_workbook
 
-from ._utils import LINKEDIN_COMPANY_RE, normalize_domain
+from ._utils import LINKEDIN_PAGE_RE, normalize_domain
 
 # Limites — protegem a função serverless (60 s na Vercel) e a memória.
 MAX_FILE_BYTES = 15 * 1024 * 1024   # 15 MB
@@ -331,8 +331,8 @@ def _extract_domain(values: Dict[str, str]) -> Tuple[str, str]:
 
 
 def _clean_linkedin(value: str) -> str:
-    """Mantém só URL de empresa (o /in/ das colunas de decisor não é da empresa)."""
-    match = LINKEDIN_COMPANY_RE.search(value or "")
+    """Mantém só URL de organização (o /in/ das colunas de decisor não é da empresa)."""
+    match = LINKEDIN_PAGE_RE.search(value or "")
     return match.group(0).rstrip("/") if match else ""
 
 

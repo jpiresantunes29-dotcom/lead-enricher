@@ -20,7 +20,9 @@ from typing import Optional
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 
-from ._utils import HEADERS, LINKEDIN_COMPANY_RE, looks_like_search_block
+from ._utils import (
+    HEADERS, jsonld_organization, linkedin_ref, looks_like_search_block,
+)
 
 # Padrões comuns no og:description / página do LinkedIn
 COUNT_PATTERNS = [
@@ -210,12 +212,15 @@ def _fetch_people_tab_count(linkedin_url: str) -> Optional[dict]:
     URL: linkedin.com/company/{slug}/people/
     Retorna {raw, min, max, band, exact, source: 'linkedin_people'} ou None.
     """
-    slug_match = LINKEDIN_COMPANY_RE.search(linkedin_url)
-    if not slug_match:
+    ref = linkedin_ref(linkedin_url)
+    if not ref:
         return None
 
-    slug = slug_match.group(1).rstrip("/")
-    people_url = f"https://www.linkedin.com/company/{slug}/people/"
+    # A aba existe nos dois caminhos, e reescrever /school/ como /company/
+    # levaria a uma página inexistente — a contagem viria vazia para toda
+    # universidade.
+    kind, slug = ref
+    people_url = f"https://www.linkedin.com/{kind}/{slug}/people/"
     text = _try_url(people_url)
     if not text or len(text) < 2000:
         return None
@@ -264,14 +269,14 @@ def _fetch_people_tab_count(linkedin_url: str) -> Optional[dict]:
 
 def _bing_count(linkedin_url: str) -> Optional[dict]:
     """Snapshot do Bing. Só vale para slug textual — ver comentário abaixo."""
-    slug_match = LINKEDIN_COMPANY_RE.search(linkedin_url)
+    ref = linkedin_ref(linkedin_url)
     # Slug numérico é o ID interno do LinkedIn (ex.: /company/2629565). A página
     # de busca repete o termo pesquisado, e o regex leria esse ID como
     # "2.629.565 funcionários" — dado absurdo. Nesse caso, não busca.
-    if not slug_match or slug_match.group(1).isdigit():
+    if not ref or ref[1].isdigit():
         return None
-    slug = slug_match.group(1)
-    bing_url = f"https://www.bing.com/search?q={quote_plus(f'linkedin.com/company/{slug} employees')}"
+    kind, slug = ref
+    bing_url = f"https://www.bing.com/search?q={quote_plus(f'linkedin.com/{kind}/{slug} employees')}"
     text = _try_url(bing_url)
     # O Bing está bloqueando robô (verificado em ago/2026): devolve página de
     # desafio com 200. Sem esta guarda, o regex leria números do bloqueio como
@@ -279,11 +284,88 @@ def _bing_count(linkedin_url: str) -> Optional[dict]:
     if not text or looks_like_search_block(text):
         return None
     # Remove o eco do próprio termo pesquisado antes de extrair números
-    text = re.sub(rf"linkedin\.com/company/{re.escape(slug)}", " ", text, flags=re.IGNORECASE)
+    text = re.sub(rf"linkedin\.com/{kind}/{re.escape(slug)}", " ", text, flags=re.IGNORECASE)
     result = _find_in_text(text)
     if result:
         result["source"] = "bing_search"
     return result
+
+
+# Elementos cujo texto é escolha oferecida ao VISITANTE, não fato sobre a
+# organização dona do site. O formulário é o caso perigoso: um dropdown "porte
+# da sua empresa" contém exatamente as palavras que procuramos.
+_TAGS_NAO_INSTITUCIONAIS = ("script", "style", "noscript", "form", "select",
+                            "option", "input", "textarea", "button", "nav")
+
+# Classificação de porte ("Microempresa — até 19 colaboradores", "Pequeno
+# porte: de 20 a 99") descreve uma FAIXA que o leitor escolhe, não o tamanho
+# de quem publicou a página. Rede de segurança para quando esse texto aparece
+# fora de um formulário — numa tabela de planos, por exemplo.
+_CLASSIFICACAO_DE_PORTE_RE = re.compile(
+    r"microempresa|micro empresa|pequeno porte|m[ée]dio porte|grande porte"
+    r"|porte da (?:sua )?empresa|\bmei\b|\bepp\b"
+    r"|at[ée]\s*[\d,.]+\s*(?:funcion[áa]rios|colaboradores|employees)",
+    re.IGNORECASE,
+)
+
+
+def _texto_institucional(html: str) -> str:
+    """
+    Texto visível da página, sem o que o visitante preenche ou navega.
+
+    Bug real (pucpr.br): a contagem da universidade saía como "19
+    colaboradores" — lido do `<option>` "Microempresa (até 19 colaboradores)"
+    no formulário de contato da página /empresa. Rodar o regex sobre o HTML
+    inteiro faz o coletor ler as perguntas do site como se fossem respostas
+    sobre ele.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all(_TAGS_NAO_INSTITUCIONAIS):
+        tag.decompose()
+    return soup.get_text(" ", strip=True)
+
+
+def _numero_de_funcionarios_declarado(html: str) -> Optional[dict]:
+    """
+    `numberOfEmployees` do JSON-LD — a empresa declarando o próprio tamanho.
+
+    É a única afirmação da página que não depende de adivinhar o contexto de
+    um número solto no meio do texto.
+    """
+    try:
+        org = jsonld_organization(BeautifulSoup(html, "html.parser"))
+    except Exception:
+        return None
+    valor = (org or {}).get("numberOfEmployees")
+    if isinstance(valor, dict):      # QuantitativeValue
+        valor = valor.get("value") or valor.get("maxValue") or valor.get("minValue")
+    if valor is None:
+        return None
+    return normalize_employee_count(str(valor))
+
+
+def _count_from_site_page(html: str) -> Optional[dict]:
+    """Contagem defensável a partir de UMA página institucional do site."""
+    if not html:
+        return None
+
+    declarado = _numero_de_funcionarios_declarado(html)
+    if declarado:
+        return declarado
+
+    texto = _texto_institucional(html)
+    resultado = _find_in_text(texto)
+    if not resultado:
+        return None
+
+    # O que sobrou ainda pode ser uma faixa de porte descrita em prosa.
+    trecho = resultado.get("raw") or ""
+    posicao = texto.lower().find(trecho.lower()[:20])
+    if posicao != -1:
+        vizinhanca = texto[max(0, posicao - 120):posicao + len(trecho) + 40]
+        if _CLASSIFICACAO_DE_PORTE_RE.search(vizinhanca):
+            return None
+    return resultado
 
 
 def _website_count(website_url: str) -> Optional[dict]:
@@ -299,7 +381,7 @@ def _website_count(website_url: str) -> Optional[dict]:
                 continue
             if not text:
                 continue
-            result = _find_in_text(text)
+            result = _count_from_site_page(text)
             if result:
                 result["source"] = "company_website"
                 return result

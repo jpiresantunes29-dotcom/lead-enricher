@@ -14,7 +14,7 @@ import re
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from models.database import Company, Lead
@@ -94,7 +94,12 @@ def from_database(db: Session, company_name: Optional[str] = None,
                 db.query(Lead)
                 .filter(
                     Lead.user_id == user_id,
-                    Lead.linkedin_url.ilike(f"%/company/{linkedin_slug}%"),
+                    # Instituição de ensino fica em /school/ — procurar só em
+                    # /company/ não acharia o lead já gravado.
+                    or_(
+                        Lead.linkedin_url.ilike(f"%/company/{linkedin_slug}%"),
+                        Lead.linkedin_url.ilike(f"%/school/{linkedin_slug}%"),
+                    ),
                     Lead.domain.isnot(None),
                 )
                 .first()
