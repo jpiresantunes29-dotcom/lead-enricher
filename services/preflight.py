@@ -1,0 +1,357 @@
+"""
+Prontidão para produção: o que precisa estar no lugar antes de ligar.
+
+Existe porque a lista de coisas que precisam estar certas ficou grande demais
+para caber na cabeça de alguém às onze da noite de uma sexta. Cada item traz
+**o que acontece se estiver faltando** — uma checagem que diz só "faltando" faz
+a pessoa conferir a variável e seguir sem entender o risco que correu.
+
+Três severidades, e a diferença é o que se faz com elas:
+
+  `impede`   sem isto o produto não funciona ou funciona errado. Não ligue.
+  `perigoso` funciona, mas de um jeito que custa caro se der errado — meia
+             configuração do WhatsApp, segredo de CRM em claro.
+  `atencao`  funciona; alguma capacidade fica desligada, e é bom saber qual.
+
+Não decide nada sozinho: é chamado pelo boot (que falha em `impede`) e pela
+rota de conferência, para a pessoa ler antes da virada.
+"""
+import os
+from dataclasses import dataclass, field
+from typing import List, Optional
+
+from middleware.auth import (
+    PROJETO_REF,
+    estado_das_chaves,
+    jwt_configured,
+    secret_confere_com_projeto,
+    variaveis_de_outro_projeto,
+    verificacao_por_jwks,
+)
+from models.database import ALEMBIC_HEAD, SessionLocal, schema_status
+from services import ai_insights, crypto
+from services.wa import brain, client as wa_client, webhook as wa_webhook
+
+IMPEDE = "impede"
+PERIGOSO = "perigoso"
+ATENCAO = "atencao"
+
+_ORDEM = {IMPEDE: 0, PERIGOSO: 1, ATENCAO: 2}
+
+
+@dataclass
+class Achado:
+    severidade: str
+    titulo: str
+    consequencia: str          # o que acontece se ficar assim
+    como_resolver: str
+
+
+@dataclass
+class Relatorio:
+    producao: bool
+    achados: List[Achado] = field(default_factory=list)
+
+    @property
+    def pronto(self) -> bool:
+        """Pronto = nada que impeça. `perigoso` é decisão de quem liga."""
+        return not any(a.severidade == IMPEDE for a in self.achados)
+
+    @property
+    def bloqueios(self) -> List[Achado]:
+        return [a for a in self.achados if a.severidade == IMPEDE]
+
+    def como_dict(self) -> dict:
+        return {
+            "pronto": self.pronto,
+            "producao": self.producao,
+            "achados": [
+                {"severidade": a.severidade, "titulo": a.titulo,
+                 "consequencia": a.consequencia, "como_resolver": a.como_resolver}
+                for a in sorted(self.achados, key=lambda a: _ORDEM.get(a.severidade, 9))
+            ],
+        }
+
+
+def _env(nome: str) -> str:
+    return (os.getenv(nome) or "").strip()
+
+
+def _checar_fundacao(rel: Relatorio) -> None:
+    """Banco, autenticação e modo de operação."""
+    schema = schema_status()
+    if not schema.get("ok"):
+        faltando = ", ".join(
+            schema.get("missing_tables", [])
+            + list(schema.get("missing_columns", {}).keys())
+        ) or schema.get("error", "desconhecido")
+        rel.achados.append(Achado(
+            IMPEDE, "O banco não tem o schema que o código espera",
+            f"Cada clique que tocar o que falta responde 500. Ausente: {faltando}.",
+            f"Rode `alembic upgrade head` no banco de produção "
+            f"(a revisão atual é {ALEMBIC_HEAD}).",
+        ))
+
+    # A chave pública do projeto está gravada no código como piso, então a
+    # verificação continua de pé quando a busca falha. Silenciar isso seria
+    # ruim: a rede quebrada só apareceria numa rotação de chave, meses depois,
+    # como um 401 sem explicação.
+    chaves = estado_das_chaves()
+    if chaves["origem"] == "embutida" and chaves["erro"]:
+        rel.achados.append(Achado(
+            ATENCAO, "O deploy não consegue buscar as chaves públicas do Supabase",
+            "O login funciona pela chave pública embutida no código, mas uma "
+            "rotação de chave no projeto passaria despercebida — e aí todo login "
+            f"vira 401. A busca falhou com: {chaves['erro']}.",
+            "Confira a saída de rede do deploy para "
+            "<projeto>.supabase.co/auth/v1/.well-known/jwks.json.",
+        ))
+
+    # Variável do deploy apontando para outro projeto Supabase. Não quebra mais
+    # nada (o código descarta e usa o projeto dele), mas continua no painel
+    # dizendo o contrário de quem manda — e é o primeiro lugar em que alguém vai
+    # mexer no próximo problema de login.
+    ignoradas = variaveis_de_outro_projeto()
+    if ignoradas:
+        nomes = ", ".join(f"{nome} (aponta para '{valor}')"
+                          for nome, valor in sorted(ignoradas.items()))
+        rel.achados.append(Achado(
+            ATENCAO, "Variável de ambiente de outro projeto Supabase",
+            f"{nomes}. O app ignora e usa o projeto '{PROJETO_REF}', então o login "
+            "funciona; o risco é humano: quem abrir o painel vai ler que o projeto "
+            "é outro e mexer na configuração errada.",
+            "Apague essas variáveis do ambiente do deploy, ou corrija-as para o "
+            f"projeto {PROJETO_REF}.",
+        ))
+
+    # Com chave pública publicada, o login se valida sozinho e o segredo legado
+    # deixa de importar. Só quando não há JWKS é que ele vira o único caminho.
+    if not verificacao_por_jwks():
+        if not jwt_configured():
+            rel.achados.append(Achado(
+                IMPEDE, "Sem chave para verificar login",
+                "Nenhum login real é aceito: as rotas autenticadas respondem 503. "
+                "O projeto não publica chave pública (JWKS) e não há "
+                "SUPABASE_JWT_SECRET configurado.",
+                "Troque a chave de assinatura do projeto para assimétrica "
+                "(Supabase > JWT Keys > ECC P-256) — é o caminho que dispensa "
+                "segredo no deploy. Alternativa: definir SUPABASE_JWT_SECRET.",
+            ))
+        elif secret_confere_com_projeto() is False:
+            rel.achados.append(Achado(
+                IMPEDE, "SUPABASE_JWT_SECRET é de outro projeto Supabase",
+                "O login pelo Google termina bem e mesmo assim o app volta "
+                "deslogado: o token que o Supabase emite não passa na verificação "
+                "e toda rota autenticada responde 401.",
+                "Pegue o JWT Secret do MESMO projeto cuja anon key está em "
+                "static/js/app.js (Supabase > Settings > API > JWT Settings) e "
+                "atualize a variável no ambiente do deploy.",
+            ))
+        else:
+            rel.achados.append(Achado(
+                ATENCAO, "Login depende do JWT Secret legado",
+                "O projeto não publica chave pública, então tudo depende de ele "
+                "ainda assinar com o segredo legado. Se a chave de assinatura "
+                "atual for um 'segredo compartilhado', o material não é "
+                "extraível do Supabase e todo login é recusado com 401 — sem "
+                "nenhum valor de variável que resolva.",
+                "Confira em Supabase > JWT Keys qual é a chave atual. Se não for "
+                "a legada, troque-a por uma assimétrica (ECC P-256): ela é "
+                "publicada no JWKS e o servidor passa a validar sem segredo.",
+            ))
+
+    if not _env("CRON_SECRET"):
+        rel.achados.append(Achado(
+            IMPEDE, "CRON_SECRET ausente",
+            "As rotas internas respondem 503, então a fila de análise não anda "
+            "e as conversas que caírem na madrugada nunca são retomadas.",
+            'Gere com: python -c "import secrets; print(secrets.token_urlsafe(32))"',
+        ))
+
+    if rel.producao and _env("DATABASE_URL").startswith("sqlite"):
+        rel.achados.append(Achado(
+            IMPEDE, "Produção apontando para SQLite",
+            "O disco da função serverless é efêmero: os dados somem a cada "
+            "deploy, e leituras simultâneas travam.",
+            "Aponte DATABASE_URL para o Postgres do Supabase.",
+        ))
+
+
+def _checar_whatsapp(rel: Relatorio) -> None:
+    """
+    O caso perigoso não é "desligado" — é **meio ligado**.
+
+    Com envio configurado e `WHATSAPP_APP_SECRET` ausente, o produto manda
+    mensagem e não consegue provar que o que volta é mesmo da Meta. O webhook
+    recusa tudo (falha fechada, como deve), então o efeito prático é: o lead
+    responde e ninguém nunca fica sabendo. Convite pago, resposta perdida.
+
+    Olha só as variáveis do servidor — a **reserva**, usada por quem ainda não
+    conectou uma conta. Cada conta conectada traz o próprio par token/segredo,
+    coerente por construção: a tela confere as credenciais com a Meta antes de
+    gravar, e sem App Secret o webhook daquela conta recusa a entrega.
+    """
+    envia = wa_client.is_configured()
+    assina = wa_webhook.is_configured()
+
+    if not envia and not assina:
+        rel.achados.append(Achado(
+            ATENCAO, "Servidor sem WhatsApp de reserva",
+            "Nada impede o produto de funcionar: cada usuário conecta o próprio "
+            "número em Configurações. Quem não conectar não envia nem recebe.",
+            "Só defina as variáveis WHATSAPP_* se quiser um número padrão para "
+            "quem ainda não conectou o seu.",
+        ))
+        return
+
+    if envia and not assina:
+        rel.achados.append(Achado(
+            PERIGOSO, "WhatsApp envia, mas não valida o que recebe",
+            "O convite sai e é cobrado; quando o lead responder, o webhook "
+            "recusa a entrega por falta de assinatura e a resposta se perde.",
+            "Defina WHATSAPP_APP_SECRET e WHATSAPP_VERIFY_TOKEN, e cadastre a "
+            "URL do webhook no painel da Meta.",
+        ))
+    elif assina and not envia:
+        rel.achados.append(Achado(
+            ATENCAO, "WhatsApp recebe, mas não envia",
+            "Nenhum primeiro contato pode ser iniciado; /api/wa/start responde "
+            f"503 pedindo: {', '.join(wa_client.missing_config())}.",
+            "Defina WHATSAPP_PHONE_NUMBER_ID e WHATSAPP_ACCESS_TOKEN.",
+        ))
+
+    if envia and not wa_client.template_name():
+        rel.achados.append(Achado(
+            PERIGOSO, "Nenhum template de abertura configurado",
+            "O botão de iniciar contato responde erro: sem template aprovado a "
+            "Meta não deixa abrir conversa.",
+            "Aprove um template na Meta e defina WHATSAPP_TEMPLATE_NAME.",
+        ))
+
+    if not _env("WHATSAPP_VERIFY_TOKEN") and envia:
+        rel.achados.append(Achado(
+            ATENCAO, "WHATSAPP_VERIFY_TOKEN ausente",
+            "O cadastro da URL do webhook no painel da Meta vai falhar no "
+            "handshake.",
+            "Defina qualquer segredo e use o mesmo valor no painel da Meta.",
+        ))
+
+    if envia and not brain.is_configured():
+        rel.achados.append(Achado(
+            ATENCAO, "IA desligada com WhatsApp ligado",
+            "Toda resposta de lead vira pendência humana com o motivo escrito. "
+            "Não se perde nada, mas ninguém responde sozinho.",
+            "Defina GROQ_API_KEY para a automação responder.",
+        ))
+
+
+def _checar_segredos(rel: Relatorio, db) -> None:
+    """
+    As credenciais de CRM estão cifradas no banco?
+
+    A severidade olha para o que existe gravado, não só para a variável: sem
+    nenhuma conexão configurada, `SECRETS_KEY` ausente é um aviso sobre o
+    futuro; com segredo real em claro, é exposição que já aconteceu — quem
+    tiver uma cópia do banco assina payload como se fosse a gente.
+    """
+    try:
+        inv = crypto.inventario(db)
+    except Exception:   # banco fora do ar já é reportado por _checar_fundacao
+        return
+
+    if not crypto.chave_configurada():
+        em_claro = inv["em_claro"]
+        rel.achados.append(Achado(
+            (PERIGOSO if (em_claro or rel.producao) else ATENCAO),
+            "SECRETS_KEY ausente: credenciais de CRM gravadas em claro",
+            (f"{em_claro} segredo(s) já gravado(s) legível(is) para quem "
+             "tiver uma cópia do banco — o do webhook assina o que chega no "
+             "CRM do usuário." if em_claro else
+             "Os próximos tokens e segredos de CRM serão gravados em claro."),
+            'Gere com: python -c "import secrets; print(secrets.token_urlsafe(32))" '
+            "e depois rode scripts/recriptografar_segredos.py.",
+        ))
+        return
+
+    if inv["em_claro"]:
+        rel.achados.append(Achado(
+            ATENCAO, f"{inv['em_claro']} segredo(s) de CRM ainda em claro",
+            "São de antes da chave existir. Continuam funcionando, mas seguem "
+            "legíveis em qualquer cópia do banco.",
+            "Rode scripts/recriptografar_segredos.py (idempotente).",
+        ))
+
+    if inv["ilegiveis"]:
+        rel.achados.append(Achado(
+            PERIGOSO, f"{inv['ilegiveis']} segredo(s) não abrem com a SECRETS_KEY atual",
+            "O push para o CRM dessas conexões responde 409 em vez de enviar "
+            "sem assinatura. A chave foi trocada ou perdida.",
+            "Volte a SECRETS_KEY anterior, ou peça ao usuário para regravar a "
+            "conexão em Configurações.",
+        ))
+
+
+def _checar_opcionais(rel: Relatorio) -> None:
+    """Capacidades que ficam desligadas em silêncio se ninguém conferir."""
+    if not ai_insights.is_configured():
+        rel.achados.append(Achado(
+            ATENCAO, "Resumo executivo por IA desligado",
+            "Os endpoints de resumo e roteiro de ligação respondem 503.",
+            "Defina GROQ_API_KEY.",
+        ))
+
+    if not _env("RESEND_API_KEY"):
+        rel.achados.append(Achado(
+            PERIGOSO if rel.producao else ATENCAO,
+            "E-mail transacional desligado",
+            "O pedido de remoção (LGPD) fica pendente e o link de confirmação "
+            "só aparece no log do servidor — o titular nunca recebe, e o "
+            "bloqueio nunca se confirma.",
+            "Defina RESEND_API_KEY e MAIL_FROM.",
+        ))
+
+    if rel.producao and not _env("SITE_URL"):
+        rel.achados.append(Achado(
+            ATENCAO, "SITE_URL ausente",
+            "As URLs canônicas saem da origem da requisição, o que gera "
+            "conteúdo duplicado entre o domínio próprio e o *.vercel.app.",
+            "Defina SITE_URL com o domínio final, sem barra no fim.",
+        ))
+
+
+def verificar(producao: Optional[bool] = None, db=None) -> Relatorio:
+    """
+    Roda todas as conferências e devolve o relatório.
+
+    `db` é opcional porque o boot roda antes de existir requisição; quando a
+    rota chama, ela passa a própria sessão — é o que faz a conferência olhar
+    para o mesmo banco que o resto do processo, e não para o que a variável de
+    ambiente apontava quando o módulo carregou.
+    """
+    if producao is None:
+        producao = (os.getenv("APP_ENV") or "").lower() == "production"
+    rel = Relatorio(producao=producao)
+    _checar_fundacao(rel)
+    _checar_whatsapp(rel)
+
+    propria = db is None
+    if propria:
+        db = SessionLocal()
+    try:
+        _checar_segredos(rel, db)
+    finally:
+        if propria:
+            db.close()
+
+    _checar_opcionais(rel)
+    return rel
+
+
+def resumo_para_log(rel: Relatorio) -> str:
+    """Uma linha por achado, para o log do boot."""
+    if not rel.achados:
+        return "Tudo conferido: nada pendente."
+    return "\n".join(
+        f"  [{a.severidade}] {a.titulo} — {a.consequencia}" for a in
+        sorted(rel.achados, key=lambda a: _ORDEM.get(a.severidade, 9))
+    )

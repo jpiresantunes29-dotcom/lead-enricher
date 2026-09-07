@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "LeadEnricher — Contatos B2B",
+  "version": "0.1.0",
+  "description": "Mostra decisores, e-mail corporativo verificado e telefone da empresa direto nas páginas do LinkedIn.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://www.linkedin.com/*",
+    "https://leadenricher.app/*",
+    "https://*.vercel.app/*",
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "LeadEnricher",
+    "default_popup": "ui/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.linkedin.com/in/*",
+        "https://www.linkedin.com/company/*",
+        "https://www.linkedin.com/search/results/people/*"
+      ],
+      "js": ["content/linkedin.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

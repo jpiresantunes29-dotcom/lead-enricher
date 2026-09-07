@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget",
+      "Bash(python -m uvicorn main:app --reload --port 8000)",
+      "Bash(curl -s http://localhost:8000 -o /dev/null -w \"%{http_code}\")",
+      "Bash(Start-Process \"http://localhost:8000\")",
+      "PowerShell(Start-Process \"http://localhost:8000\")",
+      "Bash(python -m uvicorn main:app --port 8000)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(python -c \"import sys,json; paths=json.load\\(sys.stdin\\)['paths']; [print\\(m.upper\\(\\), p\\) for p,methods in paths.items\\(\\) for m in methods if m!='options']\")",
+      "Bash(Get-Process -Name python -ErrorAction SilentlyContinue)",
+      "Bash(Stop-Process -Force)",
+      "Bash(Start-Sleep -Seconds 1)",
+      "Bash(Write-Output \"killed\")",
+      "Bash(python3 -c \"import sys,json; paths=json.load\\(sys.stdin\\)['paths']; [print\\(m.upper\\(\\), p\\) for p,methods in paths.items\\(\\) for m in methods if m!='options']\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"static\\\\landing\\\\vendor\")",
+      "PowerShell(New-Item -ItemType Directory -Force \"static\\\\landing\\\\fx\")",
+      "PowerShell(Invoke-WebRequest -Uri \"https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/gsap.min.js\" -OutFile \"static\\\\landing\\\\vendor\\\\gsap.min.js\")",
+      "PowerShell(Invoke-WebRequest -Uri \"https://cdn.jsdelivr.net/npm/gsap@3.13.0/dist/ScrollTrigger.min.js\" -OutFile \"static\\\\landing\\\\vendor\\\\ScrollTrigger.min.js\")",
+      "PowerShell(Invoke-WebRequest -Uri \"https://cdn.jsdelivr.net/npm/lenis@1.3.4/dist/lenis.min.js\" -OutFile \"static\\\\landing\\\\vendor\\\\lenis.min.js\")",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python -c \"import sqlite3; c=sqlite3.connect\\('lead_enricher.db'\\); cur=c.cursor\\(\\); cur.execute\\('ALTER TABLE profiles ADD COLUMN quota_reset_at DATETIME'\\); c.commit\\(\\); print\\('ok'\\); c.close\\(\\)\")",
+      "Bash(python -c \"import uvicorn, fastapi\")",
+      "Bash(python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000)",
+      "mcp__claude-in-chrome__list_connected_browsers",
+      "mcp__claude-in-chrome__navigate"
+    ]
+  }
+}

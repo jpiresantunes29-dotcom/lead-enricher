@@ -1,0 +1,20 @@
+/* Complemento de legal_base.css para as páginas de conteúdo (/guias) */
+.gd-lede{font-size:16px;color:#475569;margin-bottom:8px}
+.gd-meta{font-size:13px;color:#64748B;margin-bottom:36px}
+.gd-list{list-style:none;padding:0;margin:8px 0 0}
+.gd-list li{margin-bottom:14px}
+.gd-card{
+  display:block;background:#fff;border:1px solid #E2E8F0;border-radius:10px;
+  padding:18px 20px;transition:border-color .15s,box-shadow .15s;
+}
+.gd-card:hover{border-color:#BFDBFE;box-shadow:0 4px 14px rgba(15,23,42,.06);text-decoration:none}
+.gd-card h2{font-size:17px;margin:0 0 6px;color:#0F172A}
+.gd-card p{font-size:14px;color:#475569;margin:0}
+.gd-card .gd-min{font-size:12px;color:#64748B;margin-top:8px;display:block}
+.lg-wrap code{
+  font-family:ui-monospace,'Cascadia Mono','Consolas',monospace;
+  font-size:.88em;background:#EEF2F7;border-radius:4px;padding:1px 5px;color:#1E293B;
+}
+.gd-related{border-top:1px solid #E2E8F0;margin-top:44px;padding-top:24px}
+.gd-related h2{margin-top:0}
+.gd-back{display:inline-block;font-size:13px;margin-bottom:22px}

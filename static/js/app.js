@@ -1,0 +1,3930 @@
+/* ════════════════════════════════════════════════════════════════
+   LeadEnricher — app (/app)
+   Views roteadas por hash: '' (buscar) · #dashboard · #pipeline ·
+   #followups · #history · #settings · #lead-<id>
+   ════════════════════════════════════════════════════════════════ */
+
+/* ══════ LOADING MESSAGES ══════ */
+const LOAD_MSGS=['Acessando o site...','Consultando LinkedIn...','Verificando DNS/MX...','Mapeando emails...','Identificando decisores...','Consolidando ficha...'];
+let loadInt=null;
+function startLoad(){
+  const s=document.getElementById('loading-status'),m=document.getElementById('loading-msg');
+  s.classList.add('visible');let i=0;m.textContent=LOAD_MSGS[0];
+  loadInt=setInterval(()=>{i=(i+1)%LOAD_MSGS.length;m.style.opacity='0';setTimeout(()=>{m.textContent=LOAD_MSGS[i];m.style.opacity='1';},150);},1800);
+}
+function stopLoad(){clearInterval(loadInt);document.getElementById('loading-status').classList.remove('visible');}
+
+/* ══════ IMPORT CONSTANTS ══════ */
+const IMP_FIELDS={'domain':'Domínio','company_name':'Empresa','linkedin_url':'LinkedIn','corporate_email':'Email','phone':'Telefone','sector':'Setor','location':'Localização','employee_count':'Funcionários','mx_provider':'Servidor MX','description':'Descrição'};
+const IMP_STATUS={'ok':{label:'✓',cls:'imp-ok'},'invalid':{label:'✗ Inválida',cls:'imp-invalid'},'duplicate_file':{label:'⟳ Duplicata',cls:'imp-dup'},'duplicate_db':{label:'← No histórico',cls:'imp-dup'}};
+const IMP_PREVIEW_COLS=5;
+
+/* ══════ SUPABASE AUTH ══════ */
+const _SB_URL='https://sgfbplozrpjnsudoawpz.supabase.co';
+const _SB_ANON='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNnZmJwbG96cnBqbnN1ZG9hd3B6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY1NTAyMjksImV4cCI6MjEwMjEyNjIyOX0.ry1F3IaKFd7yMFD8-pjj2j06xTZl6Xm8iUnweztCSMA';
+const _sb = supabase.createClient(_SB_URL,_SB_ANON);
+let _profile=null;
+let currentLeadId=null;
+let currentLeadData=null;   // ficha aberta — usada pela prévia do relatório DNS
+let _pendingRoute=null;   // rota que o usuário tentou abrir antes de logar
+
+// Rota canônica do produto — precisa estar na allowlist de Redirect URLs do Supabase
+const _AUTH_REDIRECT=window.location.origin+'/app';
+
+async function getToken(){
+  const {data}=await _sb.auth.getSession();
+  return data.session?.access_token||null;
+}
+
+async function authFetch(url,opts={}){
+  const token=await getToken();
+  if(!token){openAuthModal();throw new Error('not_authenticated');}
+  return fetch(url,{...opts,headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`,...(opts.headers||{})}});
+}
+
+/* Traduz a recusa do servidor para uma frase que diz o que fazer. Sem isto o
+   login "dá certo" no Google, o /api/me responde 401 e a tela volta ao estado
+   deslogado sem explicar nada — o usuário fica clicando em Entrar para sempre. */
+function _motivoRecusa(status,detalhe){
+  if(status===401)return 'O provedor autenticou você, mas o servidor recusou a credencial (401). '
+    +(detalhe||'');
+  if(status===503)return 'O servidor está sem chave para verificar o login. '
+    +'Nenhum login real é aceito enquanto isso não for configurado.';
+  return `O servidor recusou a sessão (HTTP ${status}).`+(detalhe?` ${detalhe}`:'');
+}
+
+/* Pergunta ao servidor POR QUE a credencial foi recusada. As causas possíveis
+   (segredo de outro projeto, chave de assinatura não publicada, projeto
+   trocado, sessão expirada, deploy sem variável) chegam à tela como o mesmo
+   401 — só o servidor sabe diferenciar, e mandar a pessoa ler o log de uma
+   função serverless é o mesmo que não dizer nada. */
+async function _diagnosticoDeLogin(){
+  try{
+    const token=await getToken();
+    const resp=await fetch('/api/auth/diagnostico',
+      {headers:token?{Authorization:`Bearer ${token}`}:{}});
+    if(!resp.ok)return null;
+    return await resp.json();
+  }catch(_){return null;}
+}
+
+/* Carrega o perfil. Devolve true só quando o servidor aceitou a sessão — quem
+   chama precisa saber a diferença entre "logado" e "logou no provedor mas o
+   backend não reconhece". */
+async function loadProfile(){
+  let resp;
+  try{
+    resp=await authFetch('/api/me');
+  }catch(e){
+    if(e&&e.message==='not_authenticated')return false;
+    _profile=null;updateNavUser();
+    showAuthMsg('Não foi possível falar com o servidor para confirmar seu login. '
+      +'Verifique a conexão e tente de novo.','err',true);
+    return false;
+  }
+  if(resp.ok){
+    _profile=await resp.json();
+    clearAuthMsg();
+    updateNavUser();loadTodayFollowupsCount();loadRecent();loadWaStatus();
+    return true;
+  }
+  let detalhe='';
+  try{const j=await resp.json();detalhe=j.detail||'';}catch(_){}
+  _profile=null;updateNavUser();
+  showAuthMsg(_motivoRecusa(resp.status,detalhe),'err',true);
+  openAuthModal();
+  // O diagnóstico vem depois porque é uma segunda ida ao servidor: a mensagem
+  // curta aparece na hora e ganha o motivo exato assim que ele chega.
+  _diagnosticoDeLogin().then(d=>{if(d)mostrarDiagnosticoDeLogin(d);});
+  return false;
+}
+
+/* Repete o /api/me com a sessão que já está no navegador.
+
+   Existe porque a recusa nem sempre é definitiva: propagação de chave nova,
+   oscilação de rede, deploy no ar naquele segundo. Sem isto a tela fica presa
+   num erro que já não é verdade, e a única saída é o usuário adivinhar que
+   precisa recarregar a página. */
+async function tentarLoginDeNovo(botao){
+  if(botao){botao.disabled=true;botao.textContent='Verificando…';}
+  const ok=await loadProfile();
+  if(ok){
+    closeAuthModal();
+    loadIntegrations();
+    applyRoute();focusSearch();
+    return;
+  }
+  // loadProfile já reescreveu a mensagem com o motivo desta tentativa.
+  const novo=document.getElementById('auth-retry');
+  if(novo){novo.disabled=false;novo.textContent='Tentar de novo';}
+}
+
+async function loadTodayFollowupsCount(){
+  try{
+    const resp=await authFetch('/api/followups/today');
+    if(resp.ok){
+      const fus=await resp.json();
+      const badge=document.getElementById('nav-today-count');
+      if(badge){
+        if(fus.length>0){badge.textContent=fus.length;badge.style.display='inline-block';}
+        else badge.style.display='none';
+      }
+    }
+  }catch(_){}
+}
+
+/* Situação do WhatsApp: alimenta o aviso na barra lateral e decide se o botão
+   "Iniciar contato" da ficha aparece ativo ou apagado. Carregado uma vez no
+   início; a tela de conversas atualiza sozinha enquanto está aberta. */
+async function loadWaStatus(){
+  try{
+    const resp=await authFetch('/api/wa/status');
+    if(resp.ok){
+      _waStatus=await resp.json();
+      atualizarBadgeConversas(_waStatus);
+    }
+  }catch(_){}
+}
+
+/* Rodapé da sidebar: quem está logado neste navegador. */
+function updateNavUser(){
+  const preauth=document.getElementById('header-preauth');
+  const postauth=document.getElementById('header-postauth');
+  if(!preauth)return;
+  if(!_profile){
+    preauth.style.display='flex';
+    if(postauth)postauth.style.display='none';
+    return;
+  }
+  preauth.style.display='none';
+  if(postauth)postauth.style.display='flex';
+
+  const mail=_profile.email||'—';
+  const set=(id,txt)=>{const el=document.getElementById(id);if(el)el.textContent=txt;};
+  set('sb-avatar',(mail[0]||'•').toUpperCase());
+  set('sb-user-mail',mail);
+}
+
+function openAuthModal(){document.getElementById('auth-modal').classList.add('open');checarProvedores();}
+function closeAuthModal(){document.getElementById('auth-modal').classList.remove('open');}
+
+/* `comRetentativa` só faz sentido quando já existe sessão do provedor no
+   navegador — é ela que o botão reenvia ao servidor. */
+function showAuthMsg(texto,tipo='err',comRetentativa=false){
+  const el=document.getElementById('auth-msg');if(!el)return;
+  el.className='auth-msg '+tipo;el.style.display='block';
+  el.textContent=texto;
+  if(comRetentativa){
+    const btn=document.createElement('button');
+    btn.type='button';btn.id='auth-retry';btn.className='auth-retry-btn';
+    btn.textContent='Tentar de novo';
+    btn.onclick=()=>tentarLoginDeNovo(btn);
+    el.appendChild(btn);
+  }
+}
+function clearAuthMsg(){
+  const el=document.getElementById('auth-msg');if(!el)return;
+  el.textContent='';el.style.display='none';
+}
+
+/* Escreve na tela o motivo exato da recusa e o que fazer, com os dados
+   técnicos dobrados logo abaixo — é o que se cola numa conversa com quem
+   administra o projeto Supabase, em vez de descrever de memória. */
+function mostrarDiagnosticoDeLogin(d){
+  const el=document.getElementById('auth-msg');if(!el||!d||!d.veredito)return;
+  if(d.veredito.situacao==='ok')return;   // /api/me já teria passado
+  const antigo=el.querySelector('.auth-diag');if(antigo)antigo.remove();
+
+  const cx=document.createElement('span');cx.className='auth-diag';
+  const motivo=document.createElement('span');
+  motivo.className='auth-diag-motivo';
+  motivo.textContent=d.veredito.resumo;
+  const acao=document.createElement('span');
+  acao.className='auth-diag-acao';
+  acao.textContent=d.veredito.como_resolver;
+
+  const det=document.createElement('details');det.className='auth-diag-tec';
+  const sum=document.createElement('summary');sum.textContent='Dados técnicos';
+  const pre=document.createElement('pre');pre.textContent=JSON.stringify(d,null,2);
+  const copiar=document.createElement('button');
+  copiar.type='button';copiar.className='auth-retry-btn';copiar.textContent='Copiar';
+  copiar.onclick=()=>{
+    navigator.clipboard.writeText(JSON.stringify(d,null,2))
+      .then(()=>{copiar.textContent='Copiado';})
+      .catch(()=>{copiar.textContent='Não foi possível copiar';});
+  };
+  det.append(sum,pre,copiar);
+  cx.append(motivo,acao,det);
+  // Antes do "Tentar de novo": o botão é a última coisa a fazer depois de ler,
+  // e no meio do texto ele parte a explicação em duas.
+  const retentar=document.getElementById('auth-retry');
+  if(retentar)el.insertBefore(cx,retentar);
+  else el.appendChild(cx);
+}
+
+/* Quais provedores estão realmente ligados no projeto Supabase. Botão de
+   provedor desligado continua na tela, apagado e explicando o porquê — some
+   seria pior: ninguém descobre que faltou habilitar. */
+const _PROV_BTN={google:'google',github:'github',azure:'microsoft',apple:'apple'};
+let _provChecados=false;
+async function checarProvedores(){
+  if(_provChecados)return;_provChecados=true;
+  let ext;
+  try{
+    const r=await fetch(`${_SB_URL}/auth/v1/settings`,{headers:{apikey:_SB_ANON}});
+    if(!r.ok)return;
+    ext=(await r.json()).external||{};
+  }catch(_){return;}
+  Object.entries(_PROV_BTN).forEach(([prov,slug])=>{
+    const btn=document.querySelector(`.auth-oauth-btn[data-prov="${slug}"]`);
+    if(!btn)return;
+    const ligado=ext[prov]===true;
+    btn.classList.toggle('desligado',!ligado);
+    btn.title=ligado?'':'Provedor não habilitado no projeto Supabase.';
+  });
+}
+
+/* ══════ RETORNO DO PROVEDOR ══════
+   O caminho que some sem deixar rastro: o provedor autentica, o Supabase
+   devolve o navegador — e sem credencial nenhuma, nem erro. Acontece quando a
+   URL de retorno não está na allowlist de Redirect URLs do projeto: o Supabase
+   descarta o `redirect_to` e manda a pessoa para a Site URL, que pode até ser
+   esta mesma página. Da tela é indistinguível de "não cliquei em nada".
+
+   Por isso o clique fica anotado. Se o app recarregar sem sessão com a anotação
+   fresca, foi este caminho — e aí dá para dizer qual URL precisa ser cadastrada
+   em vez de deixar a pessoa clicando em Entrar para sempre. */
+const _OAUTH_PEND='le_oauth_pendente';
+const _OAUTH_PEND_MS=10*60*1000;   // depois disso é outra visita, não este retorno
+
+function _marcarLoginIniciado(nome){
+  try{localStorage.setItem(_OAUTH_PEND,JSON.stringify(
+    {em:Date.now(),volta:_AUTH_REDIRECT,provedor:nome}));}catch(_){}
+}
+function _limparLoginPendente(){try{localStorage.removeItem(_OAUTH_PEND);}catch(_){}}
+function _loginPendente(){
+  try{
+    const m=JSON.parse(localStorage.getItem(_OAUTH_PEND)||'null');
+    if(!m||!m.em||Date.now()-m.em>_OAUTH_PEND_MS){_limparLoginPendente();return null;}
+    return m;
+  }catch(_){_limparLoginPendente();return null;}
+}
+
+async function signInWithProvider(provider,nome){
+  clearAuthMsg();
+  _marcarLoginIniciado(nome);
+  const{error}=await _sb.auth.signInWithOAuth({provider,options:{redirectTo:_AUTH_REDIRECT}});
+  // signInWithOAuth não lança: sem checar o `error`, provedor desabilitado vira
+  // um clique que não faz absolutamente nada.
+  if(error){
+    _limparLoginPendente();
+    showAuthMsg(`Não foi possível abrir o login com ${nome}: ${error.message}`);
+  }
+}
+async function signInWithGoogle(){await signInWithProvider('google','Google');}
+async function signInWithGitHub(){await signInWithProvider('github','GitHub');}
+async function signInWithMicrosoft(){await signInWithProvider('azure','Microsoft');}
+async function signInWithApple(){await signInWithProvider('apple','Apple');}
+
+/* O provedor devolve erro no fragmento (#error=…) ou na query (?error=…). Sem
+   ler isso, "consentimento negado" e "provedor não habilitado" chegam na tela
+   como um retorno silencioso ao estado deslogado. */
+function _erroDeRetornoOAuth(){
+  const params=new URLSearchParams(location.search);
+  const hash=new URLSearchParams(location.hash.replace(/^#/,''));
+  const code=hash.get('error')||params.get('error');
+  if(!code)return null;
+  const desc=hash.get('error_description')||params.get('error_description')||code;
+  // Limpa a URL para o erro não reaparecer a cada F5.
+  history.replaceState(null,'',location.pathname+location.search.replace(/[?&](error|error_code|error_description)=[^&]*/g,'').replace(/^&/,'?'));
+  return decodeURIComponent(desc.replace(/\+/g,' '));
+}
+
+async function signOut(){
+  await _sb.auth.signOut();
+  _profile=null;_integr=null;currentLeadId=null;
+  hideResults();hideError();
+  const rg=document.getElementById('recent-grid');if(rg)rg.innerHTML='';
+  const rb=document.getElementById('recent-block');if(rb)rb.style.display='none';
+  updateNavUser();
+  if(location.hash)history.replaceState(null,'',location.pathname);
+  showView('search');
+}
+
+function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
+
+/* ══════ ROUTER (views por hash) ══════ */
+const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','conversas','history','settings'];
+
+function nav(route){
+  if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
+  if(location.hash.slice(1)===route)applyRoute();   // re-clique recarrega a view
+  else location.hash=route;
+}
+
+/* Cada view se apresenta na topbar: o que é a tela e para que serve. */
+const VIEW_META={
+  search:{
+    title:'Nova análise',
+    sub:'Digite o domínio da empresa e receba a ficha completa em segundos.',
+  },
+  lote:{
+    title:'Análise em lote',
+    sub:'Cole uma lista de domínios ou solte um CSV. Processamos em fila, sem você ficar esperando cada empresa.',
+  },
+  import:{
+    title:'Importar planilha',
+    sub:'Suba o .xlsx ou .csv que você já usa. Reconhecemos as colunas e criamos as linhas como leads.',
+  },
+  sheet:{
+    title:'Planilha',
+    sub:'Suas linhas como no arquivo original, mais as colunas que descobrimos. Clique numa célula para editar.',
+  },
+  pipeline:{
+    title:'Pipeline de prospecção',
+    sub:'Em que estágio está cada lead. Arraste o card ou use os botões para avançar.',
+  },
+  followups:{
+    title:'Follow-ups',
+    sub:'Tarefas criadas a partir das suas ligações. Comece pelas atrasadas.',
+  },
+  dashboard:{
+    title:'Dashboard comercial',
+    sub:'Esforço e conversão do período: quanto ligou, quanto virou contato e quanto virou reunião.',
+  },
+  conversas:{
+    title:'Conversas de WhatsApp',
+    sub:'O que cada lead respondeu e quem está respondendo por você. A conversa de teste, no topo da lista, não envia nada de verdade.',
+  },
+  history:{
+    title:'Histórico de leads',
+    sub:'Todas as empresas já analisadas. Filtre, reabra a ficha ou exporte para Excel.',
+  },
+  settings:{
+    title:'Configurações',
+    sub:'Sua conta, integração com CRM, extensão do navegador e sessão.',
+  },
+};
+
+function showView(v){
+  document.querySelectorAll('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));
+  const route=v==='search'?'':v;
+  document.querySelectorAll('[data-route]').forEach(b=>b.classList.toggle('active',b.dataset.route===route));
+  const meta=VIEW_META[v]||VIEW_META.search;
+  const t=document.getElementById('tb-title'),s=document.getElementById('tb-sub');
+  if(t)t.textContent=meta.title;
+  if(s)s.textContent=meta.sub;
+  // Só as ações da tela atual ficam visíveis — nada de botão sem contexto.
+  document.querySelectorAll('.tb-slot').forEach(el=>el.classList.toggle('active',el.dataset.slot===v));
+  document.getElementById('tb-new-btn')?.classList.toggle('hidden',v==='search');
+  window.scrollTo({top:0});
+}
+
+function applyRoute(){
+  let h=location.hash.slice(1);
+  // O simulador virou a "conversa de teste" dentro de Conversas — link/aba
+  // salva do endereço antigo continua levando a algum lugar útil.
+  if(h==='simulador')h='conversas';
+  if(h.startsWith('lead-')){
+    const id=parseInt(h.slice(5),10);
+    if(!_profile){_pendingRoute=h;showView('search');openAuthModal();return;}
+    showView('search');
+    if(id)openLead(id);
+    return;
+  }
+  if(!ROUTES.includes(h))h='';
+  if(h&&!_profile){
+    _pendingRoute=h;
+    history.replaceState(null,'',location.pathname);
+    showView('search');openAuthModal();
+    return;
+  }
+  showView(h||'search');
+  if(h==='lote')loadLote();
+  else if(h==='import')loadImport();
+  // A grade vive em sheet.js: se o arquivo não carregou, a view não trava a navegação.
+  else if(h==='sheet'&&typeof loadSheet==='function')loadSheet();
+  else if(h==='dashboard')loadDashboard();
+  else if(h==='pipeline')loadPipeline();
+  else if(h==='followups')loadFollowups();
+  else if(h==='conversas')loadConversas();
+  else if(h==='history')loadHistory();
+  else if(h==='settings')loadSettings();
+}
+window.addEventListener('hashchange',applyRoute);
+
+function focusSearch(){
+  if(matchMedia('(pointer: coarse)').matches)return; // não abre teclado no mobile
+  document.getElementById('domain-input')?.focus();
+}
+
+/* Fecha a ficha aberta e devolve a tela de busca ao estado inicial. */
+function clearResult(){
+  currentLeadId=null;currentLeadData=null;
+  hideResults();hideError();
+  if(location.hash.startsWith('#lead-'))history.replaceState(null,'',location.pathname);
+  const input=document.getElementById('domain-input');
+  if(input)input.value='';
+  focusSearch();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+/* Exemplo clicável: preenche e já analisa — o usuário vê o resultado antes de
+   ter que pensar num domínio. */
+function useExample(domain){
+  const input=document.getElementById('domain-input');
+  if(!input)return;
+  input.value=domain;
+  enrich();
+}
+
+/* ══════ ÚLTIMAS ANÁLISES (preenche a tela antes da primeira busca) ══════ */
+async function loadRecent(){
+  const block=document.getElementById('recent-block');
+  const grid=document.getElementById('recent-grid');
+  if(!block||!grid||!_profile)return;
+  try{
+    const resp=await authFetch('/api/leads?per_page=6');
+    if(!resp.ok)return;
+    const leads=await resp.json();
+    if(!leads.length){block.style.display='none';return;}
+    grid.innerHTML=leads.slice(0,6).map(l=>{
+      const name=l.company_name||l.domain||'—';
+      const when=l.created_at?new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):'';
+      const stage=STAGE_LABELS[l.stage||'novo']||'';
+      return `<button class="recent-card" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${esc(name)}">
+        <span class="recent-ava">${esc((name.trim()[0]||'?').toUpperCase())}</span>
+        <span class="recent-txt">
+          <span class="recent-name">${esc(name)}</span>
+          <span class="recent-meta">${esc(stage)}${when?' · '+when:''}</span>
+        </span>
+      </button>`;
+    }).join('');
+    // Só aparece quando não há uma ficha aberta ocupando a tela
+    const hasResult=document.getElementById('view-search')?.classList.contains('has-result');
+    block.style.display=hasResult?'none':'block';
+  }catch(_){}
+}
+
+/* ══════ ENRICH ══════ */
+async function enrich(){
+  const input=document.getElementById('domain-input');
+  const domain=input.value.trim();
+  if(!domain){showError('Digite o domínio da empresa (ex: nubank.com.br).');return;}
+  const token=await getToken();
+  if(!token){openAuthModal();return;}
+  setLoading(true);hideError();hideResults();startLoad();
+  try{
+    const resp=await authFetch('/api/enrich',{method:'POST',body:JSON.stringify({domain})});
+    const json=await resp.json();
+    if(!resp.ok){showError(json.detail||'Erro ao enriquecer este domínio.');return;}
+    if(!json.success||!json.data){showError(json.message||'Não foi possível coletar dados.');return;}
+    renderResult(json.data);
+    if(json.data.id)history.replaceState(null,'','#lead-'+json.data.id);
+  }catch(e){
+    if(e.message!=='not_authenticated')showError('Erro de conexão com o servidor.');
+  }finally{setLoading(false);stopLoad();}
+}
+
+
+/* ══════ REGISTRO DE LIGAÇÕES ══════ */
+function toggleMeetRow(){
+  const el=document.getElementById('meet-row');
+  if(el)el.style.display=el.style.display==='none'?'flex':'none';
+}
+
+async function logCall(outcome){
+  if(!currentLeadId)return;
+  const body={type:'call',outcome};
+  if(outcome==='meeting_scheduled'){
+    const w=document.getElementById('meet-when').value;
+    if(!w){document.getElementById('meet-when').focus();return;}
+    body.meeting_at=new Date(w).toISOString();
+  }
+  const fb=document.getElementById('call-feedback');
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}/activities`,{method:'POST',body:JSON.stringify(body)});
+    const json=await resp.json();
+    if(!resp.ok){fb.textContent=json.detail||'Erro ao registrar.';fb.classList.add('show');return;}
+    const meeting=(json.derived||[]).find(d=>d.type==='meeting');
+    const ics=meeting?` <a href="#" onclick="downloadIcs(${meeting.id});return false">Baixar convite .ics</a>`:'';
+    fb.innerHTML=`${esc(json.message)}${ics}`;
+    fb.classList.add('show');
+    if(outcome==='meeting_scheduled')document.getElementById('meet-row').style.display='none';
+    loadTimeline();loadTodayFollowupsCount();
+  }catch(e){if(e.message!=='not_authenticated'){fb.textContent='Erro de conexão.';fb.classList.add('show');}}
+}
+
+async function downloadIcs(activityId){
+  const token=await getToken();if(!token)return;
+  const resp=await fetch(`/api/activities/${activityId}/ics`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!resp.ok){alert('Erro ao gerar convite.');return;}
+  const blob=await resp.blob();
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url;a.download=`leadenricher_${activityId}.ics`;
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+}
+
+/* ══════ VIEW: FOLLOW-UPS ══════ */
+async function loadFollowups(){
+  const body=document.getElementById('followups-body');
+  const summary=document.getElementById('fu-summary');
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
+  try{
+    const resp=await authFetch('/api/activities/pending');
+    const list=await resp.json();
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
+    if(!list.length){
+      if(summary)summary.textContent='';
+      body.innerHTML=`<div class="panel"><div class="muted-box">
+        Tudo em dia — nenhum follow-up pendente.<br/>
+        Quando você registrar uma ligação sem resposta, a tarefa de retorno aparece aqui.
+        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a>
+      </div></div>`;
+      return;
+    }
+    const now=Date.now();
+    const endOfDay=new Date();endOfDay.setHours(23,59,59,999);
+    let late=0,today=0;
+    const rows=list.map(a=>{
+      const due=a.due_at?new Date(a.due_at):null;
+      const isLate=due&&due.getTime()<now;
+      const isToday=due&&!isLate&&due.getTime()<=endOfDay.getTime();
+      if(isLate)late++;else if(isToday)today++;
+      const when=due?due.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'sem data';
+      const kind=a.type==='meeting'?'Reunião':'Retornar contato';
+      const ics=a.type==='meeting'
+        ? `<button class="fu-btn" onclick="downloadIcs(${a.id})" title="Baixar convite de calendário (.ics)">Convite .ics</button>`
+        : '';
+      return `<div class="fu-row${isLate?' late':''}">
+        <div class="fu-info">
+          <span class="fu-kind">${kind}</span>
+          <span class="fu-notes">${esc(a.notes||'')}</span>
+          <span class="fu-when${isLate?' late':''}">${isLate?'atrasado · ':(isToday?'hoje · ':'')}${when}</span>
+        </div>
+        <div class="fu-actions">
+          <button class="fu-btn" onclick="loadLeadIntoView(${a.lead_id})" title="Abrir a ficha da empresa">Abrir lead</button>
+          ${ics}
+          <button class="fu-btn done" onclick="completeActivity(${a.id})" title="Marcar como resolvido e tirar da fila">Concluir</button>
+        </div>
+      </div>`;
+    }).join('');
+    const tags=[
+      late?`<span class="fu-tag late">${late} atrasado${late>1?'s':''}</span>`:'',
+      today?`<span class="fu-tag today">${today} para hoje</span>`:'',
+      `<span class="fu-tag">${list.length} no total</span>`,
+    ].filter(Boolean).join('');
+    if(summary)summary.textContent=late?`${late} tarefa(s) em atraso`:'Fila em dia';
+    body.innerHTML=`<div class="panel">
+      <div class="fu-head">${tags}<span>Concluir tira a tarefa da fila; abrir o lead leva à ficha completa.</span></div>
+      ${rows}
+    </div>`;
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
+}
+
+async function completeActivity(id){
+  try{
+    await authFetch(`/api/activities/${id}`,{method:'PATCH',body:JSON.stringify({completed:true})});
+    loadFollowups();loadTodayFollowupsCount();
+  }catch(_){}
+}
+
+/* ══════ VIEW: ANÁLISE EM LOTE ══════
+   O lote não roda sozinho no servidor: cada chamada de /run processa uma
+   rodada curta e devolve quantos faltam. Quem pede a próxima rodada é esta
+   tela — assim nenhuma requisição chega perto do limite de tempo da função, e
+   o progresso aparece de verdade em vez de um spinner de dois minutos. */
+let _loteId=null;      // lote em andamento
+let _loteRodando=false;
+
+function loadLote(){
+  atualizarContagemLote();
+  carregarLotesRecentes();
+}
+
+/* Conta quantos domínios plausíveis há no texto — feedback antes de enviar. */
+function contarDominios(texto){
+  const vistos=new Set();
+  (texto||'').split(/[\n,;\t|]+/).forEach(p=>{
+    const t=(p||'').trim().replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0].toLowerCase();
+    if(t.includes('.')&&!t.includes(' '))vistos.add(t.includes('@')?t.split('@')[1]:t);
+  });
+  return vistos.size;
+}
+
+function atualizarContagemLote(){
+  const el=document.getElementById('lote-count');
+  const input=document.getElementById('lote-input');
+  if(!el||!input)return;
+  const n=contarDominios(input.value);
+  el.textContent=n?`${n} domínio(s) reconhecido(s)`:'';
+}
+
+async function iniciarLote(){
+  const input=document.getElementById('lote-input');
+  const fb=document.getElementById('lote-feedback');
+  const texto=(input.value||'').trim();
+  if(!texto){fb.className='set-feedback err';fb.textContent='Cole a lista ou escolha um arquivo.';return;}
+
+  const btn=document.getElementById('lote-start');
+  btn.disabled=true;fb.className='set-feedback';fb.textContent='Enfileirando…';
+  try{
+    const resp=await authFetch('/api/batches',{method:'POST',body:JSON.stringify({text:texto})});
+    const json=await resp.json();
+    if(!resp.ok){fb.className='set-feedback err';fb.textContent=json.detail||'Não foi possível criar o lote.';return;}
+
+    _loteId=json.batch_id;
+    fb.className='set-feedback ok';
+    fb.textContent=json.message;
+    document.getElementById('lote-progress-panel').style.display='block';
+    renderProgressoLote(json.progresso||{total:json.total,concluidos:0,na_fila:json.total,rodando:0,com_erro:0,finalizado:false,itens:[]});
+    processarLote();
+  }catch(e){
+    if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}
+  }finally{btn.disabled=false;}
+}
+
+/* Pede rodadas em sequência até a fila esvaziar (ou o usuário pausar). */
+async function processarLote(){
+  if(!_loteId||_loteRodando)return;
+  _loteRodando=true;
+  document.getElementById('lote-stop').textContent='Pausar';
+  try{
+    while(_loteRodando&&_loteId){
+      const resp=await authFetch(`/api/batches/${_loteId}/run`,{method:'POST'});
+      if(!resp.ok)break;
+      const json=await resp.json();
+      renderProgressoLote(json.progresso);
+      if(json.progresso.finalizado||json.remaining===0)break;
+    }
+  }catch(_){ }
+  finally{
+    _loteRodando=false;
+    document.getElementById('lote-stop').textContent='Retomar';
+    carregarLotesRecentes();
+  }
+}
+
+function pararLote(){
+  if(_loteRodando){_loteRodando=false;return;}
+  processarLote();
+}
+
+const LOTE_RESULT_LABEL={
+  enriched:['Enriquecido','ok'],partial:['Parcial','warn'],cached:['Já tínhamos','ok'],
+  failed:['Sem dados','warn'],error:['Erro','err'],
+};
+
+function renderProgressoLote(p){
+  if(!p)return;
+  const pct=p.total?Math.round((p.concluidos/p.total)*100):0;
+  document.getElementById('lote-bar').style.width=pct+'%';
+  document.getElementById('lote-progress-title').textContent=
+    p.finalizado?'Lote concluído':`Processando — ${p.concluidos} de ${p.total}`;
+  document.getElementById('lote-progress-sub').textContent=
+    `${p.na_fila} na fila · ${p.com_erro} com erro`+(p.finalizado?' · nada mais pendente':'');
+
+  const itens=document.getElementById('lote-items');
+  itens.innerHTML=(p.itens||[]).map(item=>{
+    const [rotulo,classe]=LOTE_RESULT_LABEL[item.result]||
+      (item.status==='running'?['Analisando…','']:['Na fila','']);
+    const link=item.lead_id?`<button class="btn-link" onclick="loadLeadIntoView(${item.lead_id})">ver ficha →</button>`:'';
+    return `<div class="lote-item">
+      <span class="lote-item-dom">${esc(item.domain||'')}</span>
+      <span class="lote-item-st ${classe}">${rotulo}</span>
+      ${link}
+    </div>`;
+  }).join('');
+}
+
+async function carregarLotesRecentes(){
+  const painel=document.getElementById('lote-recent-panel');
+  const alvo=document.getElementById('lote-recent');
+  if(!alvo)return;
+  try{
+    const resp=await authFetch('/api/batches');
+    if(!resp.ok)return;
+    const lotes=await resp.json();
+    if(!lotes.length){painel.style.display='none';return;}
+    painel.style.display='block';
+    alvo.innerHTML=lotes.map(l=>{
+      const retomar=l.finalizado?'':`<button class="btn-link" onclick="retomarLote('${l.batch_id}')">retomar →</button>`;
+      return `<div class="set-row">
+        <span class="set-lbl">${l.total} domínio(s) · ${l.concluidos} concluído(s)${l.com_erro?` · ${l.com_erro} com erro`:''}</span>
+        <span class="set-val">${l.finalizado?'finalizado':`${l.na_fila} na fila`} ${retomar}</span>
+      </div>`;
+    }).join('');
+  }catch(_){ }
+}
+
+async function retomarLote(batchId){
+  _loteId=batchId;
+  document.getElementById('lote-progress-panel').style.display='block';
+  try{
+    const resp=await authFetch(`/api/batches/${batchId}`);
+    if(resp.ok)renderProgressoLote(await resp.json());
+  }catch(_){ }
+  processarLote();
+}
+
+/* ══════ VIEW: DASHBOARD ══════ */
+const STAGE_LABELS={novo:'Novo',contatado:'Contatado',reuniao_agendada:'Reunião agendada',oportunidade:'Oportunidade',ganho:'Ganho',perdido:'Perdido'};
+const STAGE_ORDER=['novo','contatado','reuniao_agendada','oportunidade','ganho','perdido'];
+
+let _dashDays=30;
+
+function setDashPeriod(days){
+  _dashDays=days;
+  document.querySelectorAll('.seg-btn[data-days]').forEach(b=>b.classList.toggle('active',+b.dataset.days===days));
+  loadDashboard();
+}
+
+async function loadDashboard(){
+  const body=document.getElementById('dashboard-body');
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
+  try{
+    const resp=await authFetch(`/api/dashboard/metrics?days=${_dashDays}`);
+    const m=await resp.json();
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
+    document.getElementById('dash-period').textContent=
+      `Números dos últimos ${m.period_days} dias. O funil considera todos os leads da conta.`;
+    if(!m.leads_pesquisados){
+      body.innerHTML=`<div class="panel"><div class="muted-box">
+        Ainda não há dados neste período.<br/>
+        Analise uma empresa e registre a ligação: as taxas aparecem aqui.<br/>
+        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar meu primeiro domínio</a>
+      </div></div>`;
+      return;
+    }
+    const pct=v=>Math.round(v*100)+'%';
+    // Cada número explica o que mede — o vendedor não precisa adivinhar a conta.
+    const kpi=(val,lbl,desc,warn)=>`<div class="kpi${warn?' warn':''}">
+      <span class="kpi-val">${val}</span>
+      <span class="kpi-lbl">${lbl}</span>
+      <span class="kpi-desc">${desc}</span>
+    </div>`;
+    const funilMax=Math.max(1,...STAGE_ORDER.map(s=>m.funil_por_estagio[s]||0));
+    const funil=STAGE_ORDER.map(s=>{
+      const v=m.funil_por_estagio[s]||0;
+      return `<div class="fn-row"><span class="fn-lbl">${STAGE_LABELS[s]}</span><div class="fn-track"><div class="fn-bar" style="width:${Math.max(2,(v/funilMax)*100)}%"></div></div><span class="fn-val">${v}</span></div>`;
+    }).join('');
+
+    const dicas=[];
+    if(m.followups_atrasados)dicas.push(`<b>${m.followups_atrasados} follow-up(s) atrasado(s).</b> Comece por eles — <a class="btn-link" href="#followups">abrir a fila</a>.`);
+    if(!m.ligacoes_realizadas)dicas.push('Nenhuma ligação registrada no período. Registre o resultado na ficha do lead para as taxas passarem a fazer sentido.');
+    if(m.ligacoes_realizadas&&m.taxa_contato<0.2)dicas.push('Taxa de contato abaixo de 20%: vale testar outro horário de ligação ou buscar um cargo diferente na empresa.');
+    if((m.funil_por_estagio.novo||0)>5)dicas.push(`<b>${m.funil_por_estagio.novo} leads parados em "Novo".</b> Eles ainda não receberam nenhuma tentativa de contato.`);
+    if(!dicas.length)dicas.push('Nada travado por aqui: follow-ups em dia e leads circulando no funil.');
+
+    body.innerHTML=`
+      <div class="kpi-grid">
+        ${kpi(m.leads_pesquisados,'Leads pesquisados','Empresas analisadas no período')}
+        ${kpi(m.ligacoes_realizadas,'Ligações registradas','Tentativas anotadas na ficha do lead')}
+        ${kpi(pct(m.taxa_contato),'Taxa de contato','Ligações em que você falou com alguém')}
+        ${kpi(pct(m.taxa_reuniao),'Taxa de reunião','Ligações que terminaram em reunião marcada')}
+        ${kpi(pct(m.conversao_oportunidade),'Conversão em oportunidade','Leads que chegaram a oportunidade ou ganho')}
+        ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} atrasados)</small>`:''),'Follow-ups pendentes','Tarefas em aberto na sua fila',m.followups_atrasados>0)}
+      </div>
+      <div class="dash-cols">
+        <div class="panel panel-pad">
+          <div class="dash-sec-title">Funil por estágio</div>
+          <div class="dash-sec-sub">Quantos leads estão parados em cada etapa da negociação.</div>
+          <div class="funnel">${funil}</div>
+        </div>
+        <div class="panel panel-pad">
+          <div class="dash-sec-title">O que fazer agora</div>
+          <div class="dash-sec-sub">Leitura automática dos números acima.</div>
+          <div class="next-list">
+            ${dicas.map(d=>`<div class="next-item"><span class="next-dot"></span><span>${d}</span></div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
+}
+
+/* ══════ VIEW: PIPELINE (KANBAN) ══════ */
+/* O que cada coluna significa — o vendedor não deveria ter que deduzir. */
+const STAGE_DESC={
+  novo:'Analisado, ainda sem contato',
+  contatado:'Já houve tentativa de contato',
+  reuniao_agendada:'Reunião marcada com data',
+  oportunidade:'Proposta ou negociação em andamento',
+  ganho:'Fechou negócio',
+  perdido:'Sem interesse ou fora do perfil',
+};
+
+async function loadPipeline(){
+  const body=document.getElementById('pipeline-body');
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
+  try{
+    const resp=await authFetch('/api/leads?per_page=100');
+    const leads=await resp.json();
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
+    if(!leads.length){
+      body.innerHTML=`<div class="panel"><div class="muted-box">
+        Nenhum lead no pipeline ainda.<br/>
+        Toda empresa analisada entra automaticamente na coluna "Novo".
+        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a>
+      </div></div>`;
+      return;
+    }
+    const byStage={};STAGE_ORDER.forEach(s=>byStage[s]=[]);
+    leads.forEach(l=>{(byStage[l.stage||'novo']||byStage.novo).push(l)});
+    body.innerHTML=`<div class="kanban-wrap"><div class="kanban">${STAGE_ORDER.map(stage=>{
+      const i=STAGE_ORDER.indexOf(stage);
+      const cards=byStage[stage].map(l=>{
+        const nome=esc(l.company_name||l.domain||'—');
+        const left=i>0
+          ? `<button class="kb-move" title="Mover para ${STAGE_LABELS[STAGE_ORDER[i-1]]}" onclick="moveLead(${l.id},'${STAGE_ORDER[i-1]}')">◀ Voltar</button>`
+          : '<span class="kb-move ghost">◀ Voltar</span>';
+        const right=i<STAGE_ORDER.length-1
+          ? `<button class="kb-move" title="Mover para ${STAGE_LABELS[STAGE_ORDER[i+1]]}" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">Avançar ▶</button>`
+          : '<span class="kb-move ghost">Avançar ▶</span>';
+        return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)" title="Arraste para outra coluna para mudar o estágio">
+          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${nome}">${nome}</button></div>
+          <div class="kb-domain">${esc(l.domain||'')}</div>
+          <div class="kb-card-actions">${left}${right}</div>
+        </div>`;
+      }).join('')||'<div class="kb-empty">Nenhum lead aqui</div>';
+      return `<div class="kb-col" data-stage="${stage}" ondrop="dragDropCol(event)" ondragover="dragOverCol(event)" ondragleave="dragLeaveCol(event)">
+        <div class="kb-col-hdr">
+          <div class="kb-col-name">${STAGE_LABELS[stage]} <span class="kb-count">${byStage[stage].length}</span></div>
+          <div class="kb-col-desc">${STAGE_DESC[stage]||''}</div>
+        </div>${cards}</div>`;
+    }).join('')}</div></div>`;
+    document.querySelectorAll('.kb-card').forEach(c=>{
+      c.addEventListener('dragend',()=>{c.classList.remove('dragging');document.querySelectorAll('.kb-col.drag-over').forEach(k=>k.classList.remove('drag-over'));});
+    });
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
+}
+
+let draggedCard=null;
+function dragStart(e){draggedCard=e.target.closest('.kb-card');draggedCard?.classList.add('dragging');}
+function dragOverCol(e){e.preventDefault();e.currentTarget.classList.add('drag-over');}
+function dragLeaveCol(e){if(!e.currentTarget.contains(e.relatedTarget))e.currentTarget.classList.remove('drag-over');}
+function dragDropCol(e){
+  e.preventDefault();
+  const col=e.currentTarget;col.classList.remove('drag-over');
+  if(!draggedCard)return;
+  const leadId=parseInt(draggedCard.dataset.leadId,10);
+  draggedCard=null;
+  moveLead(leadId,col.dataset.stage);
+}
+
+async function moveLead(id,stage){
+  try{
+    await authFetch(`/api/leads/${id}/stage`,{method:'PATCH',body:JSON.stringify({stage})});
+    loadPipeline();
+  }catch(_){}
+}
+
+/* ══════ INTEGRAÇÕES (IA + CRM) ══════ */
+let _integr=null;
+async function loadIntegrations(){
+  try{
+    const resp=await authFetch('/api/integrations/status');
+    if(resp.ok)_integr=await resp.json();
+  }catch(_){_integr=null;}
+}
+
+const IC_SPARK='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.7L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.3z"/></svg>';
+const IC_PUSH='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 14v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/><polyline points="7 8 12 3 17 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
+const IC_DOWN='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+const IC_PHONE='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+const IC_CHAT='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>';
+
+async function genAiSummary(force){
+  if(!currentLeadId)return;
+  const box=document.getElementById('ai-box');
+  box.style.display='block';
+  box.innerHTML='<div class="ai-loading">Gerando resumo com IA…</div>';
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}/ai-summary${force?'?force=true':''}`,{method:'POST'});
+    const json=await resp.json();
+    if(!resp.ok){box.innerHTML=`<div class="ai-loading">${esc(json.detail||'Erro ao gerar resumo.')}</div>`;return;}
+    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo ${json.cached?'<small>(cacheado)</small>':''} <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(json.summary).replace(/\n/g,'<br/>')}</div>`;
+  }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="ai-loading">Erro de conexão.</div>';}
+}
+
+async function pushToCrm(){
+  if(!currentLeadId)return;
+  const fb=document.getElementById('call-feedback');
+  fb.textContent='Enviando ao CRM...';fb.classList.add('show');
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}/push`,{method:'POST'});
+    const json=await resp.json();
+    fb.textContent=resp.ok?'✓ Lead enviado ao CRM com sucesso.':(json.detail||'Falha no envio ao CRM.');
+    if(resp.ok)loadTimeline();
+  }catch(e){if(e.message!=='not_authenticated')fb.textContent='Erro de conexão.';}
+}
+
+/* ══════ TIMELINE ══════ */
+const ACT_LABELS={call:'Ligação',voicemail:'Caixa postal',no_answer:'Sem resposta',meeting:'Reunião',note:'Nota',followup:'Follow-up'};
+const OUT_LABELS={no_answer:'não atendeu',busy:'ocupado',voicemail:'caixa postal',talked:'conversou',meeting_scheduled:'reunião agendada'};
+
+async function loadTimeline(){
+  if(!currentLeadId)return;
+  const box=document.getElementById('timeline-box');
+  if(!box)return;
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}/activities`);
+    const acts=await resp.json();
+    if(!acts.length){box.style.display='none';return;}
+    box.style.display='block';
+    const tl=acts.map(a=>{
+      const cls=a.type==='meeting'?' ok':(a.outcome==='no_answer'||a.outcome==='busy'?' warn':'');
+      const when=a.completed_at?new Date(a.completed_at).toLocaleDateString('pt-BR'):(a.due_at?new Date(a.due_at).toLocaleDateString('pt-BR'):'');
+      const label=ACT_LABELS[a.type]||a.type;
+      const out=a.outcome?(OUT_LABELS[a.outcome]||a.outcome):'';
+      return `<div class="tl-item${cls}"><span class="tl-dot"></span><span class="tl-content"><span><strong>${esc(label)}</strong>${out?' · '+esc(out):''}${when?' · '+when:''}</span>${a.notes?`<small>${esc(a.notes)}</small>`:''}</span></div>`;
+    }).join('');
+    box.innerHTML=`<div class="tl-title">Timeline</div><div class="timeline-rail">${tl}</div>`;
+  }catch(_){}
+}
+
+/* ══════ RENDER RESULT ══════ */
+async function openLead(leadId){
+  try{
+    const resp=await authFetch(`/api/leads/${leadId}`);
+    if(!resp.ok){showError('Lead não encontrado.');return;}
+    const lead=await resp.json();
+    hideError();
+    renderResult(lead);
+  }catch(_){}
+}
+
+function loadLeadIntoView(leadId){
+  const h='lead-'+leadId;
+  if(location.hash.slice(1)===h){showView('search');openLead(leadId);}
+  else location.hash=h;
+}
+
+function renderResult(data){
+  currentLeadId=data.id;
+  currentLeadData=data;
+  setTimeout(loadTimeline,300);
+  setTimeout(loadPopularContacts,500);
+  // Com uma ficha na tela, o formulário encolhe e o painel de apoio sai
+  document.getElementById('view-search')?.classList.add('has-result');
+  const recent=document.getElementById('recent-block');
+  if(recent)recent.style.display='none';
+  const root=document.getElementById('results-section');root.innerHTML='';
+  const smap={enriched:['Enriquecido','enriched'],partial:['Parcial','partial'],failed:['Falhou','failed']};
+  const[sl,sc]=smap[data.status]||['—','partial'];
+  const init=(data.company_name||data.domain||'?').trim()[0].toUpperCase();
+  const fav=data.domain?`https://www.google.com/s2/favicons?domain=${data.domain}&sz=64`:'';
+  const IC={
+    globe:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+    li:`<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67h-3.55V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.45v6.29zM5.34 7.43A2.06 2.06 0 1 1 5.34 3.3a2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45z"/></svg>`,
+    mail:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>`,
+    users:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+    pin:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+    phone:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`,
+    tag:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`,
+  };
+  const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:['OK','verified'],probable:['~','probable'],unverified:['?','unverified'],high:['OK','verified'],medium:['~','probable'],low:['?','unverified']};const[l,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${l}</span>`;};
+  let emp='';
+  if(data.employee_count){if(typeof data.employee_count==='object'){const e=data.employee_count;if(e.exact)emp=e.exact.toLocaleString('pt-BR');else if(e.min&&e.max)emp=`${e.min.toLocaleString('pt-BR')}–${e.max.toLocaleString('pt-BR')} (faixa)`;else if(e.min)emp=`${e.min.toLocaleString('pt-BR')}+ (faixa)`;else if(e.band)emp=e.band;else emp=e.raw||'';}else emp=data.employee_count;}
+  const cell=(lbl,val,opts={})=>{const d=opts.delay||0;if(!val)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val muted">—</span></div>`;if(opts.isLink)return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><a class="data-val link" href="${val}" target="_blank" rel="noopener">${esc(opts.disp||val)}</a></div>`;return `<div class="data-cell" style="animation-delay:${d}ms"><span class="data-lbl">${opts.ic||''}${lbl}</span><span class="data-val">${esc(val)}</span></div>`;};
+  const ws=data.website?data.website.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
+  const li=data.linkedin_url?data.linkedin_url.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
+  const _mxCell=primaryMx(data);
+  let d=0;
+  const cards=[
+    cell('Site',ws,{ic:IC.globe,isLink:true,disp:ws,delay:d+=50}),
+    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.li}LinkedIn</span>${data.linkedin_url?`<a class="data-val link" href="${data.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(data.linkedin_confidence)}`:`<a class="data-val link" href="https://www.google.com/search?q=${encodeURIComponent('site:linkedin.com/company "'+(data.company_name||data.domain||'')+'"')}" target="_blank" rel="noopener">Buscar no Google →</a>`}</div>`,
+    // A ficha mostra o servidor MX como ele é publicado no DNS. O nome
+    // comercial do provedor e o resto da infraestrutura ficam no relatório
+    // completo, logo abaixo.
+    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.mail}Domínio MX</span>${_mxCell?`<span class="data-val mono">${esc(_mxCell.host)}</span>${_mxCell.count>1?`<span class="data-sub">+${_mxCell.count-1} servidor(es) de reserva</span>`:''}`:'<span class="data-val muted">—</span>'}</div>`,
+    cell('Pessoas associadas',emp,{ic:IC.users,delay:d+=50}),
+    cell('Localização',data.location,{ic:IC.pin,delay:d+=50}),
+    cell('Setor',data.sector,{ic:IC.tag,delay:d+=50}),
+  ];
+  cards.push(phoneCellHtml(d+=50));
+  if(data.hosting_provider)cards.push(cell('Hosting',data.hosting_provider,{ic:IC.globe,delay:d+=50}));
+  const dns=renderInfra(data);
+  root.innerHTML=`<div class="result-card">
+    <div class="result-hdr">
+      <div class="result-co">
+        <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
+        <div><div class="result-name">${esc(data.company_name||data.domain||'Empresa')}</div><div class="result-domain">${esc(data.domain||'')}</div></div>
+      </div>
+      <div class="result-hdr-right"><span class="status-pill ${sc}">${sl}</span></div>
+    </div>
+    <div class="lead-actions" id="lead-actions"></div>
+    <div class="sec-head"><span class="sec-num">1</span><h4>Ficha da empresa</h4><span>Dados públicos coletados a partir do domínio</span></div>
+    <div class="result-grid">${cards.join('')}</div>
+    ${dns}
+    <div class="dec-section">
+      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Contatos populares da empresa</div>
+      <div id="decisores-list" class="dec-list">
+        <div class="empty-state-box">
+          <div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
+          <div class="empty-title">Nenhum cargo buscado ainda</div>
+          <div class="empty-sub">Escolha um cargo acima (ou digite o seu) e clique em <strong>Buscar decisores</strong>.</div>
+        </div>
+      </div>
+    </div>
+    <div class="call-section">
+      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>Passo 3 · Registrar o resultado da ligação</div>
+      <div class="dec-sub">Clique no que aconteceu. <strong>Não atendeu</strong>, <strong>Ocupado</strong> e <strong>Caixa postal</strong> criam sozinhos um follow-up para daqui a 2 dias; <strong>Conversou</strong> move o lead para "Contatado"; <strong>Reunião agendada</strong> pede a data e gera o convite .ics.</div>
+      <div class="call-row">
+        <button class="call-btn" onclick="logCall('no_answer')" title="Cria um follow-up para daqui a 2 dias">Não atendeu</button>
+        <button class="call-btn" onclick="logCall('busy')" title="Cria um follow-up para daqui a 2 dias">Ocupado</button>
+        <button class="call-btn" onclick="logCall('voicemail')" title="Cria um follow-up para daqui a 2 dias">Caixa postal</button>
+        <button class="call-btn" onclick="logCall('talked')" title="Registra o contato e move o lead para Contatado">Conversou</button>
+        <button class="call-btn meet" onclick="toggleMeetRow()" title="Informar a data e gerar o convite de calendário">Reunião agendada</button>
+      </div>
+      <div class="meet-row" id="meet-row" style="display:none">
+        <input type="datetime-local" id="meet-when" class="role-inp" style="max-width:230px;flex:none"/>
+        <button class="role-srch-btn" onclick="logCall('meeting_scheduled')">Confirmar reunião</button>
+      </div>
+      <div id="call-feedback" class="call-feedback"></div>
+    </div>
+    <div class="ai-box" id="ai-box" style="display:none"></div>
+    <div id="timeline-box" style="display:none"></div>
+  </div>`;
+  renderLeadActions(data);
+  if(data.ai_summary){
+    const box=document.getElementById('ai-box');
+    box.style.display='block';
+    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo <small>(cacheado)</small> <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(data.ai_summary).replace(/\n/g,'<br/>')}</div>`;
+  }
+  document.getElementById('role-input').addEventListener('keydown',e=>{if(e.key==='Enter')searchDecisores()});
+  const top=root.closest('.results-wrap').getBoundingClientRect().top+window.scrollY-100;
+  window.scrollTo({top,behavior:'smooth'});
+}
+
+/* ══════ CONVERSAS DE WHATSAPP ══════
+   A tela de controle humano. A regra que ela precisa deixar óbvia o tempo
+   todo: quem está respondendo agora — a automação ou você. Por isso o selo é
+   grande, vem pronto do servidor e traz uma frase explicando o que significa;
+   e por isso "Assumir agora" fica visível em toda conversa, inclusive nas que
+   já estão paradas. */
+
+let _conversas=[];          // último carregamento da lista
+let _conversaAberta=null;   // id da conversa no painel da direita (ou TESTE_ID)
+let _conversasTimer=null;   // polling enquanto a tela está aberta
+let _waStatus=null;         // o que está configurado no servidor
+let _waMetrics=null;        // números do período (só nesta tela)
+
+// A "conversa de teste" é a sessão do simulador, mostrada como um card fixo
+// no topo da lista — mesmo agente, sem nada saindo para a Meta. Um id
+// reservado (nunca um Conversation.id de verdade, que é inteiro) é o que
+// distingue os dois caminhos em abrirConversa()/renderPainelConversa().
+const TESTE_ID='__teste__';
+let _simStatus=null;
+let _simSessao=null;
+let _simOcupado=false;   // um turno por vez: dois em paralelo bagunçam o histórico
+
+async function loadConversas(){
+  const root=document.getElementById('conversas-body');
+  if(!root)return;
+  if(!_conversas.length)root.innerHTML='<div class="muted-box">Carregando conversas…</div>';
+  try{
+    const [st,lista,met,simSt,simSess]=await Promise.all([
+      authFetch('/api/wa/status').then(r=>r.ok?r.json():null),
+      authFetch('/api/wa/conversations').then(r=>r.ok?r.json():[]),
+      authFetch('/api/wa/metrics').then(r=>r.ok?r.json():null),
+      authFetch('/api/wa/sandbox/status').then(r=>r.ok?r.json():null).catch(()=>null),
+      authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null).catch(()=>null),
+    ]);
+    _waStatus=st;_conversas=lista||[];_waMetrics=met;
+    _simStatus=simSt;_simSessao=simSess||_simSessao||{empresa:'',mensagens:[],turnos:[]};
+    renderConversas();
+    atualizarBadgeConversas(st);
+  }catch(_){
+    root.innerHTML='<div class="muted-box">Não foi possível carregar as conversas.</div>';
+  }
+  // Recarrega sozinho enquanto a tela está aberta: mensagem que chega enquanto
+  // o usuário olha a tela precisa aparecer sem ele ter que atualizar a página.
+  clearInterval(_conversasTimer);
+  _conversasTimer=setInterval(()=>{
+    if(location.hash.slice(1)==='conversas')loadConversas();
+    else clearInterval(_conversasTimer);
+  },15000);
+}
+
+function atualizarBadgeConversas(st){
+  const badge=document.getElementById('nav-wa-count');
+  if(!badge)return;
+  const n=(st&&st.aguardando)||0;
+  if(n>0){badge.textContent=n;badge.style.display='inline-block';}
+  else badge.style.display='none';
+}
+
+/* Por que a automação está calada agora. Sem isto a tela parece quebrada: as
+   conversas estão lá, o lead escreveu e nada acontece. */
+function avisoHorarioHtml(st){
+  if(!st.configurado)return '';
+  const j=janelaWa();
+  if(!j||j.pode_enviar)return '';
+  return `<div class="cv-warn">
+      <strong>${j.indeterminado?'Horário indeterminado no servidor.':'Fora do horário de envio.'}</strong>
+      ${esc(j.explicacao)}
+      Responder à mão nas conversas abertas continua liberado — esta trava vale
+      para o convite pago e para a resposta automática.
+    </div>`;
+}
+
+function renderConversas(){
+  const root=document.getElementById('conversas-body');
+  if(!root)return;
+  const st=_waStatus||{};
+
+  // Serviço não configurado: a tela continua existindo e diz o que falta. Some
+  // da tela é o que impede alguém de descobrir que a função existe.
+  const aviso=st.configurado?'':`<div class="cv-warn">
+      <strong>WhatsApp ainda não está ligado neste servidor.</strong>
+      As conversas abaixo continuam visíveis, mas nada é enviado enquanto faltar:
+      <span class="cv-vars">${(st.faltando||[]).map(v=>`<code>${esc(v)}</code>`).join(' ')}</span>
+      ${st.webhook_assinado?'':'<br/>Falta também <code>WHATSAPP_APP_SECRET</code> — sem ele o recebimento é recusado.'}
+    </div>`;
+
+  // Caixa fixa: fica no HTML mesmo vazia, para o recarregamento de 15 s poder
+  // preenchê-la quando a janela virar, sem redesenhar a tela inteira.
+  const horario=`<div id="cv-aviso-horario">${avisoHorarioHtml(st)}</div>`;
+
+  // Recarga do polling: a tela já está montada. Redesenhar tudo apagaria o
+  // texto que está sendo digitado e tiraria o foco da busca a cada 15 s — só
+  // a lista e a conversa aberta precisam de notícia nova.
+  if(document.getElementById('cv-wrap')){
+    const caixa=document.getElementById('cv-aviso-horario');
+    if(caixa)caixa.innerHTML=avisoHorarioHtml(st);
+    _redesenharLista();
+    if(_conversaAberta)abrirConversa(_conversaAberta,true);
+    return;
+  }
+
+  root.innerHTML=`${aviso}${horario}${faixaMetricas()}
+  <div class="cv-wrap${_conversaAberta?' lendo':''}" id="cv-wrap">
+    <aside class="cv-side">
+      <div class="cv-side-head">
+        <div class="cv-search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input id="cv-busca" placeholder="Buscar empresa, contato ou número"
+                 autocomplete="off" aria-label="Buscar conversa" value="${esc(_cvBusca)}"
+                 oninput="filtrarConversas(this.value)" />
+        </div>
+        <div class="cv-filters" id="cv-filters">${filtrosConversas()}</div>
+      </div>
+      <div class="cv-list-teste" id="cv-teste-slot">${cardConversaTeste()}</div>
+      <div class="cv-list" id="cv-list">${listaConversas()}</div>
+    </aside>
+    <section class="cv-panel" id="cv-panel">${painelVazio()}</section>
+  </div>`;
+  if(_conversaAberta)abrirConversa(_conversaAberta,true);
+}
+
+/* ══════ LISTA: busca e filtros ══════
+   Filtrar no navegador e não no servidor é deliberado: a lista já vem inteira
+   (teto de 200) e um ida-e-volta por tecla digitada deixaria a busca lenta
+   justamente na conversa que a pessoa está tentando achar. */
+let _cvBusca='';
+let _cvFiltro='todas';
+
+const _CV_FILTROS=[
+  {id:'todas',rotulo:'Todas',teste:()=>true},
+  {id:'aguardando',rotulo:'Aguardando você',teste:c=>c.aguardando_voce},
+  {id:'ia',rotulo:'IA ativa',teste:c=>c.ai_status==='AI_ACTIVE'},
+  {id:'abertas',rotulo:'Janela aberta',teste:c=>c.janela_aberta},
+];
+
+function filtrosConversas(){
+  return _CV_FILTROS.map(f=>{
+    const n=_conversas.filter(f.teste).length;
+    if(f.id!=='todas'&&!n)return '';   // filtro sem nada para mostrar não aparece
+    return `<button type="button" class="cv-filter${_cvFiltro===f.id?' on':''}"
+      onclick="filtroConversas('${f.id}')" title="Mostrar só estas conversas">
+      ${f.rotulo}<span class="cv-filter-n">${n}</span></button>`;
+  }).join('');
+}
+
+function conversasVisiveis(){
+  const f=(_CV_FILTROS.find(x=>x.id===_cvFiltro)||_CV_FILTROS[0]).teste;
+  const q=_cvBusca.trim().toLowerCase();
+  return _conversas.filter(c=>{
+    if(!f(c))return false;
+    if(!q)return true;
+    return [c.company_name,c.contato,c.phone_e164,c.last_message_body]
+      .some(v=>(v||'').toLowerCase().includes(q));
+  });
+}
+
+function listaConversas(){
+  const visiveis=conversasVisiveis();
+  if(!visiveis.length){
+    if(!_conversas.length&&_cvFiltro==='todas'&&!_cvBusca){
+      return `<div class="cv-nada">Nenhuma conversa real ainda.<br/>
+        Abra a ficha de um lead e clique em <strong>Iniciar contato por WhatsApp</strong>.
+        O primeiro convite parte de você; a partir da resposta do lead, a
+        automação assume dentro das regras.<br/><br/>
+        Para testar a IA sem gastar um convite, use a conversa de teste, fixa acima.</div>`;
+    }
+    return `<div class="cv-nada">${_cvBusca||_cvFiltro!=='todas'
+      ? 'Nenhuma conversa com esse filtro.'
+      : 'Nenhuma conversa ainda.'}</div>`;
+  }
+  return visiveis.map(cardConversa).join('');
+}
+
+function _redesenharLista(){
+  const lista=document.getElementById('cv-list');
+  const filtros=document.getElementById('cv-filters');
+  const testeSlot=document.getElementById('cv-teste-slot');
+  if(lista)lista.innerHTML=listaConversas();
+  if(filtros)filtros.innerHTML=filtrosConversas();
+  if(testeSlot)testeSlot.innerHTML=cardConversaTeste();
+}
+
+function filtrarConversas(valor){_cvBusca=valor||'';_redesenharLista();}
+function filtroConversas(id){_cvFiltro=id;_redesenharLista();}
+
+/* ══════ AVATAR ══════
+   Iniciais sobre uma cor derivada do nome. A Cloud API da Meta não entrega a
+   foto de perfil do contato, e pôr um rosto genérico no lugar seria mostrar
+   alguém que não é a pessoa. A cor é estável para o mesmo nome — é o que
+   permite reconhecer a conversa de relance. */
+const _AV_CORES=['#1D4ED8','#0F766E','#7C3AED','#B45309','#BE123C','#0E7490','#4D7C0F','#9333EA'];
+
+function _avCor(txt){
+  let h=0;
+  for(let i=0;i<(txt||'').length;i++)h=(h*31+txt.charCodeAt(i))>>>0;
+  return _AV_CORES[h%_AV_CORES.length];
+}
+
+function _avIniciais(txt){
+  const partes=(txt||'?').trim().split(/\s+/).filter(Boolean);
+  if(!partes.length)return '?';
+  if(partes.length===1)return partes[0].slice(0,2).toUpperCase();
+  return (partes[0][0]+partes[partes.length-1][0]).toUpperCase();
+}
+
+function avatarHtml(nome,tom,pequeno){
+  const dot=tom?`<span class="cv-av-dot ${esc(tom)}" title="${esc(tom)}"></span>`:'';
+  return `<span class="cv-av-wrap">
+    <span class="cv-av${pequeno?' g':''}" style="background:${_avCor(nome)}" aria-hidden="true">${esc(_avIniciais(nome))}</span>
+    ${dot}</span>`;
+}
+
+/* Números do período. Cada um traz embaixo o que ele significa — número solto
+   numa tela é o tipo de coisa que se interpreta errado com confiança. */
+function faixaMetricas(){
+  const m=_waMetrics;
+  if(!m||!m.conversas_iniciadas)return '';
+  const pct=(v)=>Math.round((v||0)*100)+'%';
+  const q=m.qualidade_do_numero;
+  const alerta=q&&q.tom&&q.tom!=='ok'&&q.tom!=='desconhecido'
+    ? `<div class="cv-quality ${esc(q.tom)}"><strong>Qualidade do número: ${esc(q.rating)}.</strong> ${esc(q.recado)}</div>`
+    : '';
+  const bloco=(valor,rotulo,ajuda)=>`<div class="cv-kpi">
+      <span class="cv-kpi-num">${valor}</span>
+      <span class="cv-kpi-lbl">${rotulo}</span>
+      <span class="cv-kpi-sub">${ajuda}</span>
+    </div>`;
+  const motivos=(m.motivos_de_handoff||[]).slice(0,3)
+    .map(x=>`<li>${esc(x.motivo)} <span class="cv-motivo-n">${x.vezes}×</span></li>`).join('');
+  return `${alerta}<div class="cv-metrics">
+    <div class="cv-kpis">
+      ${bloco(m.convites_enviados,'Convites enviados','Cada um é cobrado pela Meta')}
+      ${bloco(pct(m.taxa_de_resposta),'Responderam','Dos leads que receberam convite')}
+      ${bloco(m.respostas_da_ia,'Respostas da IA','Dentro da janela de 24h, sem custo')}
+      ${bloco(m.respostas_suas,'Respostas suas','Escritas por você na tela')}
+      ${bloco(pct(m.taxa_de_handoff),'Passaram para você','Das conversas que tiveram resposta')}
+      ${bloco(m.pediram_para_parar,'Pediram para parar','Número bloqueado permanentemente')}
+    </div>
+    ${motivos?`<div class="cv-motivos"><span>Por que passaram para você:</span><ul>${motivos}</ul></div>`:''}
+    <div class="cv-metrics-sub">Últimos ${m.dias} dias. Não mostramos custo em reais: o preço do
+      template muda por país e categoria — multiplique os convites pela tabela atual da Meta.</div>
+  </div>`;
+}
+
+function painelVazio(){
+  return `<div class="cv-empty">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+    <strong>Escolha uma conversa</strong>
+    <span>Clique num contato à esquerda para ler as mensagens, ver quem está
+    respondendo e assumir quando quiser.</span>
+  </div>`;
+}
+
+function cardConversa(c){
+  const nome=c.company_name||'Empresa';
+  const ativo=_conversaAberta===c.id?' aberta':'';
+  const pendente=c.aguardando_voce?' pendente':'';
+  // A prévia repete o tique quando a última mensagem foi nossa: é como se sabe,
+  // sem abrir, se o que você mandou chegou.
+  const tique=c.last_outbound_at&&(!c.last_inbound_at||new Date(c.last_outbound_at)>new Date(c.last_inbound_at))
+    ? tickHtml('delivered') : '';
+  const previa=c.last_message_body?esc(c.last_message_body.slice(0,80)):'Nenhuma mensagem ainda';
+  const quando=_horaCurta(c.last_inbound_at||c.last_outbound_at||c.updated_at);
+  return `<button type="button" class="cv-card${ativo}${pendente}" onclick="abrirConversa(${c.id})"
+    title="${esc(nome)} — ${esc(c.selo.explicacao)}">
+    ${avatarHtml(nome,c.selo.tom)}
+    <span class="cv-card-mid">
+      <span class="cv-card-nome">${esc(nome)}</span>
+      <span class="cv-card-previa">${tique}${previa}</span>
+    </span>
+    <span class="cv-card-end">
+      <span class="cv-card-hora">${esc(quando)}</span>
+      <span class="cv-selo ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
+    </span>
+  </button>`;
+}
+
+/* O card fixo da conversa de teste: mesma aparência de um card real, sempre
+   no topo, para a IA já configurada poder ser testada mesmo sem nenhum lead
+   ter respondido ainda. Por baixo é a sessão do simulador — nada sai para a
+   Meta e nenhum lead real é tocado. */
+function cardConversaTeste(){
+  const ativo=_conversaAberta===TESTE_ID?' aberta':'';
+  const st=_simStatus||{};
+  const msgs=(_simSessao&&_simSessao.mensagens)||[];
+  const ultima=msgs[msgs.length-1];
+  const previa=ultima?esc((ultima.body||'').slice(0,80)):'Escreva uma mensagem como se fosse o lead';
+  const tom=st.ia_configurada?'ativa':'pausada';
+  const selo=st.ia_configurada?'IA de teste':'IA desligada';
+  return `<button type="button" class="cv-card cv-card-teste${ativo}" id="cv-card-teste"
+    onclick="abrirConversa('${TESTE_ID}')"
+    title="Conversa de teste — nada sai para a Meta e nenhum lead real é tocado">
+    ${avatarHtml('Conversa de teste',tom)}
+    <span class="cv-card-mid">
+      <span class="cv-card-nome">Conversa de teste <span class="cv-tag-teste">TESTE</span></span>
+      <span class="cv-card-previa">${previa}</span>
+    </span>
+    <span class="cv-card-end">
+      <span class="cv-selo ${tom}">${esc(selo)}</span>
+    </span>
+  </button>`;
+}
+
+/* ══════ TIQUES DE ENTREGA ══════
+   Um risco = saiu daqui. Dois = a Meta entregou. Dois em azul = o lead abriu.
+   Vermelho = falhou. É o único lugar da tela que diz se a mensagem chegou, e
+   `status` vem do webhook de confirmação da Meta — quando ela não confirma, o
+   tique fica no estágio em que parou, que é a verdade. */
+function tickHtml(status){
+  if(!status)return '';
+  if(status==='failed'){
+    return `<span class="cv-tick falhou" title="A Meta não conseguiu entregar">
+      <svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="5" y1="3" x2="13" y2="9"/><line x1="13" y1="3" x2="5" y2="9"/></svg></span>`;
+  }
+  const duplo=status==='delivered'||status==='read';
+  const lida=status==='read';
+  const titulo=lida?'Lida pelo lead':duplo?'Entregue no aparelho':'Enviada';
+  const segundo=duplo?'<polyline points="9 7.2 12 10 17.4 3.2"/>':'';
+  return `<span class="cv-tick${lida?' lida':''}" title="${titulo}">
+    <svg viewBox="0 0 18 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="1 7.2 4 10 11 2.6"/>${segundo}</svg></span>`;
+}
+
+async function abrirConversa(id,silencioso){
+  _conversaAberta=id;
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+  const painel=document.getElementById('cv-panel');
+  if(!painel)return;
+  if(id===TESTE_ID)return abrirConversaTeste(silencioso);
+  if(!silencioso)painel.innerHTML='<div class="muted-box">Abrindo conversa…</div>';
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}`);
+    if(!resp.ok){painel.innerHTML='<div class="muted-box">Conversa não encontrada.</div>';return;}
+    renderPainelConversa(await resp.json());
+  }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
+}
+
+/* A conversa de teste não tem um id de servidor para consultar — a sessão do
+   simulador já foi carregada por loadConversas(). Só busca de novo se ainda
+   não tiver chegado (ex.: clique antes do primeiro carregamento terminar). */
+async function abrirConversaTeste(silencioso){
+  const painel=document.getElementById('cv-panel');
+  if(!painel)return;
+  if(!_simSessao&&!silencioso)painel.innerHTML='<div class="muted-box">Abrindo conversa de teste…</div>';
+  if(!_simStatus||!_simSessao){
+    try{
+      const [st,sess]=await Promise.all([
+        authFetch('/api/wa/sandbox/status').then(r=>r.ok?r.json():null),
+        authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null),
+      ]);
+      _simStatus=st;_simSessao=sess||{empresa:'',mensagens:[],turnos:[]};
+    }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';return;}
+  }
+  renderPainelConversa({teste:true});
+}
+
+/* ══════ O CHAT ══════
+   Mensagens agrupadas por dia e por autor, como em qualquer cliente de
+   conversa. O agrupamento não é enfeite: sem ele, cinco frases seguidas da
+   mesma pessoa viram cinco blocos com cinco assinaturas repetidas.
+   A mesma função desenha a conversa real e a de teste — o que se testa é
+   exatamente o que o lead veria, e uma bolha com aparência própria testaria
+   outra coisa. `opts.teste` muda só o que de fato é diferente: a data vem em
+   epoch (não ISO), a saída é sempre rotulada "IA" e não há tique de entrega
+   (nada foi de fato entregue a ninguém). */
+function bolhasDeMensagens(mensagens,opts){
+  opts=opts||{};
+  if(!mensagens||!mensagens.length){
+    return `<div class="cv-msg-vazio">${opts.vazio||'Nenhuma mensagem trocada ainda.'}</div>`;
+  }
+  let dia='',autorAnterior='';
+  return mensagens.map(m=>{
+    const lado=m.direction==='in'?'in':'out';
+    const autor=m.direction==='in'?'Lead':(opts.teste?'IA':(m.sent_by==='ai'?'IA':'Você'));
+    const quando=opts.teste?new Date((m.created_at||0)*1000):new Date(m.created_at);
+    const diaMsg=isNaN(quando)?'':quando.toDateString();
+    let sep='';
+    if(diaMsg&&diaMsg!==dia){
+      sep=`<div class="cv-day">${esc(_diaLabel(quando))}</div>`;
+      dia=diaMsg;autorAnterior='';
+    }
+    const seguida=autor===autorAnterior?' seguida':'';
+    autorAnterior=autor;
+
+    const corpo=m.type==='template'
+      ? `<span class="cv-msg-tmpl">Convite de abertura enviado${m.template_name?` (template ${esc(m.template_name)})`:''}</span>`
+      : esc(m.body||'');
+    // Só a saída leva tique, e só na conversa real: mensagem que chegou já
+    // chegou, por definição, e a conversa de teste não entrega nada de verdade.
+    const tique=(lado==='out'&&!opts.teste)?tickHtml(m.status):'';
+    const quemIA=autor==='IA'?' ia':'';
+    return `${sep}<div class="cv-msg ${lado}${seguida}">
+      <div class="cv-msg-bolha">${corpo}
+        <div class="cv-msg-meta">
+          <span class="cv-autor${quemIA}">${autor}</span>
+          <span>${esc(_horaCurta(quando))}</span>${tique}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* "IA está escrevendo…" — aparece quando o lead falou por último e a automação
+   ainda está com a conversa. É inferência, não um evento da Meta, então a
+   frase diz o que está acontecendo em vez de imitar o "digitando" do
+   WhatsApp: prometer que alguém digita quando ninguém digita seria mentir. */
+function digitandoHtml(c,ultima){
+  if(c.ai_status!=='AI_ACTIVE')return '';
+  if(!ultima||ultima.direction!=='in')return '';
+  return `<div class="cv-typing" role="status">
+    <span class="cv-dots"><i></i><i></i><i></i></span>
+    <span class="cv-typing-txt">A IA está preparando a resposta</span>
+  </div>`;
+}
+
+/* ══════ O PAINEL DA DIREITA ══════
+   Uma função só para a conversa real e para a de teste: as duas usam o mesmo
+   chat (bolhasDeMensagens) e a mesma caixa de resposta — o que muda é o que
+   aparece ao lado (ficha do lead de um lado, raio-x da IA do outro). */
+function renderPainelConversa(det){
+  const painel=document.getElementById('cv-panel');
+  if(!painel)return;
+
+  // O painel é remontado a cada recarga do polling. Sem guardar isto, a
+  // resposta pela metade some do campo enquanto a pessoa escreve, e a rolagem
+  // volta ao fim no meio da leitura do histórico.
+  const rascunho=document.getElementById('cv-texto')?.value||'';
+  const colado=estaNoFim('cv-msgs');
+  const emojisAbertos=!!document.getElementById('cv-emojis')?.classList.contains('aberta');
+
+  if(det.teste)return _renderPainelTeste(painel,rascunho,colado,emojisAbertos);
+
+  const c=det.card;
+  const mensagens=det.messages||[];
+  const nome=c.company_name||'Empresa';
+
+  // A janela de 24h é regra da Meta: fora dela, o campo de resposta aparece
+  // desabilitado explicando o porquê — em vez de sumir ou dar erro no envio.
+  const podeResponder=c.janela_aberta&&(_waStatus||{}).configurado;
+  const caixa=podeResponder
+    ? `<div class="cv-emojis" id="cv-emojis">${paletaEmoji('cv-texto')}</div>
+       <div class="cv-reply">
+         <button type="button" class="cv-icon-btn" id="cv-emoji-btn"
+                 onclick="alternarEmojis('cv-emojis','cv-emoji-btn')"
+                 title="Inserir um emoji no texto" aria-label="Emoji">☺</button>
+         <textarea id="cv-texto" class="cv-textarea" rows="1"
+                   placeholder="Escreva sua resposta…" aria-label="Sua resposta"
+                   oninput="autoCrescer(this)"
+                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarResposta(${c.id})}"></textarea>
+         <button type="button" class="cv-send" onclick="enviarResposta(${c.id})"
+                 title="Enviar (Enter)" aria-label="Enviar">
+           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z"/></svg>
+         </button>
+       </div>
+       <div class="cv-reply-sub" id="cv-msg">Enter envia, Shift+Enter quebra a linha.
+         Responder aqui assume a conversa: a automação para de responder por você.</div>`
+    : `<div class="cv-reply off">
+         ${c.janela_aberta
+           ? 'WhatsApp não está configurado neste servidor, então nada pode ser enviado por aqui.'
+           : 'A janela de 24 horas fechou. Dentro dela a resposta é livre e gratuita; fora dela, só um novo convite (cobrado pela Meta) reabre a conversa.'}
+       </div>`;
+
+  painel.innerHTML=`
+    <div class="cv-panel-chat">
+      <div class="cv-head">
+        <button type="button" class="cv-voltar" onclick="voltarParaLista()" title="Voltar para a lista" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        ${avatarHtml(nome,c.selo.tom,true)}
+        <div class="cv-head-txt">
+          <div class="cv-head-nome">${esc(nome)}</div>
+          <div class="cv-head-sub">${esc(c.contato||'Contato não identificado')} · <span class="mono">${esc(c.phone_e164)}</span></div>
+        </div>
+        <span class="cv-selo grande ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
+      </div>
+      <div class="cv-explica">${esc(c.selo.explicacao)}${c.handoff_reason?` <span class="cv-motivo">${esc(c.handoff_reason)}</span>`:''}</div>
+      <div class="cv-acoes">${botoesConversa(c)}</div>
+      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(mensagens,{vazio:'Nenhuma mensagem trocada ainda.<br/>O convite foi enviado — a conversa começa quando o lead responder.'})}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
+      ${caixa}
+    </div>
+    <aside class="cv-panel-aside cv-ficha">${fichaHtml(c,det)}</aside>`;
+
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+  const card=document.querySelector(`.cv-card[onclick="abrirConversa(${c.id})"]`);
+  if(card)card.classList.add('aberta');
+  document.getElementById('cv-wrap')?.classList.add('lendo');
+
+  const campo=document.getElementById('cv-texto');
+  if(campo&&rascunho){campo.value=rascunho;autoCrescer(campo);}
+  if(emojisAbertos){
+    document.getElementById('cv-emojis')?.classList.add('aberta');
+    document.getElementById('cv-emoji-btn')?.classList.add('on');
+  }
+  if(colado)irParaOFim('cv-msgs');
+}
+
+/* Ficha + funil + agendamentos + atalhos — o que se sabe deste lead sem sair
+   do chat. `det.ficha`/`det.agendamentos` já vêm prontos de
+   GET /api/wa/conversations/{id} (routers/wa.py). */
+function fichaHtml(c,det){
+  const tel=(c.phone_e164||'').replace(/\D/g,'');
+  return `<div class="cv-ficha-acoes">
+      ${tel?`<a class="cv-btn" href="https://wa.me/${tel}" target="_blank" rel="noopener">Abrir WhatsApp</a>`:''}
+      <button type="button" class="cv-btn" onclick="copiarTelefone(this,'${esc(c.phone_e164||'')}')">Copiar número</button>
+    </div>
+    ${funilHtml(c.stage)}
+    ${janelaHtml(c)}
+    ${fichaCamposHtml(det.ficha)}
+    ${agendamentosHtml(det.agendamentos)}`;
+}
+
+/* "X de 5" só entre as etapas ativas do funil (routers/leads.py::PIPELINE_STAGES,
+   reaproveitando STAGE_ORDER/STAGE_LABELS do dashboard) — "perdido" é um selo
+   à parte, não uma posição na barra: recuar não é "estar mais perto do fim". */
+function funilHtml(stage){
+  if(!stage)return '';
+  if(stage==='perdido'){
+    return `<div class="cv-ficha-sec"><div class="cv-ficha-sec-tit">Etapa do funil</div>
+      <span class="cv-selo pausada">Perdido</span></div>`;
+  }
+  const ativas=STAGE_ORDER.filter(s=>s!=='perdido');
+  const i=ativas.indexOf(stage);
+  return `<div class="cv-ficha-sec">
+    <div class="cv-ficha-sec-tit">Etapa do funil${i>=0?` · ${i+1} de ${ativas.length}`:''}</div>
+    <div class="cv-funil-nome">${esc(STAGE_LABELS[stage]||stage)}</div>
+  </div>`;
+}
+
+function janelaHtml(c){
+  if(!c.janela_expira_em)return '';
+  return `<div class="cv-ficha-janela ${c.janela_aberta?'aberta':'fechada'}">
+    ${c.janela_aberta?'🔓':'🔒'} Janela de 24h: ${esc(c.janela_expira_em)}
+  </div>`;
+}
+
+function fichaCamposHtml(ficha){
+  const linhas=Object.entries(ficha||{});
+  if(!linhas.length)return '';
+  return `<div class="cv-ficha-sec">
+    <div class="cv-ficha-sec-tit">Ficha (planilha)</div>
+    <dl class="cv-ficha-campos">
+      ${linhas.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}
+    </dl>
+  </div>`;
+}
+
+function agendamentosHtml(lista){
+  if(!lista||!lista.length)return '';
+  return `<div class="cv-ficha-sec">
+    <div class="cv-ficha-sec-tit">Agendamentos</div>
+    <ul class="cv-agenda-lista">
+      ${lista.map(a=>`<li class="${a.ja_passou?'passou':''}">
+        ${esc(_horaCurta(a.quando))}${a.notas?` · ${esc(a.notas.slice(0,60))}`:''}
+        ${a.ja_passou?'<span class="cv-agenda-tag">já passou</span>':''}
+      </li>`).join('')}
+    </ul>
+  </div>`;
+}
+
+function copiarTelefone(btn,tel){
+  if(!tel||!navigator.clipboard)return;
+  navigator.clipboard.writeText(tel).then(()=>{
+    if(!btn)return;
+    const original=btn.textContent;
+    btn.textContent='Copiado!';
+    setTimeout(()=>{btn.textContent=original;},1500);
+  }).catch(()=>{});
+}
+
+function voltarParaLista(){
+  _conversaAberta=null;
+  document.getElementById('cv-wrap')?.classList.remove('lendo');
+  const painel=document.getElementById('cv-panel');
+  if(painel)painel.innerHTML=painelVazio();
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+}
+
+/* ══════ PEÇAS COMPARTILHADAS COM O SIMULADOR ══════ */
+
+/* Rolagem: a conversa abre no fim, onde está a mensagem nova. Só rola sozinho
+   quando o usuário já estava no fim — puxar a tela de quem está lendo o
+   histórico é a forma mais rápida de fazer alguém perder a linha. */
+function irParaOFim(id,suave){
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.scrollTo({top:el.scrollHeight,behavior:suave?'smooth':'auto'});
+}
+function estaNoFim(id,folga){
+  const el=document.getElementById(id);
+  if(!el)return true;
+  return el.scrollHeight-el.scrollTop-el.clientHeight<(folga||120);
+}
+
+/* A caixa cresce com o texto até o teto do CSS — dois cliques a menos do que
+   arrastar a alça de redimensionar a cada mensagem longa. */
+function autoCrescer(el){
+  if(!el)return;
+  el.style.height='auto';
+  el.style.height=Math.min(el.scrollHeight,132)+'px';
+}
+
+/* Emoji: uma grade curta dos que se usa numa conversa comercial. Um seletor
+   completo seria 3.600 símbolos com busca — trabalho de sobra para o que aqui
+   é um atalho. */
+const _EMOJIS=['👍','🙏','✅','❌','😀','🙂','😉','😅','🤝','👋','💬','📞','📅','⏰','📎','📄','💰','🚀','⭐','❤️','🔥','👏','🎯','📊'];
+
+function paletaEmoji(alvoId){
+  return _EMOJIS.map(e=>`<button type="button" onclick="inserirEmoji('${alvoId}','${e}')"
+    title="Inserir ${e}" aria-label="Emoji ${e}">${e}</button>`).join('');
+}
+
+function alternarEmojis(paletaId,botaoId){
+  document.getElementById(paletaId)?.classList.toggle('aberta');
+  document.getElementById(botaoId)?.classList.toggle('on');
+}
+
+function inserirEmoji(alvoId,emoji){
+  const el=document.getElementById(alvoId);
+  if(!el)return;
+  const i=el.selectionStart??el.value.length;
+  const j=el.selectionEnd??i;
+  el.value=el.value.slice(0,i)+emoji+el.value.slice(j);
+  el.selectionStart=el.selectionEnd=i+emoji.length;
+  el.focus();autoCrescer(el);
+}
+
+/* Hoje / Ontem / a data. O separador existe para a hora solta da bolha não
+   ficar ambígua entre "14:20 de hoje" e "14:20 da semana passada". */
+function _diaLabel(d){
+  const hoje=new Date(),ontem=new Date();ontem.setDate(hoje.getDate()-1);
+  if(d.toDateString()===hoje.toDateString())return 'Hoje';
+  if(d.toDateString()===ontem.toDateString())return 'Ontem';
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:
+    d.getFullYear()===hoje.getFullYear()?undefined:'numeric'});
+}
+
+/* Na lista: hora se foi hoje, "Ontem", o dia da semana na última semana, data
+   depois disso — a mesma escala de qualquer app de mensagem. */
+function _horaCurta(iso){
+  if(!iso)return '';
+  const d=iso instanceof Date?iso:new Date(iso);
+  if(isNaN(d))return '';
+  const hoje=new Date(),ontem=new Date();ontem.setDate(hoje.getDate()-1);
+  if(d.toDateString()===hoje.toDateString())
+    return d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  if(d.toDateString()===ontem.toDateString())return 'Ontem';
+  if((hoje-d)/86400000<7)return d.toLocaleDateString('pt-BR',{weekday:'short'}).replace('.','');
+  return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});
+}
+
+/* "Assumir agora" aparece sempre — é a saída de emergência, e saída de
+   emergência que só aparece em certos estados não serve para nada. */
+function botoesConversa(c){
+  const b=(acao,rotulo,titulo,cls)=>`<button type="button" class="cv-btn ${cls||''}" onclick="acaoConversa(${c.id},'${acao}')" title="${titulo}">${rotulo}</button>`;
+  const botoes=[b('assumir','Assumir agora','A automação cala na hora e quem responde passa a ser você','destaque')];
+  if(c.ai_status==='AI_ACTIVE')botoes.push(b('pausar','Pausar IA','Ninguém responde até você retomar ou assumir'));
+  else if(c.ai_status!=='STOPPED')botoes.push(b('retomar','Devolver para a IA','A automação volta a responder, dentro das regras'));
+  if(c.ai_status!=='STOPPED')botoes.push(b('encerrar','Encerrar','Fecha a conversa: nada mais é enviado'));
+  return botoes.join('');
+}
+
+async function acaoConversa(id,acao){
+  if(acao==='encerrar'&&!confirm('Encerrar esta conversa? Nada mais será enviado por aqui.'))return;
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}`,{method:'PATCH',body:JSON.stringify({acao})});
+    if(!resp.ok){alert((await resp.json()).detail||'Não foi possível concluir.');return;}
+    await loadConversas();
+    abrirConversa(id,true);
+  }catch(_){alert('Erro de conexão.');}
+}
+
+async function enviarResposta(id){
+  const campo=document.getElementById('cv-texto');
+  const msg=document.getElementById('cv-msg');
+  const texto=(campo&&campo.value||'').trim();
+  if(!texto){campo&&campo.focus();return;}
+  msg.className='cv-reply-sub';msg.textContent='Enviando…';
+  // Limpa o campo antes da resposta do servidor: se der erro, o texto volta
+  // logo abaixo — e enquanto isso ninguém manda a mesma frase duas vezes por
+  // achar que o primeiro Enter não pegou.
+  campo.value='';autoCrescer(campo);
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}/reply`,{method:'POST',body:JSON.stringify({texto})});
+    const json=await resp.json();
+    if(!resp.ok){
+      campo.value=texto;autoCrescer(campo);
+      msg.className='cv-reply-sub sub-err';msg.textContent=json.detail||'Não foi possível enviar.';
+      return;
+    }
+    renderPainelConversa(json);
+    irParaOFim('cv-msgs',true);
+    loadConversas();
+  }catch(_){
+    campo.value=texto;autoCrescer(campo);
+    msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão. A mensagem não foi enviada.';
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   CONVERSA DE TESTE (ex-"Simulador da IA")
+   Mesma conversa que o lead teria, sem nada sair para a Meta e sem tocar
+   num lead real — agora como um card fixo dentro de Conversas, em vez de
+   uma tela própria. Ao lado do chat, o raio-x: o que a IA classificou, com
+   quanta confiança e qual regra decidiu o resto. O chat sozinho mostra a
+   resposta; ele não mostra o porquê — que é o que se precisa saber antes
+   de deixar isto falando com clientes.
+   ════════════════════════════════════════════════════════════════ */
+
+/* Uma frase típica por intenção. Existem para o teste percorrer os nove
+   caminhos sem a pessoa ter que adivinhar como um lead escreveria cada um. */
+const _SIM_SUGESTOES=[
+  {txt:'Sou eu mesmo, pode falar',esperado:'CONFIRMOU_PESSOA'},
+  {txt:'O que exatamente vocês fazem?',esperado:'CONVERSANDO'},
+  {txt:'Prefiro falar com uma pessoa, não com robô',esperado:'QUER_HUMANO'},
+  {txt:'Quanto custa? Me manda uma proposta',esperado:'NEGOCIANDO'},
+  {txt:'Não sou eu quem cuida disso aqui',esperado:'PESSOA_ERRADA'},
+  {txt:'Já somos clientes de vocês',esperado:'JA_E_CLIENTE'},
+  {txt:'Não quero mais receber mensagens',esperado:'PEDIU_PARAR'},
+  {txt:'Vocês emitem nota fiscal avulsa em Manaus?',esperado:'FORA_DA_BASE'},
+  {txt:'ok',esperado:'AMBIGUO'},
+];
+
+const _SIM_ACAO_LBL={
+  respondeu:'Respondeu',
+  chamou_humano:'Chamou você',
+  encerrou:'Encerrou',
+  nao_enviou:'Não enviou',
+};
+
+/* O painel da conversa de teste: mesmo chat e mesma caixa de resposta do
+   painel real (renderPainelConversa), com o raio-x no lugar da ficha —
+   aqui não há lead de verdade para mostrar. */
+function _renderPainelTeste(painel,rascunho,colado,emojisAbertos){
+  const st=_simStatus||{};
+  const s=_simSessao||{mensagens:[],turnos:[],empresa:''};
+  const tom=st.ia_configurada?'ativa':'pausada';
+
+  const aviso=st.ia_configurada?'':`<div class="cv-warn">
+    <strong>A IA não está configurada neste servidor.</strong>
+    Toda mensagem enviada aqui vai cair em "chamou você", que é o
+    comportamento correto quando não há como classificar.
+    <span class="cv-vars"><code>GROQ_API_KEY</code></span></div>`;
+
+  const horario=st.pode_enviar_agora
+    ? (st.fora_do_horario
+        ? '<span class="sim-chip neutro" title="Fora do horário comercial a IA responde em uma frase só">Fora do expediente · resposta curta</span>'
+        : '<span class="sim-chip ok">Horário comercial</span>')
+    : '<span class="sim-chip neutro" title="Neste horário a produção ficaria calada; a conversa de teste ignora a trava para você poder testar">Horário de silêncio · trava ignorada</span>';
+
+  painel.innerHTML=`
+    <div class="cv-panel-chat">
+      <div class="cv-head">
+        <button type="button" class="cv-voltar" onclick="voltarParaLista()" title="Voltar para a lista" aria-label="Voltar">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        ${avatarHtml('Conversa de teste',tom,true)}
+        <div class="cv-head-txt">
+          <div class="cv-head-nome">Conversa de teste <span class="cv-tag-teste">TESTE</span></div>
+          <div class="cv-head-sub">
+            <input id="sim-empresa" value="${esc(s.empresa||'')}" placeholder="Empresa do lead fictício"
+                   aria-label="Nome da empresa fictícia" title="Este nome vai no prompt, igual ao de um lead real" />
+          </div>
+        </div>
+        ${st.ia_configurada
+          ? `<span class="sim-chip ok" title="Modelo que classifica e redige">IA ativa · <code>${esc(st.modelo||'')}</code></span>`
+          : '<span class="sim-chip off">IA desligada</span>'}
+      </div>
+      ${aviso}
+      <div class="cv-explica">Você escreve como o <strong>lead</strong>; quem responde é a IA. Nada é enviado
+        para a Meta e nenhum lead real é tocado. ${horario}</div>
+      <div class="cv-acoes">
+        <button type="button" class="cv-btn destaque" onclick="reiniciarConversaTeste()"
+                title="Apaga a conversa de teste e começa outra">Recomeçar</button>
+      </div>
+      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(s.mensagens,{teste:true,vazio:'Escreva a primeira mensagem como se fosse o lead.<br/>A IA vai classificar e decidir se responde ou se passa a conversa para você.'})}</div>
+      <div class="sim-sug">
+        <span class="sim-sug-lbl">Mensagens de teste — uma por intenção que a IA sabe classificar (role para ver todas):</span>
+        <div class="sim-sug-row">
+          ${_SIM_SUGESTOES.map((x,i)=>`<button type="button" onclick="usarSugestao(${i})"
+            title="Deveria ser classificada como ${x.esperado}">${esc(x.txt)}</button>`).join('')}
+        </div>
+      </div>
+      <div class="cv-emojis" id="cv-emojis">${paletaEmoji('cv-texto')}</div>
+      <div class="cv-reply">
+        <button type="button" class="cv-icon-btn" id="cv-emoji-btn"
+                onclick="alternarEmojis('cv-emojis','cv-emoji-btn')"
+                title="Inserir um emoji" aria-label="Emoji">☺</button>
+        <textarea id="cv-texto" class="cv-textarea" rows="1"
+                  placeholder="Escreva como se fosse o lead…" aria-label="Mensagem do lead fictício"
+                  oninput="autoCrescer(this)"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemTeste()}"></textarea>
+        <button type="button" class="cv-send" id="cv-send" onclick="enviarMensagemTeste()"
+                title="Enviar como o lead (Enter)" aria-label="Enviar">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z"/></svg>
+        </button>
+      </div>
+      <div class="cv-reply-sub" id="cv-msg">Enter envia. O que a IA entendeu aparece ao lado.</div>
+    </div>
+    <aside class="cv-panel-aside sim-xray">
+      <div class="sim-xray-head">
+        <strong>O que a IA entendeu</strong>
+        <span>Um bloco por mensagem sua, do mais recente para o mais antigo.
+        A regra que transforma a intenção em ação é a mesma da produção.</span>
+      </div>
+      <div class="sim-xray-body" id="cv-aside-body">${raioX(s.turnos)}</div>
+    </aside>`;
+
+  document.querySelectorAll('.cv-card').forEach(el=>el.classList.remove('aberta'));
+  document.getElementById('cv-card-teste')?.classList.add('aberta');
+  document.getElementById('cv-wrap')?.classList.add('lendo');
+
+  const campo=document.getElementById('cv-texto');
+  if(campo&&rascunho){campo.value=rascunho;autoCrescer(campo);}
+  if(emojisAbertos){
+    document.getElementById('cv-emojis')?.classList.add('aberta');
+    document.getElementById('cv-emoji-btn')?.classList.add('on');
+  }
+  if(colado)irParaOFim('cv-msgs');
+}
+
+function raioX(turnos){
+  if(!turnos||!turnos.length){
+    return `<div class="sim-xray-vazio">Ainda não há turno para mostrar.<br/>
+      Mande uma mensagem ao lado.</div>`;
+  }
+  return turnos.slice().reverse().map((t,i)=>blocoTurno(t,i===0)).join('');
+}
+
+function blocoTurno(t,atual){
+  const corte=(_simStatus&&_simStatus.confianca_minima)||0.7;
+  const pct=Math.round((t.confianca||0)*100);
+  const baixa=!t.confiavel?' baixa':'';
+  // A barra mostra o corte como um risco porque o número sozinho não explica
+  // por que 68% reprova e 71% aprova.
+  const conf=t.intencao?`<div class="sim-conf">
+    <div class="sim-conf-topo"><span>Confiança</span><b>${pct}%</b></div>
+    <div class="sim-conf-track">
+      <div class="sim-conf-fill${baixa}" style="width:${pct}%"></div>
+      <div class="sim-conf-corte" style="left:${Math.round(corte*100)}%"
+           title="Corte de ${Math.round(corte*100)}%"></div>
+    </div>
+    <div class="sim-conf-nota">${t.confiavel
+      ? `Acima do corte de ${Math.round(corte*100)}% — a classificação vale.`
+      : `Abaixo do corte de ${Math.round(corte*100)}% — a leitura é descartada e a conversa passa para você.`}</div>
+  </div>`:'';
+
+  return `<div class="sim-turno${atual?' atual':''}">
+    <div class="sim-turno-top">
+      <span class="sim-acao ${esc(t.acao)}">${esc(_SIM_ACAO_LBL[t.acao]||t.acao)}</span>
+      <span class="sim-ms">${t.ms||0} ms</span>
+    </div>
+    <div class="sim-turno-body">
+      <dl class="sim-linha">
+        <dt>Intenção</dt>
+        <dd><span class="sim-intencao">${esc(t.intencao||'—')}</span></dd>
+      </dl>
+      ${conf}
+      ${t.fora_do_horario?'<div class="sim-motivo">Fora do expediente: o rascunho foi pedido em modo curto, de uma frase só.</div>':''}
+      ${t.motivo?`<div class="sim-motivo${t.erro?' erro':''}">${esc(t.motivo)}</div>`:''}
+    </div>
+  </div>`;
+}
+
+function usarSugestao(i){
+  const s=_SIM_SUGESTOES[i];
+  if(!s)return;
+  const campo=document.getElementById('cv-texto');
+  if(!campo)return;
+  campo.value=s.txt;autoCrescer(campo);campo.focus();
+  enviarMensagemTeste();
+}
+
+async function enviarMensagemTeste(){
+  if(_simOcupado)return;
+  const campo=document.getElementById('cv-texto');
+  const msg=document.getElementById('cv-msg');
+  const texto=(campo&&campo.value||'').trim();
+  if(!texto){campo&&campo.focus();return;}
+
+  _simOcupado=true;
+  document.getElementById('cv-send')?.setAttribute('disabled','');
+  campo.value='';autoCrescer(campo);
+
+  // A mensagem do lead entra na hora e o "digitando" aparece embaixo dela: é o
+  // que faz a espera pela IA parecer uma conversa em vez de um formulário
+  // travado. O que vier do servidor substitui isto.
+  _simSessao.mensagens.push({direction:'in',body:texto,created_at:Date.now()/1000});
+  const area=document.getElementById('cv-msgs');
+  if(area){
+    area.innerHTML=bolhasDeMensagens(_simSessao.mensagens,{teste:true})
+      +`<div class="cv-typing"><span class="cv-dots"><i></i><i></i><i></i></span>
+        <span class="cv-typing-txt">A IA está lendo e decidindo…</span></div>`;
+    irParaOFim('cv-msgs',true);
+  }
+  if(msg){msg.className='cv-reply-sub';msg.textContent='Aguardando a IA…';}
+
+  try{
+    const resp=await authFetch('/api/wa/sandbox/message',
+      {method:'POST',body:JSON.stringify({texto,ignorar_horario:true})});
+    const turno=await resp.json();
+    if(!resp.ok){
+      if(msg){msg.className='cv-reply-sub sub-err';msg.textContent=turno.detail||'Não foi possível falar com a conversa de teste.';}
+      campo.value=texto;autoCrescer(campo);
+    }else{
+      // Recarrega a sessão do servidor em vez de remendar a local: ele é quem
+      // sabe o que entrou no histórico que a IA vai ler no próximo turno.
+      const sess=await authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null);
+      if(sess)_simSessao=sess;
+      const area2=document.getElementById('cv-msgs');
+      if(area2)area2.innerHTML=bolhasDeMensagens(_simSessao.mensagens,{teste:true});
+      const aside=document.getElementById('cv-aside-body');
+      if(aside)aside.innerHTML=raioX(_simSessao.turnos);
+      if(msg){msg.className='cv-reply-sub';msg.innerHTML=_resumoDoTurno(turno);}
+      irParaOFim('cv-msgs',true);
+      // A prévia do card fixo (última mensagem) muda a cada turno.
+      const slot=document.getElementById('cv-teste-slot');
+      if(slot)slot.innerHTML=cardConversaTeste();
+    }
+  }catch(_){
+    if(msg){msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão com a conversa de teste.';}
+    campo.value=texto;autoCrescer(campo);
+  }finally{
+    _simOcupado=false;
+    document.getElementById('cv-send')?.removeAttribute('disabled');
+    // O "digitando" some junto com o desbloqueio, mesmo quando deu erro.
+    const area3=document.getElementById('cv-msgs');
+    if(area3)area3.querySelector('.cv-typing')?.remove();
+  }
+}
+
+/* A frase embaixo da caixa: o que teria acontecido de verdade. */
+function _resumoDoTurno(t){
+  if(t.acao==='respondeu')
+    return `A IA respondeu sozinha. Em produção esta mensagem teria saído para o lead.`;
+  if(t.acao==='encerrou')
+    return `A conversa seria <strong>encerrada</strong> e nada mais sairia por ela.`;
+  if(t.acao==='nao_enviou')
+    return `Nada seria enviado agora.`;
+  return `A automação <strong>passaria a conversa para você</strong> — ela não responde nestes casos.`;
+}
+
+async function reiniciarConversaTeste(){
+  const empresa=document.getElementById('sim-empresa')?.value||'';
+  try{
+    const resp=await authFetch('/api/wa/sandbox/reset',
+      {method:'POST',body:JSON.stringify({empresa})});
+    if(!resp.ok){alert('Não foi possível recomeçar.');return;}
+    _simSessao=await resp.json();
+    renderPainelConversa({teste:true});
+    const slot=document.getElementById('cv-teste-slot');
+    if(slot)slot.innerHTML=cardConversaTeste();
+  }catch(_){alert('Erro de conexão.');}
+}
+
+/* ══════ INICIAR CONTATO A PARTIR DA FICHA ══════
+   O primeiro convite é a ação paga e irreversível do produto: chega no celular
+   de uma pessoa e a Meta cobra por ela. Por isso pede confirmação explícita e
+   mostra para qual número vai. */
+
+/* Barra de ações da ficha. Fica em função separada porque o estado do WhatsApp
+   pode mudar com a ficha aberta (a janela de horário vira de hora em hora) e a
+   barra precisa ser redesenhada sem recarregar a ficha inteira. */
+function renderLeadActions(data){
+  const alvo=document.getElementById('lead-actions');
+  if(!alvo)return;
+  // Quando a integração não está configurada o botão continua visível, em
+  // estado apagado, dizendo o que falta — some não ensina nada.
+  const integ=_integr||{};
+  alvo.innerHTML=[
+    '<span class="la-lbl">Ações do lead</span>',
+    integ.ai
+      ? `<button class="la-btn" onclick="genAiSummary()" title="Gera um resumo executivo desta empresa com IA">${IC_SPARK} Resumo com IA</button>`
+      : `<span class="la-btn off" title="Disponível quando a chave de IA está configurada no servidor">${IC_SPARK} Resumo com IA</span>`,
+    integ.crm_webhook
+      ? `<button class="la-btn accent" onclick="pushToCrm()" title="Envia este lead ao webhook configurado em Configurações">${IC_PUSH} Enviar ao CRM</button>`
+      : `<span class="la-btn off" onclick="nav('settings')" title="Configure um webhook em Configurações para habilitar" style="cursor:pointer">${IC_PUSH} Enviar ao CRM · configurar</span>`,
+    botaoWhatsappHtml(data),
+    `<button class="la-btn" onclick="openExportModal()" title="Baixar seus leads em Excel ou CSV">${IC_DOWN} Exportar leads</button>`,
+  ].filter(Boolean).join('');
+}
+
+/* A janela de horário como o servidor a descreveu, ou `null` quando a resposta
+   guardada já venceu.
+
+   `muda_em` é o instante em que aquela resposta deixa de valer. Comparar com o
+   relógio do navegador só serve para saber que ela envelheceu — a regra
+   continua morando inteira no portão, no servidor. Enquanto a resposta nova não
+   chega, a tela não afirma nada sobre horário: prefere deixar o botão ativo e
+   ouvir o "não" do servidor a apagá-lo por um palpite. */
+let _waJanelaCarregando=false;
+function janelaWa(){
+  const j=_waStatus&&_waStatus.janela;
+  if(!j)return null;
+  if(j.muda_em&&Date.now()>=Date.parse(j.muda_em)){
+    if(!_waJanelaCarregando){
+      _waJanelaCarregando=true;
+      loadWaStatus().finally(()=>{
+        _waJanelaCarregando=false;
+        if(currentLeadData)renderLeadActions(currentLeadData);
+      });
+    }
+    return null;
+  }
+  return j;
+}
+
+/* O botão do primeiro contato, nos seus quatro estados possíveis. Fora do
+   horário ele aparece apagado dizendo quando volta, em vez de aceitar o clique,
+   pedir confirmação de um envio cobrado e só então recusar. */
+function botaoWhatsappHtml(data){
+  if(!(_waStatus&&_waStatus.configurado))
+    return `<span class="la-btn off" title="Falta configurar as credenciais da Meta no servidor">${IC_CHAT} WhatsApp · não configurado</span>`;
+  if(!data.phone)
+    return `<span class="la-btn off" title="Informe o telefone na ficha para poder enviar o convite">${IC_CHAT} WhatsApp · informe o telefone</span>`;
+
+  const j=janelaWa();
+  if(j&&!j.pode_enviar){
+    const rotulo=j.indeterminado
+      ? 'WhatsApp · horário indeterminado no servidor'
+      : (j.volta_em?`WhatsApp · fora do horário · volta ${j.volta_em}`
+                   :'WhatsApp · fora do horário');
+    return `<span class="la-btn off" title="${esc(j.explicacao)}">${IC_CHAT} ${esc(rotulo)}</span>`;
+  }
+
+  // Dentro da faixa de envio, mas fora do comercial: o convite sai igual; o que
+  // muda é o tamanho da resposta automática, se o lead responder agora.
+  const ressalva=j&&j.fora_do_horario
+    ? ' Fora do horário comercial: o convite sai normalmente, mas a resposta automática vem em uma frase só.'
+    : '';
+  return `<button class="la-btn" onclick="iniciarWhatsapp()" title="Envia o convite aprovado para ${esc(data.phone)}. A Meta cobra por esta mensagem.${esc(ressalva)}">${IC_CHAT} Iniciar contato por WhatsApp</button>`;
+}
+
+async function iniciarWhatsapp(){
+  if(!currentLeadId||!currentLeadData)return;
+  const d=currentLeadData;
+  const numero=d.phone;
+  if(!numero){
+    alert('Este lead não tem telefone. Informe o número na ficha antes de iniciar o contato.');
+    return;
+  }
+  const alerta=d.phone_is_mobile===false
+    ? '\n\nATENÇÃO: este número atende numa central, não é celular. O convite é cobrado mesmo assim.'
+    : '';
+  if(!confirm(`Enviar o convite de WhatsApp para ${numero}?${alerta}\n\nA mensagem é cobrada pela Meta e não pode ser desfeita.`))return;
+  try{
+    const resp=await authFetch('/api/wa/start',{method:'POST',body:JSON.stringify({lead_id:currentLeadId})});
+    const json=await resp.json();
+    if(!resp.ok){
+      alert(json.detail||'Não foi possível iniciar a conversa.');
+      // O portão é quem manda: se ele recusou, o que a tela sabia sobre a
+      // janela está velho. Recarrega para o botão passar a mostrar o motivo em
+      // vez de continuar convidando para o mesmo clique.
+      if(resp.status===409)loadWaStatus().finally(()=>{if(currentLeadData)renderLeadActions(currentLeadData);});
+      return;
+    }
+    nav('conversas');
+  }catch(_){alert('Erro de conexão.');}
+}
+
+/* ══════ TELEFONE — o único campo da ficha que se corrige à mão ══════
+   A coleta acha o telefone publicado no site: quase sempre a central. Dizer
+   isso na tela evita a descoberta cara — ligar, cair na recepção e perder a
+   janela de contato com o decisor. */
+
+function phoneCellHtml(delay){
+  const d=currentLeadData||{};
+  const editar=`<button type="button" class="cell-edit" onclick="editPhone()" title="Corrigir ou informar o telefone desta empresa">${d.phone?'Editar':'Informar'}</button>`;
+  const topo=`<span class="data-lbl">${IC_PHONE}Telefone</span>`;
+  if(!d.phone){
+    return `<div class="data-cell" id="phone-cell" style="animation-delay:${delay}ms">${topo}
+      <span class="data-val muted">—</span>
+      <span class="data-sub">Nenhum telefone público encontrado. ${editar}</span></div>`;
+  }
+  const sub=d.phone_is_mobile===false
+    ? 'Atende numa central. O celular do decisor vai no card dele, abaixo.'
+    : (d.phone_is_mobile===true ? 'Celular — aceita ligação e mensagem.' : 'Tipo de linha não identificado.');
+  return `<div class="data-cell" id="phone-cell" style="animation-delay:${delay}ms">${topo}
+    <span class="data-val">${esc(d.phone)}</span>
+    <span class="data-sub">${sub} ${editar}</span></div>`;
+}
+
+function renderPhoneCell(){
+  const cell=document.getElementById('phone-cell');
+  if(cell)cell.outerHTML=phoneCellHtml(0);
+}
+
+function editPhone(){
+  const cell=document.getElementById('phone-cell');
+  if(!cell)return;
+  const atual=(currentLeadData&&currentLeadData.phone)||'';
+  cell.innerHTML=`<span class="data-lbl">${IC_PHONE}Telefone</span>
+    <div class="cell-edit-row">
+      <input id="phone-input" class="cell-inp" value="${esc(atual)}" placeholder="(11) 98888-7777" aria-label="Telefone da empresa"/>
+      <button type="button" class="cell-save" onclick="savePhone()">Salvar</button>
+      <button type="button" class="cell-cancel" onclick="renderPhoneCell()">Cancelar</button>
+    </div>
+    <span class="data-sub" id="phone-msg">Com DDD. Em branco apaga o telefone da ficha.</span>`;
+  const inp=document.getElementById('phone-input');
+  inp.focus();inp.select();
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='Enter')savePhone();
+    if(e.key==='Escape')renderPhoneCell();
+  });
+}
+
+async function savePhone(){
+  const inp=document.getElementById('phone-input');
+  const msg=document.getElementById('phone-msg');
+  if(!inp||!currentLeadId)return;
+  msg.className='data-sub';msg.textContent='Salvando…';
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}`,{method:'PATCH',body:JSON.stringify({phone:inp.value})});
+    const json=await resp.json();
+    if(!resp.ok){msg.className='data-sub sub-err';msg.textContent=json.detail||'Não foi possível salvar.';return;}
+    currentLeadData=json;
+    renderPhoneCell();
+  }catch(e){msg.className='data-sub sub-err';msg.textContent='Erro de conexão. O telefone não foi salvo.';}
+}
+
+function setRole(v){const el=document.getElementById('role-input');if(el)el.value=v;}
+
+/* ══════ CONTATOS DA EMPRESA (Lusha Prospecting) ══════
+
+   A API separa listar de revelar, e a tela reflete isso: os cards chegam com
+   nome, cargo e localização já visíveis (listar 25 custa 1 crédito), e cada um
+   tem um botão que revela e-mail/telefone (1 e 5 créditos, respectivamente).
+   Revelar acontece um contato por vez, sob clique — nunca em lote, nunca em
+   segundo plano. O crédito é da conta Lusha do próprio usuário.
+
+   Sem chave conectada nada disso chama a Lusha: a lista vem do caminho
+   gratuito e a tela diz de onde veio. */
+
+const _prosp={
+  page:0, pageSize:20, total:0, fonte:'free', contatos:[], erro:null,
+  cargo:'', senioridade:new Set(), departamentos:new Set(), dataPoints:new Set(),
+  vocab:null, carregando:false,
+};
+
+async function _prospVocab(){
+  if(_prosp.vocab)return _prosp.vocab;
+  try{
+    const resp=await authFetch('/api/lusha/filters');
+    _prosp.vocab=await resp.json();
+  }catch(e){
+    // Sem o vocabulário a sidebar não aparece, mas a lista continua vindo —
+    // filtro é conveniência, lista é o produto.
+    _prosp.vocab={seniority:[],departments:[],data_points:[],pricing:{}};
+  }
+  return _prosp.vocab;
+}
+
+async function loadPopularContacts(){
+  if(!currentLeadId)return;
+  const list=document.getElementById('decisores-list');
+  if(!list)return;
+  _prosp.page=0;
+  _prosp.cargo='';_prosp.senioridade.clear();_prosp.departamentos.clear();_prosp.dataPoints.clear();
+  await _prospVocab();
+  await _prospBuscar();
+}
+
+function _prospQuery(){
+  const q=new URLSearchParams();
+  q.set('page',_prosp.page);
+  q.set('page_size',_prosp.pageSize);
+  if(_prosp.cargo)q.set('job_titles',_prosp.cargo);
+  _prosp.senioridade.forEach(v=>q.append('seniority',v));
+  _prosp.departamentos.forEach(v=>q.append('departments',v));
+  _prosp.dataPoints.forEach(v=>q.append('data_points',v));
+  return q.toString();
+}
+
+async function _prospBuscar(){
+  const list=document.getElementById('decisores-list');
+  if(!list||!currentLeadId)return;
+  _prosp.carregando=true;
+  list.innerHTML='<div class="muted-box">Carregando contatos da empresa…</div>';
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}/contacts?${_prospQuery()}`);
+    const json=await resp.json();
+    if(!resp.ok||!json.success){
+      list.innerHTML=`<div class="muted-box">${esc(json.detail||'Não foi possível carregar os contatos.')}</div>`;
+      return;
+    }
+    _prosp.contatos=json.contatos||[];
+    _prosp.total=json.total||0;
+    _prosp.fonte=json.fonte||'free';
+    _prosp.page=json.page||0;
+    _prosp.pageSize=json.page_size||20;
+    _prosp.erro=json.erro||null;
+    renderProspecting();
+  }catch(e){
+    list.innerHTML='<div class="muted-box">Erro de conexão ao carregar contatos.</div>';
+  }finally{_prosp.carregando=false;}
+}
+
+/* Cada mudança de filtro volta para a primeira página: manter a página atual
+   mostraria "página 3 de 1" e uma lista vazia que parece falha do produto. */
+function prospFiltro(tipo,valor){
+  const alvo={seniority:_prosp.senioridade,dep:_prosp.departamentos,dp:_prosp.dataPoints}[tipo];
+  if(!alvo)return;
+  const v=tipo==='seniority'?Number(valor):valor;
+  if(alvo.has(v))alvo.delete(v);else alvo.add(v);
+  _prosp.page=0;
+  _prospBuscar();
+}
+
+function prospCargo(valor){
+  _prosp.cargo=(valor||'').trim();
+  _prosp.page=0;
+  _prospBuscar();
+}
+
+function prospPagina(delta){
+  const ultima=Math.max(0,Math.ceil(_prosp.total/_prosp.pageSize)-1);
+  const nova=Math.min(ultima,Math.max(0,_prosp.page+delta));
+  if(nova===_prosp.page)return;
+  _prosp.page=nova;
+  _prospBuscar();
+}
+
+function _prospSidebar(){
+  const v=_prosp.vocab||{seniority:[],departments:[],data_points:[]};
+  const chk=(marcado,rotulo,onclick)=>
+    `<label class="pr-chk"><input type="checkbox" ${marcado?'checked':''} onchange="${onclick}"><span>${esc(rotulo)}</span></label>`;
+
+  const sen=(v.seniority||[]).map(s=>
+    chk(_prosp.senioridade.has(s.id),s.pt||s.label,`prospFiltro('seniority',${s.id})`)).join('');
+  const dep=(v.departments||[]).map(d=>
+    chk(_prosp.departamentos.has(d),d,`prospFiltro('dep','${d.replace(/'/g,"\\'")}')`)).join('');
+
+  // Só dois pontos de dados na sidebar, e são os que mudam a decisão de quem
+  // prospecta: "tem celular" e "tem e-mail". Listar os oito nomes técnicos da
+  // API (unknown_phone, no_dnc_phone…) só ocuparia espaço.
+  const dp=[['mobile_phone','Só com celular'],['work_email','Só com e-mail']].map(([k,r])=>
+    chk(_prosp.dataPoints.has(k),r,`prospFiltro('dp','${k}')`)).join('');
+
+  return `<aside class="pr-side">
+    <div class="pr-side-grp">
+      <div class="pr-side-t">Cargo</div>
+      <input class="pr-busca" type="text" placeholder="ex.: Diretor de TI" value="${esc(_prosp.cargo)}"
+             onchange="prospCargo(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();prospCargo(this.value)}">
+    </div>
+    ${dp?`<div class="pr-side-grp"><div class="pr-side-t">Dados</div>${dp}</div>`:''}
+    ${sen?`<div class="pr-side-grp"><div class="pr-side-t">Senioridade</div>${sen}</div>`:''}
+    ${dep?`<div class="pr-side-grp"><div class="pr-side-t">Departamento</div>
+      <div class="pr-side-scroll">${dep}</div></div>`:''}
+  </aside>`;
+}
+
+function _prospBadges(dp){
+  if(!dp)return '';
+  const cel=(dp.mobile_phone||0)+(dp.direct_phone||0);
+  const mail=(dp.work_email||0)+(dp.email||0)+(dp.private_email||0);
+  const out=[];
+  if(cel)out.push(`<span class="pr-badge" title="${cel} telefone(s) disponível(is)">📱${cel>1?`<sup>${cel}</sup>`:''}</span>`);
+  if(mail)out.push(`<span class="pr-badge" title="${mail} e-mail(s) disponível(is)">✉${mail>1?`<sup>${mail}</sup>`:''}</span>`);
+  return out.join('');
+}
+
+function _prospSetores(lista){
+  if(!lista||!lista.length)return '';
+  const mostra=lista.slice(0,2).map(s=>`<span class="pr-tag">${esc(s)}</span>`).join('');
+  const resto=lista.length-2;
+  return `<div class="pr-tags">${mostra}${resto>0?`<span class="pr-tag pr-tag-mais">+${resto}</span>`:''}</div>`;
+}
+
+function _prospCusto(canReveal){
+  if(!canReveal||!canReveal.length)return null;
+  return canReveal.reduce((soma,i)=>soma+(i&&typeof i.credits==='number'?i.credits:0),0);
+}
+
+function _prospCard(p){
+  const init=((p.name||'?').trim()[0]||'?').toUpperCase();
+  const li=p.linkedin_url?`<a class="pr-li" href="${esc(p.linkedin_url)}" target="_blank" rel="noopener" title="Abrir LinkedIn">in</a>`:'';
+  const cargo=p.title_found||p.title_searched||'';
+  const email=(p.probable_emails||[])[0];
+  const endereco=typeof email==='string'?email:(email&&email.email);
+  const custo=_prospCusto(p.can_reveal);
+
+  let acao;
+  if(p.revealed){
+    // Revelado: dado à vista e ações. Nenhuma delas chama a Lusha de novo.
+    const linhas=[];
+    if(p.phone)linhas.push(`<div class="pr-row"><span class="pr-row-ic">📱</span><span class="pr-val">${esc(p.phone)}</span>
+      <button class="pr-copy" onclick="prospCopiar('${esc(p.phone)}')" title="Copiar telefone">copiar</button></div>`);
+    if(endereco)linhas.push(`<div class="pr-row"><span class="pr-row-ic">✉</span><span class="pr-val">${esc(endereco)}</span>
+      <button class="pr-copy" onclick="prospCopiar('${esc(endereco)}')" title="Copiar e-mail">copiar</button></div>`);
+    if(!linhas.length)linhas.push('<div class="pr-row pr-vazio">A Lusha não tinha e-mail nem telefone deste contato.</div>');
+    acao=`<div class="pr-dados">${linhas.join('')}</div>`;
+  }else if(p.source==='lusha'&&p.can_reveal&&p.can_reveal.length){
+    // O custo aparece ANTES do clique. Quem paga tem que saber quanto vai
+    // gastar antes de gastar — 5 créditos por telefone não é detalhe.
+    acao=`<button class="pr-reveal" onclick="prospRevelar(${p.id},this)">Mostrar detalhes${custo?` · ${custo} crédito${custo>1?'s':''}`:''}</button>`;
+  }else if(p.source==='lusha'){
+    acao='<div class="pr-row pr-vazio">Sem e-mail nem telefone revelável.</div>';
+  }else{
+    const linhas=[];
+    if(p.phone)linhas.push(`<div class="pr-row"><span class="pr-row-ic">📱</span><span class="pr-val">${esc(p.phone)}</span></div>`);
+    if(endereco)linhas.push(`<div class="pr-row"><span class="pr-row-ic">✉</span><span class="pr-val">${esc(endereco)}</span>
+      <span class="pr-palpite" title="E-mail deduzido do padrão do domínio, não verificado">palpite</span></div>`);
+    acao=linhas.length?`<div class="pr-dados">${linhas.join('')}</div>`:'';
+  }
+
+  return `<div class="pr-card" id="pr-${p.id}">
+    <div class="pr-head">
+      <div class="pr-ava">${init}</div>
+      <div class="pr-info">
+        <div class="pr-name">${esc(p.name||'—')}${li}${_prospBadges(p.data_points)}</div>
+        ${cargo?`<div class="pr-cargo">${esc(cargo)}</div>`:''}
+        ${p.location?`<div class="pr-loc">${esc(p.location)}</div>`:''}
+        ${_prospSetores(p.company_industries)}
+      </div>
+    </div>
+    ${acao}
+  </div>`;
+}
+
+function _prospRodape(){
+  const ultima=Math.max(1,Math.ceil(_prosp.total/_prosp.pageSize));
+  if(_prosp.total<=_prosp.pageSize)return '';
+  const ini=_prosp.page*_prosp.pageSize+1;
+  const fim=Math.min(_prosp.total,ini+_prosp.contatos.length-1);
+  return `<div class="pr-pag">
+    <button class="pr-pag-btn" ${_prosp.page<=0?'disabled':''} onclick="prospPagina(-1)">Anterior</button>
+    <span class="pr-pag-txt">${ini}–${fim} de ${_prosp.total}</span>
+    <button class="pr-pag-btn" ${_prosp.page>=ultima-1?'disabled':''} onclick="prospPagina(1)">Próxima</button>
+  </div>`;
+}
+
+function renderProspecting(){
+  const root=document.getElementById('decisores-list');
+  if(!root)return;
+
+  // A tela diz de onde veio a lista: pago e gratuito têm garantias diferentes,
+  // e esconder isso faria o usuário culpar o produto por um limite da fonte.
+  const fonte=_prosp.fonte==='lusha'
+    ? '<span class="pr-fonte pr-fonte-paga">Lusha · contatos verificados</span>'
+    : '<span class="pr-fonte">Fontes públicas · sem celular</span>';
+
+  const aviso=_prosp.erro
+    ? `<div class="pr-aviso">${esc(_prosp.erro)}${/Configura/.test(_prosp.erro)?' <a href="/configuracoes">Abrir Configurações</a>':''}</div>`
+    : '';
+
+  const lista=_prosp.contatos.length
+    ? _prosp.contatos.map(_prospCard).join('')
+    : `<div class="empty-state-box"><div class="empty-title">Nenhum contato com esses filtros</div>
+       <div class="empty-sub">Tente remover um filtro da barra ao lado.</div></div>`;
+
+  root.innerHTML=`<div class="pr-wrap">
+    ${_prospSidebar()}
+    <div class="pr-main">
+      <div class="pr-topo">${fonte}</div>
+      ${aviso}
+      <div class="pr-lista">${lista}</div>
+      ${_prospRodape()}
+    </div>
+  </div>`;
+}
+
+async function prospRevelar(id,btn){
+  if(!btn||btn.disabled)return;
+  const rotulo=btn.textContent;
+  btn.disabled=true;btn.textContent='Revelando…';
+  try{
+    const resp=await authFetch(`/api/decision-makers/${id}/reveal`,{method:'POST',body:JSON.stringify({})});
+    const json=await resp.json();
+    if(!resp.ok){
+      // 402 (sem crédito) e 429 (rate limit) pedem ações diferentes; a
+      // mensagem já vem separada do backend.
+      btn.disabled=false;btn.textContent=rotulo;
+      const card=document.getElementById('pr-'+id);
+      if(card&&!card.querySelector('.pr-erro')){
+        const div=document.createElement('div');
+        div.className='pr-erro';div.textContent=json.detail||'Não foi possível revelar.';
+        card.appendChild(div);
+      }
+      return;
+    }
+    const i=_prosp.contatos.findIndex(c=>c.id===id);
+    if(i>=0){
+      _prosp.contatos[i]=json.contato;
+      const card=document.getElementById('pr-'+id);
+      if(card)card.outerHTML=_prospCard(json.contato);
+    }
+  }catch(e){
+    btn.disabled=false;btn.textContent=rotulo;
+  }
+}
+
+function prospCopiar(txt){
+  if(!txt)return;
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt);
+}
+
+async function searchDecisores(){
+  if(!currentLeadId)return;
+  const input=document.getElementById('role-input');
+  const role=(input.value||'').trim();if(!role){input.focus();return;}
+  const list=document.getElementById('decisores-list');
+  const btn=document.getElementById('role-btn');
+  const bText=document.getElementById('role-btn-text');
+  const bSpin=document.getElementById('role-btn-spinner');
+  btn.disabled=true;bText.textContent='Buscando...';bSpin.style.display='inline-block';
+  list.innerHTML=`<div class="muted-box">Procurando pessoas com o cargo “${esc(role)}” nesta empresa… (até 15s)</div>`;
+  try{
+    const resp=await authFetch('/api/decisores',{method:'POST',body:JSON.stringify({lead_id:currentLeadId,roles:[role]})});
+    const json=await resp.json();
+    if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">${esc(json.detail||json.message||'Erro.')}</div>`;return;}
+    renderDecisoresV2(json.decisores);
+  }catch(e){list.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
+  finally{btn.disabled=false;bText.textContent='Buscar decisores';bSpin.style.display='none';}
+}
+
+function renderDecisores(list){
+  const root=document.getElementById('decisores-list');
+  if(!list||!list.length){root.innerHTML=`<div class="empty-state-box"><div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/></svg></div><div class="empty-title">Nenhum resultado</div><div class="empty-sub">Tente variar o cargo — "Diretor TI" em vez de "Diretor de TI".</div></div>`;return;}
+  const mB=(c)=>{const m={high:['✓','verified'],medium:['~','probable'],low:['?','unverified']};const[l,cl]=m[c]||['?','unverified'];return `<span class="conf-badge ${cl}">${l}</span>`;};
+  const eC=(e)=>{if(typeof e==='string')return `<span class="meta-chip email">${esc(e)}</span>`;const m={valid:['✓','email-valid'],catch_all:['~','email-catchall'],invalid:['✗','email-invalid'],unknown:['?','']};const[ic,cl]=m[e.status]||m.unknown;return `<span class="meta-chip email ${cl}">${ic} ${esc(e.email)}</span>`;};
+  _decisores=list;
+  root.innerHTML=list.map((p,i)=>{
+    const init=(p.name||'?').trim()[0].toUpperCase();
+    const emails=(p.probable_emails||[]).slice(0,4).map(eC).join('');
+    const li=p.linkedin_url?`<a class="meta-chip linkedin" href="${p.linkedin_url}" target="_blank" rel="noopener">LinkedIn</a>`:'';
+    return `<div class="dec-card" style="animation-delay:${i*60}ms"><div class="dec-ava">${init}</div><div class="dec-info"><div class="dec-name">${esc(p.name||'—')} ${mB(p.match_confidence)}</div><div class="dec-role-txt">${esc(p.title_searched||'')}</div>${p.snippet?`<div class="dec-snippet">${esc(p.snippet.slice(0,200))}</div>`:''}<div class="dec-meta" id="dec-meta-${p.id}">${li}${emails}${decPhoneHtml(p)}</div></div></div>`;
+  }).join('');
+}
+
+/* ══════ TESTE: card de decisor estilo extensão Lusha ══════
+   Mascara telefone/e-mail até o usuário clicar em "Revelar" — os dados já
+   vieram na resposta da busca, então revelar é só trocar o texto na tela,
+   sem custo nem chamada nova. */
+function _mascararTelefone(e164){
+  if(!e164)return null;
+  // Não dá para saber o tamanho do DDI de cabeça (+1 dos EUA vs +55 do Brasil
+  // vs +598 do Uruguai) sem uma tabela de países. Mais simples e sempre
+  // correto: mostrar os 4 primeiros dígitos após o "+" e mascarar o resto —
+  // é o suficiente para reconhecer o país/DDD sem expor a linha inteira.
+  const visivel=Math.min(5,e164.length);
+  const mask=e164.slice(0,visivel)+'•'.repeat(Math.max(0,e164.length-visivel));
+  return {mask,full:e164};
+}
+function _mascararEmail(email){
+  if(!email)return null;
+  const at=email.indexOf('@');
+  if(at<0)return {mask:email,full:email};
+  return {mask:`${'•'.repeat(Math.min(at,6))}@${email.slice(at+1)}`,full:email};
+}
+
+function renderDecisoresV2(list){
+  const root=document.getElementById('decisores-list');
+  if(!list||!list.length){root.innerHTML=`<div class="empty-state-box"><div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/></svg></div><div class="empty-title">Nenhum resultado</div><div class="empty-sub">Tente variar o cargo — "Diretor TI" em vez de "Diretor de TI".</div></div>`;return;}
+  _decisores=list;
+  root.innerHTML=list.map((p,i)=>{
+    const init=(p.name||'?').trim()[0].toUpperCase();
+    const li=p.linkedin_url?`<a class="dec2-li" href="${esc(p.linkedin_url)}" target="_blank" rel="noopener" title="Abrir LinkedIn">in</a>`:'';
+    const melhorEmail=(p.probable_emails||[])[0];
+    const emailObj=_mascararEmail(typeof melhorEmail==='string'?melhorEmail:melhorEmail?.email);
+    const phoneObj=_mascararTelefone(p.phone);
+    const fonte=p.phone_is_mobile===true?'lusha':'';
+
+    const rows=[];
+    if(phoneObj)rows.push(`<div class="dec2-row" data-full="${esc(phoneObj.full)}" data-kind="phone">
+        <span class="dec2-row-ic">${IC_PHONE_SM}</span><span class="dec2-masked">${esc(phoneObj.mask)}</span>
+        ${fonte?'<span class="dec2-src">Lusha</span>':''}
+      </div>`);
+    if(emailObj)rows.push(`<div class="dec2-row" data-full="${esc(emailObj.full)}" data-kind="email">
+        <span class="dec2-row-ic">${IC_MAIL_SM}</span><span class="dec2-masked">${esc(emailObj.mask)}</span>
+      </div>`);
+    if(!rows.length)rows.push(`<div class="dec2-row"><span class="dec2-masked">Sem telefone nem e-mail encontrado para este cargo.</span></div>`);
+
+    return `<div class="dec2-card" style="animation-delay:${i*60}ms" id="dec2-${p.id}">
+      <div class="dec2-head">
+        <div class="dec2-ava">${init}</div>
+        <div>
+          <div class="dec2-name-row"><span class="dec2-name">${esc(p.name||'—')}</span>${li}</div>
+          <div class="dec2-role">${esc(p.title_searched||p.title_found||'')}</div>
+        </div>
+      </div>
+      ${(phoneObj||emailObj)?`<button type="button" class="dec2-reveal" onclick="revelarDec2(${p.id})">Revelar contato</button>`:''}
+      <div class="dec2-rows">${rows.join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+const IC_PHONE_SM='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.362 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.338 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>';
+const IC_MAIL_SM='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z" opacity="0"/><path d="M22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6z"/><path d="m22 6-10 7L2 6"/></svg>';
+
+function revelarDec2(id){
+  const card=document.getElementById('dec2-'+id);
+  if(!card)return;
+  card.querySelectorAll('.dec2-row[data-full]').forEach(row=>{
+    const full=row.getAttribute('data-full');
+    const span=row.querySelector('.dec2-masked');
+    if(span){span.textContent=full;span.classList.remove('dec2-masked');span.classList.add('dec2-value');}
+  });
+  const btn=card.querySelector('.dec2-reveal');
+  if(btn)btn.remove();
+}
+
+/* ══════ CELULAR DO DECISOR ══════
+   A coleta gratuita não entrega celular pessoal — ela entrega o telefone da
+   empresa. Este campo existe para o número certo entrar depois de confirmado
+   por quem prospecta; sem ele não há como falar direto com o decisor. */
+let _decisores=[];
+
+function decPhoneHtml(p){
+  if(!p||!p.id)return '';
+  if(p.phone){
+    const aviso=p.phone_is_mobile===false?' <span class="dec-warn">central</span>':'';
+    return `<span class="meta-chip phone">${esc(p.phone)}${aviso}</span><button type="button" class="meta-chip act" onclick="editDecPhone(${p.id})" title="Corrigir o celular de ${esc(p.name||'este decisor')}">Trocar</button>`;
+  }
+  return `<button type="button" class="meta-chip act" onclick="editDecPhone(${p.id})" title="Guardar o celular de ${esc(p.name||'este decisor')} — a coleta pública não encontra celular pessoal">+ Celular</button>`;
+}
+
+function editDecPhone(id){
+  const box=document.getElementById('dec-meta-'+id);
+  if(!box)return;
+  const p=_decisores.find(x=>x.id===id)||{};
+  box.innerHTML=`<div class="cell-edit-row">
+      <input id="dec-inp-${id}" class="cell-inp" value="${esc(p.phone||'')}" placeholder="(11) 98888-7777" aria-label="Celular do decisor"/>
+      <button type="button" class="cell-save" onclick="saveDecPhone(${id})">Salvar</button>
+      <button type="button" class="cell-cancel" onclick="renderDecisores(_decisores)">Cancelar</button>
+    </div>
+    <span class="dec-msg" id="dec-msg-${id}">Com DDD. Em branco apaga o celular guardado.</span>`;
+  const inp=document.getElementById('dec-inp-'+id);
+  inp.focus();inp.select();
+  inp.addEventListener('keydown',e=>{
+    if(e.key==='Enter')saveDecPhone(id);
+    if(e.key==='Escape')renderDecisores(_decisores);
+  });
+}
+
+async function saveDecPhone(id){
+  const inp=document.getElementById('dec-inp-'+id);
+  const msg=document.getElementById('dec-msg-'+id);
+  if(!inp)return;
+  msg.className='dec-msg';msg.textContent='Salvando…';
+  try{
+    const resp=await authFetch(`/api/decisores/${id}`,{method:'PATCH',body:JSON.stringify({phone:inp.value})});
+    const json=await resp.json();
+    if(!resp.ok){msg.className='dec-msg sub-err';msg.textContent=json.detail||'Não foi possível salvar.';return;}
+    renderDecisores(_decisores.map(p=>p.id===id?json:p));
+  }catch(e){msg.className='dec-msg sub-err';msg.textContent='Erro de conexão. O celular não foi salvo.';}
+}
+
+/* ══════ INFRAESTRUTURA DE DNS E E-MAIL ══════
+   A ficha comercial mostra só o servidor MX. Aqui embaixo fica o relatório
+   técnico completo (estilo DNS Dumpster), fechado por padrão: registros MX,
+   NS, TXT, SOA, CAA, SRV, autenticação de e-mail, hosts com ASN/PTR/banner
+   HTTP e o registro do domínio. A coleta é sob demanda (~15-25 s) e o
+   resultado fica guardado no lead — abrir de novo é instantâneo. */
+const VERIF_LABELS={google_verify:'Google',ms_verify:'Microsoft',fb_verify:'Facebook',atlassian_verify:'Atlassian'};
+const _dnsFull={};    // leadId → relatório completo já coletado
+const _dnsBusy={};    // leadId → coleta em andamento
+
+/* Servidor MX de menor prioridade — é o que a ficha mostra no lugar do nome
+   comercial do provedor. */
+function primaryMx(data){
+  const list=(data.dns_report&&data.dns_report.mx)||data.mx_records||[];
+  if(!list.length)return null;
+  const sorted=[...list].sort((a,b)=>(a.priority==null?99:a.priority)-(b.priority==null?99:b.priority));
+  return {host:sorted[0].host,count:list.length};
+}
+
+function _fmtDate(iso){
+  if(!iso)return null;
+  const d=new Date(iso);
+  return isNaN(d)?null:d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function _fmtTtl(s){
+  if(s==null)return '';
+  if(s>=86400)return Math.round(s/86400)+'d';
+  if(s>=3600)return Math.round(s/3600)+'h';
+  if(s>=60)return Math.round(s/60)+'min';
+  return s+'s';
+}
+
+/* Casca da seção: cabeçalho clicável com os chips de resumo + corpo vazio. */
+function renderInfra(data){
+  const e=(s)=>esc(String(s==null?'':s));
+  const dns=data.dns_report||null;
+  const mx=primaryMx(data);
+  if(!data.domain&&!mx)return'';
+  const provider=data.mx_provider||(dns&&dns.mx_provider);
+  const chips=[
+    provider?`<span class="dnsx-chip accent">${e(provider)}</span>`:'',
+    data.hosting_provider?`<span class="dnsx-chip">${e(data.hosting_provider)}</span>`:'',
+    dns&&dns.spf?'<span class="dnsx-chip ok">SPF</span>':'',
+    dns&&dns.dmarc?'<span class="dnsx-chip ok">DMARC</span>':'',
+  ].filter(Boolean).join('');
+  return `<section class="dnsx" id="dnsx">
+    <button type="button" class="dnsx-toggle" id="dnsx-toggle" aria-expanded="false" onclick="toggleDnsPanel()">
+      <span class="infra-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg></span>
+      <span class="dnsx-txt">
+        <span class="dnsx-title">Relatório DNS completo</span>
+        <span class="dnsx-sub">Registros MX, NS, TXT, SPF/DMARC/DKIM, hosts com IP e ASN, e titular de ${e(data.domain||'')}</span>
+      </span>
+      <span class="dnsx-chips">${chips}</span>
+      <span class="dnsx-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </button>
+    <div class="dnsx-body" id="dnsx-body" hidden></div>
+  </section>`;
+}
+
+async function toggleDnsPanel(){
+  const sec=document.getElementById('dnsx');
+  const body=document.getElementById('dnsx-body');
+  const btn=document.getElementById('dnsx-toggle');
+  if(!sec||!body)return;
+  const open=!sec.classList.contains('open');
+  sec.classList.toggle('open',open);
+  btn.setAttribute('aria-expanded',open?'true':'false');
+  body.hidden=!open;
+  if(!open)return;
+  const id=currentLeadId;
+  if(_dnsFull[id]){body.innerHTML=renderDnsFull(_dnsFull[id]);return;}
+  if(_dnsBusy[id])return;
+  await loadDnsReport(false);
+}
+
+async function loadDnsReport(refresh){
+  const body=document.getElementById('dnsx-body');
+  const id=currentLeadId;
+  if(!body||!id||_dnsBusy[id])return;
+  _dnsBusy[id]=true;
+  // O que o enriquecimento já coletou aparece na hora; o relatório completo
+  // substitui quando chega — ninguém fica olhando para um spinner vazio.
+  body.innerHTML=renderDnsBasic(currentLeadData)+
+    `<div class="dnsx-load"><span class="spinner"></span>Consultando DNS, logs de certificado, ASN e RDAP… (até 25s)</div>`;
+  try{
+    const resp=await authFetch(`/api/leads/${id}/dns${refresh?'?refresh=true':''}`);
+    const json=await resp.json();
+    if(!resp.ok||!json.report)throw new Error(json.detail||json.message||'falhou');
+    _dnsFull[id]=json.report;
+    if(currentLeadId===id&&!body.hidden)body.innerHTML=renderDnsFull(json.report);
+  }catch(err){
+    if(err.message==='not_authenticated')return;
+    body.innerHTML=renderDnsBasic(currentLeadData)+
+      `<div class="dnsx-err">Não foi possível coletar o relatório completo. <a href="#" onclick="loadDnsReport(true);return false">Tentar de novo</a></div>`;
+  }finally{_dnsBusy[id]=false;}
+}
+
+function copyDnsJson(){
+  const rep=_dnsFull[currentLeadId];
+  if(!rep)return;
+  navigator.clipboard.writeText(JSON.stringify(rep,null,2)).then(()=>{
+    const btn=document.getElementById('dnsx-copy');
+    if(!btn)return;
+    const old=btn.textContent;btn.textContent='Copiado ✓';
+    setTimeout(()=>{btn.textContent=old;},1600);
+  }).catch(()=>{});
+}
+
+/* Prévia com o que a ficha já tem guardado (sem rede). */
+function renderDnsBasic(data){
+  const dns=(data&&data.dns_report)||((data&&(data.mx_records||[]).length)?{mx:data.mx_records}:null);
+  if(!dns)return'';
+  const e=(s)=>esc(String(s==null?'':s));
+  const mx=dns.mx||[];
+  const ns=dns.ns_records&&dns.ns_records.length?dns.ns_records:(dns.ns||[]).map(h=>({host:h,ip:null}));
+  if(!mx.length&&!ns.length)return'';
+  const mxRows=mx.map(m=>`<div class="ir">
+    <div class="ir-c"><span class="ir-line"><span class="ir-prio">${e(m.priority)}</span><span class="ir-mx">${e(m.host)}</span></span></div>
+    <div class="ir-c">${m.ip?`<span class="ir-ip">${e(m.ip)}</span>`:'<span class="ir-nil">sem IP</span>'}${m.ptr&&m.ptr!==m.host?`<span class="ir-sub">${e(m.ptr)}</span>`:''}</div>
+    <div class="ir-c">${m.asn?`<span class="ir-line"><span class="ir-k">ASN:</span><span class="ir-asn">${e(m.asn)}</span></span>`:'<span class="ir-nil">—</span>'}${m.asn_cidr?`<span class="ir-sub net">${e(m.asn_cidr)}</span>`:''}</div>
+    <div class="ir-c">${m.asn_org?`<span class="ir-org">${e(m.asn_org)}</span>`:'<span class="ir-nil">—</span>'}${(m.country_name||m.country)?`<span class="ir-sub geo">${e(m.country_name||m.country)}</span>`:''}</div>
+  </div>`).join('');
+  return `<div class="infra-panel">
+    <div class="infra-blk">
+      <div class="infra-blk-hdr">Registros MX<span class="infra-count">${mx.length}</span></div>
+      ${mx.length?mxRows:'<div class="infra-empty">Nenhum registro MX publicado — o domínio não recebe e-mail.</div>'}
+    </div>
+  </div>`;
+}
+
+/* ── Relatório completo ──────────────────────────────────────────────────── */
+function renderDnsFull(r){
+  const e=(s)=>esc(String(s==null?'':s));
+  const nil='<span class="ir-nil">—</span>';
+  const s=r.summary||{},rec=r.records||{},em=r.email||{},reg=r.registration||null;
+  const mono=(v)=>v?`<span class="dcode">${e(v)}</span>`:nil;
+  const blk=(title,count,inner,meta)=>`<div class="infra-blk">
+    <div class="infra-blk-hdr">${title}${count!=null?`<span class="infra-count">${count}</span>`:''}${meta?`<span class="infra-hdr-meta">${meta}</span>`:''}</div>
+    ${inner}</div>`;
+  const tab=(cols,rows)=>rows.length?`<div class="dtab-wrap"><table class="dtab">
+    <thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(cells=>`<tr>${cells.map(c=>`<td>${c==null||c===''?nil:c}</td>`).join('')}</tr>`).join('')}</tbody>
+  </table></div>`:'<div class="infra-empty">Nada publicado.</div>';
+  const net=(x)=>[x.asn?`<span class="dcode">AS${e(x.asn)}</span>`:'',x.asn_cidr?`<span class="ir-sub net">${e(x.asn_cidr)}</span>`:''].filter(Boolean).join('<br/>')||nil;
+  const org=(x)=>[x.asn_org?e(x.asn_org):'',(x.country_name||x.country)?`<span class="ir-sub geo">${e(x.country_name||x.country)}</span>`:''].filter(Boolean).join('<br/>')||nil;
+
+  /* resumo */
+  const tile=(lbl,val,extra)=>`<div class="dtile"><span class="dtile-lbl">${lbl}</span><span class="dtile-val">${val||nil}</span>${extra?`<span class="dtile-sub">${extra}</span>`:''}</div>`;
+  const dmarcTag=s.dmarc_policy?`<span class="ir-pol ${e(s.dmarc_policy)}">p=${e(s.dmarc_policy)}</span>`:'<span class="ir-nil">sem DMARC</span>';
+  const summary=`<div class="dsum">
+    ${tile('Servidor MX',s.mx_host?mono(s.mx_host):nil,s.mx_count>1?`+${s.mx_count-1} de reserva`:'')}
+    ${tile('Provedor de e-mail',s.mx_provider?`<span class="mx-tag">${e(s.mx_provider)}</span>`:nil)}
+    ${tile('Hospedagem do site',s.hosting_provider?e(s.hosting_provider):nil,[s.hosting_asn?'AS'+e(s.hosting_asn):'',s.hosting_country?e(s.hosting_country):''].filter(Boolean).join(' · '))}
+    ${tile('Autenticação',`${s.spf?'<span class="dnsx-chip ok">SPF</span>':'<span class="dnsx-chip off">sem SPF</span>'} ${dmarcTag} ${s.dkim_selectors?`<span class="dnsx-chip ok">DKIM ${s.dkim_selectors}</span>`:'<span class="dnsx-chip off">sem DKIM</span>'}`)}
+    ${tile('Titular do domínio',reg&&(reg.owner||reg.registrar)?e(reg.owner||reg.registrar):nil,reg&&reg.owner_cnpj?`CNPJ ${e(reg.owner_cnpj)}`:(reg&&reg.registrar&&reg.owner?`Registrar: ${e(reg.registrar)}`:''))}
+    ${tile('Registro',_fmtDate(s.registered_on)?e(_fmtDate(s.registered_on)):nil,_fmtDate(s.expires_on)?`expira em ${e(_fmtDate(s.expires_on))}`:'')}
+    ${tile('DNSSEC',s.dnssec?'<span class="dnsx-chip ok">assinado</span>':'<span class="dnsx-chip off">não assinado</span>')}
+    ${tile('Volume',`${e(s.records_total||0)} registros`,`${e(s.hosts_total||0)} hosts mapeados`)}
+  </div>`;
+
+  /* MX */
+  const mxBlk=blk('Registros MX',(rec.mx||[]).length,
+    tab(['Prio','Servidor de e-mail','IP · PTR','ASN · rede','Organização · país','TTL'],
+      (rec.mx||[]).map(m=>[
+        `<span class="ir-prio">${e(m.priority)}</span>`,
+        `<span class="ir-mx">${e(m.host)}</span>`,
+        [m.ip?`<span class="ir-ip">${e(m.ip)}</span>`:'',m.ptr&&m.ptr!==m.host?`<span class="ir-sub">${e(m.ptr)}</span>`:''].filter(Boolean).join('<br/>'),
+        net(m),org(m),`<span class="ir-sub">${e(_fmtTtl(m.ttl))}</span>`,
+      ])),
+    s.mx_provider?`<span class="ir-tag">${e(s.mx_provider)}</span>`:'');
+
+  /* NS */
+  const nsBlk=blk('Servidores DNS (NS)',(rec.ns||[]).length,
+    tab(['Servidor','IP','ASN','Organização · país','TTL'],
+      (rec.ns||[]).map(n=>[
+        `<span class="ir-ns">${e(n.host)}</span>`,
+        n.ip?`<span class="ir-ip">${e(n.ip)}</span>`:'',
+        n.asn?`<span class="dcode">AS${e(n.asn)}</span>`:'',
+        org(n),`<span class="ir-sub">${e(_fmtTtl(n.ttl))}</span>`,
+      ])));
+
+  /* Hosts */
+  const roleLbl={site:'site',mx:'MX',ns:'NS',host:'host'};
+  const http=(h)=>{
+    if(!h.http)return '';
+    const st=h.http.status;
+    const cls=st>=200&&st<300?'ok':(st>=300&&st<400?'warn':'off');
+    return [`<span class="dnsx-chip ${cls}">${e(st)}</span>`,
+            h.http.server?`<span class="ir-sub">${e(h.http.server)}</span>`:'',
+            h.http.powered_by?`<span class="ir-sub">${e(h.http.powered_by)}</span>`:'',
+            h.http.title?`<span class="ir-sub geo">${e(h.http.title)}</span>`:''].filter(Boolean).join('<br/>');
+  };
+  const hostsBlk=blk('Hosts e subdomínios',(r.hosts||[]).length,
+    tab(['Host','Tipo','IP · PTR','ASN · rede','Organização · país','HTTP'],
+      (r.hosts||[]).map(h=>[
+        `<span class="ir-ns">${e(h.host)}</span>`,
+        `<span class="ir-tag">${e(roleLbl[h.role]||h.role)}</span>`,
+        [h.ip?`<span class="ir-ip">${e(h.ip)}</span>`:'',h.ptr&&h.ptr!==h.host?`<span class="ir-sub">${e(h.ptr)}</span>`:''].filter(Boolean).join('<br/>'),
+        net(h),org(h),http(h),
+      ])),
+    'IP, PTR e ASN de cada nome encontrado em logs de certificado e na varredura de nomes comuns');
+
+  /* Autenticação de e-mail */
+  const spf=em.spf,dmarc=em.dmarc;
+  const spfBlk=blk('SPF — quem pode enviar como '+e(r.domain),spf?spf.mechanisms.length:null,
+    spf?`<div class="dnsx-raw">${e(spf.raw)}</div>`+
+      tab(['Mecanismo','Valor','Efeito'],
+        spf.mechanisms.map(m=>[
+          `<span class="ir-tag">${e(m.type)}</span>`,
+          m.value?`<span class="dcode">${e(m.value)}</span>`:'',
+          `${e(m.qualifier_label)}${m.costs_lookup?' <span class="ir-sub">(consulta DNS)</span>':''}`,
+        ]))+
+      `<div class="infra-auth"><div class="ia"><div class="ia-k">Política final</div><div class="ia-v"><span class="dcode">${e(spf.all||'—')}</span><span class="ir-sub geo">${e(spf.policy_label)}</span></div></div>
+       <div class="ia"><div class="ia-k">Consultas DNS</div><div class="ia-v">${e(spf.lookups)} de ${e(spf.lookup_limit)}${spf.over_limit?' <span class="dnsx-chip off">acima do limite — SPF inválido</span>':''}</div></div></div>`
+    :'<div class="infra-empty">Sem SPF publicado — qualquer servidor pode enviar e-mail em nome do domínio.</div>');
+
+  const dmarcRows=dmarc?Object.entries(dmarc.tags).map(([k,v])=>[
+    `<span class="dcode">${e(k)}</span>`,`<span class="ir-sub">${e(v)}</span>`,
+    e({v:'Versão do protocolo',p:'Política para o domínio',sp:'Política para subdomínios',pct:'% das mensagens sob a política',rua:'Relatórios agregados',ruf:'Relatórios forenses',adkim:'Alinhamento DKIM',aspf:'Alinhamento SPF',fo:'Quando gerar relatório',ri:'Intervalo dos relatórios'}[k]||''),
+  ]):[];
+  const dmarcBlk=blk('DMARC — o que fazer com o e-mail falso',dmarc?dmarcRows.length:null,
+    dmarc?`<div class="dnsx-raw">${e(dmarc.raw)}</div>`+tab(['Tag','Valor','O que significa'],dmarcRows)+
+      `<div class="infra-auth"><div class="ia"><div class="ia-k">Efeito</div><div class="ia-v"><span class="ir-pol ${e(dmarc.policy||'none')}">p=${e(dmarc.policy||'—')}</span><span class="ir-sub geo">${e(dmarc.policy_label)}</span></div></div></div>`
+    :'<div class="infra-empty">Sem DMARC publicado — ninguém é avisado quando o domínio é usado em fraude.</div>');
+
+  const dkimBlk=blk('DKIM — chaves de assinatura',(em.dkim||[]).length,
+    tab(['Seletor','Registro','Tipo','Tamanho da chave'],
+      (em.dkim||[]).map(d=>[
+        `<span class="ir-tag">${e(d.selector)}</span>`,
+        `<span class="dcode">${e(d.host)}</span>`,
+        e(d.key_type||'—'),
+        d.key_bits?`${e(d.key_bits)} bits${d.weak_key?' <span class="dnsx-chip off">fraca</span>':' <span class="dnsx-chip ok">ok</span>'}`:'',
+      ])),
+    // Não existe enumeração de seletor DKIM no DNS: o que aparece é o que
+    // respondeu na varredura dos nomes que os provedores usam.
+    (em.dkim||[]).length?'<span class="ir-sub">encontrados por varredura de seletores conhecidos</span>'
+      :'<span class="ir-sub">nenhum seletor conhecido respondeu</span>');
+
+  const policyRows=[];
+  if(em.mta_sts)policyRows.push(['<span class="ir-tag">MTA-STS</span>',`<span class="dcode">${e(em.mta_sts.host)}</span>`,[em.mta_sts.txt?e(em.mta_sts.txt):'',em.mta_sts.policy?`modo <span class="dcode">${e(em.mta_sts.policy.mode)}</span> · MX na política: ${e((em.mta_sts.policy.mx||[]).join(', '))}`:''].filter(Boolean).join('<br/>')]);
+  if(em.tls_rpt)policyRows.push(['<span class="ir-tag">TLS-RPT</span>',`<span class="dcode">${e(em.tls_rpt.host)}</span>`,e(em.tls_rpt.raw)]);
+  if(em.bimi)policyRows.push(['<span class="ir-tag">BIMI</span>',`<span class="dcode">${e(em.bimi.host)}</span>`,e(em.bimi.raw)]);
+  const policyBlk=policyRows.length?blk('Políticas de transporte e marca',policyRows.length,tab(['Padrão','Registro','Conteúdo'],policyRows)):'';
+
+  /* TXT */
+  const txtBlk=blk('Registros TXT',(rec.txt||[]).length,
+    tab(['Tipo','Valor publicado'],
+      (rec.txt||[]).map(t=>[
+        t.label?`<span class="ir-tag">${e(t.label)}</span>`:'<span class="ir-sub">não classificado</span>',
+        `<span class="dcode wrap">${e(t.value)}</span>`,
+      ])),
+    rec.ttl&&rec.ttl.TXT?`<span class="ir-sub">TTL ${e(_fmtTtl(rec.ttl.TXT))}</span>`:'');
+
+  /* Stack */
+  const stackBlk=(r.stack||[]).length?blk('Ferramentas identificadas',(r.stack||[]).length,
+    `<div class="infra-chips">${r.stack.map(x=>`<span class="ir-tag">${e(x.label)}</span>`).join('')}</div>`,
+    'Serviços que a empresa verificou no próprio DNS'):'';
+
+  /* Endereços do site */
+  const ipsBlk=((rec.a||[]).length||(rec.aaaa||[]).length)?blk('Endereços do site (A / AAAA)',(rec.a||[]).length+(rec.aaaa||[]).length,
+    `<div class="infra-chips">${(rec.a||[]).map(ip=>`<span class="ir-ip">${e(ip)}</span>`).join('')}${(rec.aaaa||[]).map(ip=>`<span class="ir-ip v6">${e(ip)}</span>`).join('')}</div>`,
+    (rec.cname||[]).length?`<span class="ir-sub">CNAME: ${(rec.cname||[]).map(c=>e(c.host)+' → '+e(c.target)).join(' · ')}</span>`:''):'';
+
+  /* SOA / CAA / SRV / DNSSEC */
+  const soa=rec.soa;
+  const soaBlk=soa?blk('SOA — autoridade da zona',null,
+    tab(['Campo','Código','Valor'],[
+      ['Servidor primário','<span class="dcode">MNAME</span>',`<span class="dcode">${e(soa.mname)}</span>`],
+      ['Contato responsável','<span class="dcode">RNAME</span>',`<span class="dcode">${e(soa.rname)}</span>`],
+      ['Versão da zona','<span class="dcode">SERIAL</span>',`<span class="dcode">${e(soa.serial)}</span>`],
+      ['Atualização','<span class="dcode">REFRESH</span>',e(_fmtTtl(soa.refresh))],
+      ['Nova tentativa','<span class="dcode">RETRY</span>',e(_fmtTtl(soa.retry))],
+      ['Expiração','<span class="dcode">EXPIRE</span>',e(_fmtTtl(soa.expire))],
+      ['Cache negativo','<span class="dcode">MINIMUM</span>',e(_fmtTtl(soa.minimum))],
+    ])):'';
+
+  const caaBlk=(rec.caa||[]).length?blk('CAA — quem pode emitir certificado',(rec.caa||[]).length,
+    tab(['Flags','Tag','Autoridade'],(rec.caa||[]).map(c=>[`<span class="dcode">${e(c.flags)}</span>`,`<span class="ir-tag">${e(c.tag)}</span>`,`<span class="dcode">${e(c.value)}</span>`]))):'';
+
+  const srvBlk=(rec.srv||[]).length?blk('Registros SRV',(rec.srv||[]).length,
+    tab(['Serviço','Registro','Destino','Prioridade · peso'],(rec.srv||[]).map(x=>[
+      e(x.service),`<span class="dcode">${e(x.name)}</span>`,
+      `<span class="dcode">${e(x.target)}:${e(x.port)}</span>`,
+      `<span class="ir-sub">${e(x.priority)} · ${e(x.weight)}</span>`,
+    ]))):'';
+
+  const ds=r.dnssec||{};
+  const dnssecBlk=blk('DNSSEC',null,
+    ds.signed?tab(['Key tag','Algoritmo','Digest'],(ds.ds||[]).map(d=>[`<span class="dcode">${e(d.key_tag)}</span>`,`<span class="dcode">${e(d.algorithm)}</span>`,`<span class="dcode">${e(d.digest_type)}</span>`]))
+      :'<div class="infra-empty">Zona não assinada — as respostas DNS deste domínio não podem ser validadas criptograficamente.</div>',
+    ds.dnskey_count?`<span class="ir-sub">${e(ds.dnskey_count)} DNSKEY</span>`:'');
+
+  /* Registro do domínio */
+  const regBlk=reg?blk('Registro do domínio',null,
+    tab(['Campo','Valor'],[
+      ['Titular',reg.owner?e(reg.owner):''],
+      ['CNPJ',reg.owner_cnpj?`<span class="dcode">${e(reg.owner_cnpj)}</span>`:''],
+      ['Registrar',reg.registrar?e(reg.registrar):''],
+      ['Registrado em',_fmtDate(reg.registered_on)?e(_fmtDate(reg.registered_on)):''],
+      ['Expira em',_fmtDate(reg.expires_on)?e(_fmtDate(reg.expires_on)):''],
+      ['Última alteração',_fmtDate(reg.changed_on)?e(_fmtDate(reg.changed_on)):''],
+      ['Status',(reg.status||[]).map(x=>`<span class="ir-tag">${e(x)}</span>`).join(' ')],
+      ['Contatos',(reg.contacts||[]).map(c=>`${e(c.name||'—')}${c.email?` <span class="dcode">${e(c.email)}</span>`:''} <span class="ir-sub">${e((c.roles||[]).join(', '))}</span>`).join('<br/>')],
+      ['NS declarados',(reg.nameservers||[]).map(n=>`<span class="dcode">${e(n)}</span>`).join(' ')],
+    ].filter(row=>row[1])),
+    `<span class="ir-sub">fonte: ${e(reg.source||'RDAP')}</span>`):'';
+
+  const warn=(r.warnings||[]).length?`<div class="dnsx-warn">${r.warnings.map(w=>`<div>${e(w)}</div>`).join('')}</div>`:'';
+  const when=r.collected_at?new Date(r.collected_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'';
+
+  return `${summary}
+    <div class="infra-panel">
+      ${mxBlk}${spfBlk}${dmarcBlk}${dkimBlk}${policyBlk}${txtBlk}${stackBlk}${nsBlk}${ipsBlk}${hostsBlk}${soaBlk}${caaBlk}${srvBlk}${dnssecBlk}${regBlk}
+    </div>
+    ${warn}
+    <div class="dnsx-foot">
+      <span>Coletado em ${e(when)}${r.elapsed_ms?` · ${(r.elapsed_ms/1000).toFixed(1)}s`:''} · DNS ao vivo, Team Cymru (ASN), Cert Spotter (certificados) e RDAP</span>
+      <span class="dnsx-foot-btns">
+        <button class="la-btn" id="dnsx-copy" onclick="copyDnsJson()">Copiar JSON</button>
+        <button class="la-btn" onclick="loadDnsReport(true)">Recoletar</button>
+      </span>
+    </div>`;
+}
+
+/* ══════ VIEW: HISTÓRICO ══════ */
+let _histLeads=[];
+
+async function loadHistory(){
+  const body=document.getElementById('history-body');
+  body.innerHTML='<div class="muted-box">Carregando…</div>';
+  document.getElementById('history-filter').value='';
+  try{
+    const resp=await authFetch('/api/leads?per_page=100');
+    if(!resp.ok){body.innerHTML='<div class="muted-box">Erro ao carregar histórico.</div>';return;}
+    _histLeads=await resp.json();
+    renderHistory('');
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
+}
+
+function filterHistory(q){renderHistory(q);}
+
+/* Ordenação da tabela de histórico */
+let _histSort={key:'created_at',dir:-1};
+
+function _histEmpMin(l){
+  const e=l.employee_count;
+  if(!e||typeof e!=='object')return -1;
+  return e.exact||e.min||-1;
+}
+function _histSortVal(l,key){
+  switch(key){
+    case 'company':return (l.company_name||l.domain||'').toLowerCase();
+    case 'domain':return (l.domain||'').toLowerCase();
+    case 'stage':return STAGE_ORDER.indexOf(l.stage||'novo');
+    case 'employees':return _histEmpMin(l);
+    default:return l.created_at||'';
+  }
+}
+function sortHistory(key){
+  if(_histSort.key===key)_histSort.dir*=-1;
+  else _histSort={key,dir:(key==='created_at'||key==='employees')?-1:1};
+  renderHistory(document.getElementById('history-filter').value);
+}
+
+function renderHistory(q){
+  const body=document.getElementById('history-body');
+  const count=document.getElementById('history-count');
+  const norm=(q||'').trim().toLowerCase();
+  const leads=(norm?_histLeads.filter(l=>
+    (l.company_name||'').toLowerCase().includes(norm)||(l.domain||'').toLowerCase().includes(norm)
+  ):[..._histLeads]).sort((a,b)=>{
+    const va=_histSortVal(a,_histSort.key),vb=_histSortVal(b,_histSort.key);
+    return (va<vb?-1:va>vb?1:0)*_histSort.dir;
+  });
+  count.textContent=_histLeads.length
+    ? `Mostrando ${leads.length} de ${_histLeads.length} empresa${_histLeads.length!==1?'s':''} · clique no nome para ver o resumo`
+    : '';
+  if(!_histLeads.length){
+    body.innerHTML=`<div class="muted-box">Nenhuma empresa analisada ainda.<br/>O histórico guarda tudo o que você pesquisar, com exportação para Excel.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Fazer minha primeira análise</a></div>`;
+    return;
+  }
+  if(!leads.length){body.innerHTML='<div class="muted-box">Nenhuma empresa corresponde ao filtro.</div>';return;}
+
+  const th=(label,key)=>{
+    if(!key)return `<th>${label}</th>`;
+    const on=_histSort.key===key;
+    const arrow=on?(_histSort.dir>0?' ↑':' ↓'):'';
+    return `<th><button class="th-sort${on?' on':''}" onclick="sortHistory('${key}')">${label}${arrow}</button></th>`;
+  };
+  const rows=leads.map(l=>{
+    const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
+    const e=l.employee_count;
+    const emp=e?(typeof e==='object'?(e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'—')):e):'—';
+    return `<tr id="row-${l.id}">
+      <td class="td-co"><button class="td-name" onclick="openLeadSummary(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
+      <td class="td-mono">${esc(l.domain||'—')}</td>
+      <td><span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
+      <td class="td-mono">${esc(String(emp))}</td>
+      <td class="td-mono td-date">${date}</td>
+      <td class="td-actions">
+        <button class="hist-btn primary" onclick="openLeadSummary(${l.id})">Ver</button>
+        <button class="hist-btn danger" onclick="deleteLead(${l.id})" title="Remover">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+  body.innerHTML=`<div class="tbl-scroll"><table class="lead-tbl">
+    <thead><tr>
+      ${th('Empresa','company')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Pessoas associadas','employees')}${th('Data','created_at')}${th('Ações',null)}
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}
+
+async function deleteLead(leadId){
+  if(!confirm('Remover este lead do histórico?'))return;
+  try{
+    const resp=await authFetch(`/api/leads/${leadId}`,{method:'DELETE'});
+    if(resp.ok||resp.status===204){
+      _histLeads=_histLeads.filter(l=>l.id!==leadId);
+      renderHistory(document.getElementById('history-filter').value);
+    }else alert('Erro ao remover lead.');
+  }catch(e){
+    if(e.message!=='not_authenticated')alert('Erro de conexão.');
+  }
+}
+
+/* ══════ RESUMO RÁPIDO (popup) ══════ */
+function openLeadSummary(leadId){
+  const lead=_histLeads.find(l=>l.id===leadId);
+  if(!lead)return;
+  document.getElementById('lead-summary-body').innerHTML=renderLeadSummary(lead);
+  document.getElementById('lead-summary-modal').classList.add('open');
+}
+function closeLeadSummary(){document.getElementById('lead-summary-modal').classList.remove('open');}
+
+function renderLeadSummary(l){
+  const smap={enriched:['Enriquecido','enriched'],partial:['Parcial','partial'],failed:['Falhou','failed']};
+  const[sl,sc]=smap[l.status]||['—','partial'];
+  const init=(l.company_name||l.domain||'?').trim()[0].toUpperCase();
+  const fav=l.domain?`https://www.google.com/s2/favicons?domain=${l.domain}&sz=64`:'';
+  const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:['OK','verified'],probable:['~','probable'],unverified:['?','unverified'],high:['OK','verified'],medium:['~','probable'],low:['?','unverified']};const[lb,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${lb}</span>`;};
+  let emp='';
+  if(l.employee_count){if(typeof l.employee_count==='object'){const e=l.employee_count;if(e.exact)emp=e.exact.toLocaleString('pt-BR');else if(e.min&&e.max)emp=`${e.min.toLocaleString('pt-BR')}–${e.max.toLocaleString('pt-BR')} (faixa)`;else if(e.min)emp=`${e.min.toLocaleString('pt-BR')}+ (faixa)`;else if(e.band)emp=e.band;else emp=e.raw||'';}else emp=l.employee_count;}
+  const ws=l.website?l.website.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
+  const li=l.linkedin_url?l.linkedin_url.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
+  const row=(lbl,val)=>val?`<div class="set-row"><span class="set-lbl">${lbl}</span><span class="set-val">${val}</span></div>`:'';
+  const rows=[
+    row('Site',ws?`<a class="data-val link" href="${l.website}" target="_blank" rel="noopener">${esc(ws)}</a>`:''),
+    row('LinkedIn',l.linkedin_url?`<a class="data-val link" href="${l.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(l.linkedin_confidence)}`:''),
+    row('Pessoas associadas',emp?esc(String(emp)):''),
+    row('Localização',l.location?esc(l.location):''),
+    row('Setor',l.sector?esc(l.sector):''),
+    row('Provedor de e-mail',l.mx_provider?`<span class="mx-tag">${esc(l.mx_provider)}</span>${cb(l.mx_provider_confidence)}`:''),
+    row('Estágio',`<span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span>`),
+    row('Criado em',new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'})),
+  ].join('');
+  const ai=l.ai_summary?`<div class="ai-box" style="margin:16px 0 0"><div class="ai-title">${IC_SPARK} Resumo IA</div><div class="ai-text">${esc(l.ai_summary)}</div></div>`:'';
+  return `
+    <div class="ls-hdr">
+      <div class="ls-co">
+        <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
+        <div><div class="result-name">${esc(l.company_name||l.domain||'Empresa')}</div><div class="result-domain">${esc(l.domain||'')}</div></div>
+      </div>
+      <span class="status-pill ${sc}">${sl}</span>
+    </div>
+    <div class="ls-rows">${rows}</div>
+    ${ai}
+    <div class="ls-footer">
+      <button class="la-btn" onclick="closeLeadSummary();loadLeadIntoView(${l.id})">Ver ficha completa e decisores →</button>
+    </div>`;
+}
+
+/* ══════ EXPORTAÇÃO EM MASSA ══════ */
+function openExportModal(){
+  document.getElementById('export-modal').classList.add('open');
+  setExportPreset('30days');
+}
+function closeExportModal(){document.getElementById('export-modal').classList.remove('open');}
+
+function setExportPreset(preset){
+  document.querySelectorAll('.export-opt').forEach(b=>b.classList.toggle('active',b.dataset.preset===preset));
+  document.getElementById('export-custom-range').style.display=preset==='custom'?'flex':'none';
+  document.getElementById('export-modal').dataset.preset=preset;
+}
+
+async function runExport(fmt){
+  const preset=document.getElementById('export-modal').dataset.preset||'30days';
+  const params=new URLSearchParams({format:fmt,preset});
+  if(preset==='custom'){
+    const start=document.getElementById('export-date-start').value;
+    const end=document.getElementById('export-date-end').value;
+    if(!start||!end){alert('Informe as duas datas do intervalo.');return;}
+    params.set('date_start',start);params.set('date_end',end);
+  }
+  const token=await getToken();if(!token)return;
+  const btn=document.getElementById(`export-btn-${fmt}`);
+  const label=btn.textContent;btn.disabled=true;btn.textContent='Gerando…';
+  try{
+    const resp=await fetch(`/api/export?${params.toString()}`,{headers:{Authorization:`Bearer ${token}`}});
+    if(!resp.ok){
+      const j=await resp.json().catch(()=>({}));
+      alert(j.detail||'Nenhum lead encontrado para o período selecionado.');
+      return;
+    }
+    const blob=await resp.blob();
+    const url=URL.createObjectURL(blob);
+    const cd=resp.headers.get('content-disposition')||'';
+    const match=cd.match(/filename="([^"]+)"/);
+    const a=document.createElement('a');
+    a.href=url;a.download=match?match[1]:`leads.${fmt==='xlsx'?'xlsx':'csv'}`;
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+    closeExportModal();
+  }catch(e){alert('Erro de conexão ao exportar.');}
+  finally{btn.disabled=false;btn.textContent=label;}
+}
+
+/* ══════ VIEW: CONFIGURAÇÕES ══════ */
+async function loadSettings(){
+  const body=document.getElementById('settings-body');
+  body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
+  try{
+    const[meR,connR,waR,lushaR]=await Promise.all([
+      authFetch('/api/me'),
+      authFetch('/api/crm/connections'),
+      authFetch('/api/wa/connection'),
+      authFetch('/api/me/lusha'),
+    ]);
+    const me=meR.ok?await meR.json():_profile;
+    const conns=connR.ok?await connR.json():[];
+    const wa=waR.ok?await waR.json():null;
+    const lusha=lushaR.ok?await lushaR.json():null;
+    if(me)_profile=me;
+    updateNavUser();
+    renderSettings(me,conns,wa,lusha);
+  }catch(e){
+    if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
+  }
+}
+
+const _setHead=(icon,title,desc)=>`<div class="set-head">
+  <span class="set-ic">${icon}</span>
+  <span><div class="set-title">${title}</div><p class="set-desc">${desc}</p></span>
+</div>`;
+const IC_USER='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+const IC_PLUG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/></svg>';
+const IC_EXT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/></svg>';
+const IC_EXIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>';
+const IC_WA='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 20.5l1.7-5.2A8.5 8.5 0 1 1 21 11.5z"/><path d="M8.5 9.5c0 3.3 2.7 6 6 6"/></svg>';
+const IC_LUSHA='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4v4"/></svg>';
+
+/* ══════ CONFIGURAÇÕES: seções ══════
+   A tela reunia conta, CRM, WhatsApp, Lusha, extensão e sessão numa pilha só
+   — seis formulários abertos ao mesmo tempo, e o usuário caçando o campo
+   certo. Agora cada assunto é uma seção com lugar próprio na sub-navegação da
+   esquerda, e o painel da direita mostra uma de cada vez. */
+
+/* Qual seção está aberta. Vive fora do render porque salvar qualquer
+   formulário chama loadSettings() de novo — sem isso o usuário voltaria para
+   "Conta" toda vez que clicasse em salvar. */
+let _setTab='conta';
+
+const SET_SECOES=[
+  {id:'conta',      lbl:'Conta',       desc:'Perfil e sessão',       icon:IC_USER},
+  {id:'integracoes',lbl:'Integrações', desc:'CRM e enriquecimento',  icon:IC_PLUG},
+  {id:'whatsapp',   lbl:'WhatsApp',    desc:'Número que fala',       icon:IC_WA},
+  {id:'extensao',   lbl:'Extensão',    desc:'LinkedIn no navegador', icon:IC_EXT},
+];
+
+function setTab(id){
+  if(!SET_SECOES.some(s=>s.id===id))id='conta';
+  _setTab=id;
+  document.querySelectorAll('.set-nav-btn').forEach(b=>{
+    const on=b.dataset.tab===id;
+    b.classList.toggle('active',on);
+    b.setAttribute('aria-selected',on?'true':'false');
+  });
+  document.querySelectorAll('.set-sec').forEach(s=>s.classList.toggle('active',s.dataset.sec===id));
+}
+
+/* Cabeçalho de uma sub-área dentro de um painel — separa credenciais de
+   mensagem de abertura sem precisar de mais um cartão. Abre a <div>; quem
+   chama fecha. */
+const _setSub=(t)=>`<div class="set-sub"><div class="set-sub-t">${t}</div>`;
+
+/* Bolinha de estado na sub-navegação: verde = funcionando, âmbar = existe mas
+   incompleto, nada = ainda não configurado. Sem ela o usuário abre as quatro
+   seções só para descobrir o que falta. */
+const _setDot=(estado)=>estado?`<span class="set-nav-dot ${estado}" aria-hidden="true"></span>`:'';
+
+/* O cartão do WhatsApp. Diz sempre por qual número as mensagens saem: com a
+   conta conectada, o do usuário; sem ela, o do servidor — e "configurado"
+   sozinho não distingue os dois. */
+function _cardWhatsApp(wa){
+  if(!wa){
+    return`<div class="panel panel-pad">
+      <div class="muted-box">Não foi possível carregar a configuração do WhatsApp agora.</div>
+    </div>`;
+  }
+  const conectado=!!wa.conectado;
+  const pelaConta=wa.origem==='conta';
+  const estado=conectado
+    ?`<div class="crm-conn">
+        <div class="crm-conn-info">
+          <span class="crm-conn-name">${esc(wa.display_phone_number||'Número conectado')}</span>
+          <span class="crm-conn-meta">id ${esc(wa.phone_number_id||'—')}${wa.verificado_em?' · confirmado com a Meta em '+new Date(wa.verificado_em).toLocaleDateString('pt-BR'):' · ainda não confirmado'}${pelaConta?' · as mensagens saem por este número':''}</span>
+        </div>
+        <div class="crm-conn-acts">
+          <span class="crm-conn-state ${wa.configurado?'on':'off'}">${wa.configurado?'pronto':'incompleto'}</span>
+          <button class="set-btn danger" onclick="disconnectWhatsApp()">Desconectar</button>
+        </div>
+      </div>`
+    :(wa.configurado
+      ?`<div class="muted-box">Hoje as mensagens saem pelo número configurado no servidor. Conecte o seu para falar pelo seu próprio WhatsApp.</div>`
+      :'');
+
+  const pendencias=(wa.faltando||[]).length
+    ?`<p class="set-feedback err">Falta: ${(wa.faltando||[]).map(esc).join(', ')}.</p>`:'';
+  const erro=wa.erro?`<p class="set-feedback err">${esc(wa.erro)}</p>`:'';
+
+  return`
+    <div class="panel panel-pad">
+      ${_setHead(IC_WA,'Conexão com o Meta Business','Conecte o número da sua conta para conversar com os leads por ele. As credenciais vêm do <strong>Meta Business</strong> (Apps → WhatsApp → Configuração da API) e ficam cifradas aqui — depois de salvas não voltam para esta tela.')}
+      ${estado}
+      ${erro}
+      <div class="set-form">
+        ${_setSub('Credenciais')}
+          <div class="set-field">
+            <label for="wa-pnid">ID do número (Phone Number ID)</label>
+            <input id="wa-pnid" class="set-input" placeholder="Ex.: 109876543210987" autocomplete="off" spellcheck="false" value="${esc(wa.phone_number_id||'')}"/>
+          </div>
+          <div class="set-field">
+            <label for="wa-token">Token de acesso${wa.tem_token?' (preenchido — deixe em branco para manter)':''}</label>
+            <input id="wa-token" class="set-input" type="password" placeholder="${wa.tem_token?'••••••••••••':'EAAG…'}" autocomplete="off" spellcheck="false"/>
+          </div>
+          <div class="set-field">
+            <label for="wa-secret">App Secret${wa.tem_app_secret?' (preenchido — deixe em branco para manter)':''}</label>
+            <input id="wa-secret" class="set-input" type="password" placeholder="${wa.tem_app_secret?'••••••••••••':'Assina o webhook: sem ele nada é recebido'}" autocomplete="off" spellcheck="false"/>
+          </div>
+          <div class="set-field">
+            <label for="wa-verify">Token de verificação${wa.tem_verify_token?' (preenchido — deixe em branco para manter)':''}</label>
+            <input id="wa-verify" class="set-input" type="password" placeholder="${wa.tem_verify_token?'••••••••••••':'Uma frase que você inventa e repete na Meta'}" autocomplete="off" spellcheck="false"/>
+          </div>
+        </div>
+        ${_setSub('Mensagem de abertura')}
+          <div class="set-field">
+            <label for="wa-template">Template aprovado na Meta</label>
+            <input id="wa-template" class="set-input" placeholder="Ex.: primeiro_contato" autocomplete="off" spellcheck="false" value="${esc(wa.template_name||'')}"/>
+            <p class="set-desc">É o único formato que a Meta deixa você enviar primeiro, antes de o lead responder.</p>
+          </div>
+        </div>
+        <div class="set-actions">
+          <button class="set-btn primary" onclick="saveWhatsApp()">${conectado?'Atualizar conexão':'Conectar WhatsApp'}</button>
+        </div>
+        ${pendencias}
+        <p id="wa-feedback" class="set-feedback"></p>
+      </div>
+    </div>
+
+    <div class="panel panel-pad">
+      ${_setHead(IC_PLUG,'Webhook de recebimento','Cadastre esta URL e o token de verificação na Meta (WhatsApp → Configuração → Webhook) e assine o campo <strong>messages</strong>. É o que faz as respostas dos leads chegarem aqui.')}
+      <div class="set-row set-row--stack">
+        <span class="set-lbl">URL do webhook</span>
+        <span class="set-val set-val--code">${esc(wa.webhook_url||'')}</span>
+      </div>
+    </div>`;
+}
+
+/* ══════ Conteúdo de cada seção ══════ */
+
+function _secConta(me){
+  return`
+    <div class="panel panel-pad">
+      ${_setHead(IC_USER,'Identificação','A conta com que você entrou neste navegador. Todas as funções do LeadEnricher — análises, lote, planilha, extensão e conversas — estão liberadas, sem limite de uso.')}
+      <div class="set-row"><span class="set-lbl">E-mail</span><span class="set-val">${esc(me?.email||'—')}</span></div>
+    </div>
+
+    <div class="panel panel-pad">
+      ${_setHead(IC_EXIT,'Sessão neste navegador','Encerra o acesso neste navegador. Seus leads continuam salvos na conta.')}
+      <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
+    </div>`;
+}
+
+function _secIntegracoes(webhook,lusha){
+  const connCard=webhook
+    ?`<div class="crm-conn">
+        <div class="crm-conn-info">
+          <span class="crm-conn-name">Webhook</span>
+          <span class="crm-conn-meta">${webhook.webhook_configured?'URL configurada':'sem URL'}${webhook.updated_at?' · atualizado em '+new Date(webhook.updated_at).toLocaleDateString('pt-BR'):''}</span>
+        </div>
+        <div class="crm-conn-acts">
+          <span class="crm-conn-state ${webhook.is_active?'on':'off'}">${webhook.is_active?'ativo':'inativo'}</span>
+          <button class="set-btn ghost" onclick="toggleCrmConn('webhook')">${webhook.is_active?'Desativar':'Ativar'}</button>
+          <button class="set-btn danger" onclick="deleteCrmConn('webhook')">Remover</button>
+        </div>
+      </div>`
+    :'';
+
+  return`
+    <div class="panel panel-pad">
+      ${_setHead(IC_PLUG,'Enviar leads para o seu CRM','Cada lead — com decisores e atividades — é enviado por <strong>POST assinado com HMAC-SHA256</strong> ao endereço que você informar. Funciona com Zapier, Make, Power Automate ou um sistema próprio. Com o webhook ativo, o botão “Enviar ao CRM” fica habilitado na ficha do lead.')}
+      ${connCard}
+      <div class="set-form">
+        <div class="set-field">
+          <label for="crm-url">URL que vai receber os leads</label>
+          <input id="crm-url" class="set-input" placeholder="https://hooks.zapier.com/…" autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="set-field">
+          <label for="crm-secret">Segredo para assinar o envio (opcional, recomendado)</label>
+          <input id="crm-secret" class="set-input" placeholder="Uma frase secreta que só você e o seu sistema conhecem" autocomplete="off" spellcheck="false"/>
+        </div>
+        <div class="set-actions">
+          <button class="set-btn primary" onclick="saveCrmWebhook()">${webhook?'Atualizar webhook':'Salvar e ativar webhook'}</button>
+        </div>
+        <p id="crm-feedback" class="set-feedback"></p>
+      </div>
+    </div>
+
+    <div class="panel panel-pad">
+      ${_setHead(IC_LUSHA,'Lusha (enriquecimento pago, opcional)','Conecte a chave API da sua conta Lusha para enriquecer contatos com telefone e dados adicionais. A chave fica cifrada e só você gasta seus créditos. Sem ela, tudo funciona 100% gratuito. Você gera a chave em app.lusha.com → Hub de APIs → Copiar chave da API.')}
+      ${lusha?.conectado
+        ?`<div class="crm-conn">
+          <div class="crm-conn-info">
+            <span class="crm-conn-name">Conectado</span>
+            <span class="crm-conn-meta">Sua chave está salva e criptografada</span>
+          </div>
+          <div class="crm-conn-acts">
+            <span class="crm-conn-state on">ativo</span>
+            <button class="set-btn danger" onclick="desconectarLusha()">Desconectar</button>
+          </div>
+        </div>
+        ${_lushaSaldo(lusha)}`
+        :''}
+      <div class="set-form">
+        <div class="set-field">
+          <label for="lusha-key">Chave da API</label>
+          <input id="lusha-key" class="set-input" type="password" placeholder="Sua chave da Lusha (começa com um UUID)" autocomplete="off" spellcheck="false" value=""/>
+        </div>
+        <div class="set-actions">
+          <button class="set-btn primary" onclick="conectarLusha()">${lusha?.conectado?'Atualizar chave':'Conectar Lusha'}</button>
+        </div>
+        <p id="lusha-feedback" class="set-feedback"></p>
+      </div>
+    </div>`;
+}
+
+function _secExtensao(){
+  return`
+    <div class="panel panel-pad">
+      ${_setHead(IC_EXT,'Parear este navegador','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Revelar contato é livre — não há limite de revelações.')}
+      <div class="set-actions">
+        <button class="set-btn primary" onclick="generatePairCode()">Gerar código de pareamento</button>
+        <span class="set-lbl">Válido por poucos minutos, uso único</span>
+      </div>
+      <p id="ext-feedback" class="set-feedback"></p>
+    </div>`;
+}
+
+function renderSettings(me,conns,wa,lusha){
+  const body=document.getElementById('settings-body');
+  const webhook=(conns||[]).find(c=>c.provider==='webhook');
+
+  /* Estado de cada seção para a bolinha da sub-navegação. "warn" é o caso que
+     mais confunde: existe configuração, mas ela não está funcionando. */
+  const estados={
+    conta:'on',
+    integracoes:((webhook&&webhook.is_active)||lusha?.conectado)?'on':(webhook?'warn':''),
+    whatsapp:wa?.conectado?(wa.configurado?'on':'warn'):(wa?.configurado?'warn':''),
+    extensao:'',
+  };
+
+  const secoes={
+    conta:{
+      sub:'Quem está usando este navegador e como encerrar o acesso.',
+      html:_secConta(me),
+    },
+    integracoes:{
+      sub:'Para onde os leads vão depois de prontos, e de onde vêm os dados pagos.',
+      html:_secIntegracoes(webhook,lusha),
+    },
+    whatsapp:{
+      sub:'O número que fala com os leads e o webhook que traz as respostas de volta.',
+      html:_cardWhatsApp(wa),
+    },
+    extensao:{
+      sub:'Conecte este navegador para ver os dados dentro do LinkedIn.',
+      html:_secExtensao(),
+    },
+  };
+
+  if(!secoes[_setTab])_setTab='conta';
+
+  const abas=SET_SECOES.map(s=>`
+    <button class="set-nav-btn${s.id===_setTab?' active':''}" data-tab="${s.id}" role="tab"
+            aria-selected="${s.id===_setTab?'true':'false'}" aria-controls="set-sec-${s.id}"
+            onclick="setTab('${s.id}')">
+      <span class="set-nav-ic">${s.icon}</span>
+      <span class="set-nav-txt">
+        <span class="set-nav-lbl">${s.lbl}</span>
+        <span class="set-nav-desc">${s.desc}</span>
+      </span>
+      ${_setDot(estados[s.id])}
+    </button>`).join('');
+
+  const paineis=SET_SECOES.map(s=>`
+    <section class="set-sec${s.id===_setTab?' active':''}" data-sec="${s.id}"
+             id="set-sec-${s.id}" role="tabpanel" aria-label="${s.lbl}">
+      <div class="set-sec-head">
+        <h2>${s.lbl}</h2>
+        <p>${secoes[s.id].sub}</p>
+      </div>
+      ${secoes[s.id].html}
+    </section>`).join('');
+
+  body.innerHTML=`
+    <div class="set-layout">
+      <nav class="set-nav" role="tablist" aria-label="Seções das configurações">${abas}</nav>
+      <div class="set-pane">${paineis}</div>
+    </div>`;
+}
+
+/* ══════ EXTENSÃO: código de pareamento ══════ */
+async function generatePairCode(){
+  const el=document.getElementById('ext-feedback');
+  if(!el)return;
+  el.textContent='Gerando…';el.className='set-feedback ok';
+  try{
+    const resp=await authFetch('/api/extension/pair-code',{method:'POST',body:'{}'});
+    if(!resp.ok){el.textContent='Não conseguimos gerar o código agora.';el.className='set-feedback err';return;}
+    const data=await resp.json();
+    el.innerHTML=`Cole este código no popup da extensão:<br><span class="pair-code">${esc(data.code)}</span>
+      <br><span class="set-lbl">Válido por ${data.expires_in_minutes} minutos.</span>`;
+    el.className='set-feedback ok';
+  }catch(e){
+    if(e.message!=='not_authenticated'){el.textContent='Erro de conexão.';el.className='set-feedback err';}
+  }
+}
+
+/* ══════ WHATSAPP: conectar o número da conta ══════ */
+function _waFeedback(msg,ok){
+  const el=document.getElementById('wa-feedback');
+  if(!el)return;
+  el.textContent=msg;
+  el.className='set-feedback '+(ok?'ok':'err');
+}
+
+async function saveWhatsApp(){
+  const pnid=(document.getElementById('wa-pnid')?.value||'').trim();
+  if(!pnid){_waFeedback('Informe o ID do número (Phone Number ID).',false);return;}
+
+  const corpo={phone_number_id:pnid};
+  // Campo em branco significa "mantenha o que está gravado" — só vai o que
+  // foi digitado agora, para não apagar segredo que a tela nunca recebeu.
+  const token=(document.getElementById('wa-token')?.value||'').trim();
+  const secret=(document.getElementById('wa-secret')?.value||'').trim();
+  const verify=(document.getElementById('wa-verify')?.value||'').trim();
+  const template=(document.getElementById('wa-template')?.value||'').trim();
+  if(token)corpo.access_token=token;
+  if(secret)corpo.app_secret=secret;
+  if(verify)corpo.verify_token=verify;
+  corpo.template_name=template;
+
+  _waFeedback('Conferindo com a Meta…',true);
+  try{
+    const resp=await authFetch('/api/wa/connection',{method:'POST',body:JSON.stringify(corpo)});
+    const json=await resp.json();
+    if(!resp.ok){_waFeedback(json.detail||'Não foi possível conectar.',false);return;}
+    _waFeedback('WhatsApp conectado. As mensagens saem pelo seu número.',true);
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
+  }
+}
+
+async function disconnectWhatsApp(){
+  if(!confirm('Desconectar o WhatsApp desta conta? As conversas continuam salvas, mas você deixa de enviar e receber até conectar de novo.'))return;
+  try{
+    const resp=await authFetch('/api/wa/connection',{method:'DELETE'});
+    if(!resp.ok){_waFeedback('Não foi possível desconectar.',false);return;}
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
+  }
+}
+
+/* ══════ LUSHA: enriquecimento pago (BYOA) ══════ */
+
+/* Saldo e custo à vista em Configurações.
+
+   Os créditos são da conta Lusha DO USUÁRIO — o produto não revende nada. Duas
+   consequências que a tela precisa deixar claras: o saldo é dele, e o custo de
+   cada ação também. Listar contatos é barato (1 crédito por 25); revelar
+   telefone custa 5, ou seja, cinco vezes o e-mail. Quem não sabe disso
+   descobre no extrato. */
+function _lushaSaldo(lusha){
+  if(!lusha||!lusha.conectado)return '';
+  const c=lusha.creditos;
+  const p=lusha.precos||{};
+  const porTel=(p.revealPhone&&p.revealPhone.credits)||5;
+  const porEmail=(p.revealEmail&&p.revealEmail.credits)||1;
+  const busca=p.contactSearch||{credits:1,per:25};
+
+  let saldo;
+  if(!c||c.restantes===null||c.restantes===undefined){
+    // Nulo é "não deu para consultar agora", não "zero". Acusar o usuário de
+    // estar sem crédito quando a Lusha é que não respondeu seria pior que
+    // não mostrar nada.
+    saldo='<span class="lu-saldo-off">Saldo indisponível no momento</span>';
+  }else{
+    const baixo=c.restantes<=20;
+    saldo=`<span class="lu-saldo ${baixo?'lu-saldo-baixo':''}">${c.restantes} crédito${c.restantes===1?'':'s'} restante${c.restantes===1?'':'s'}</span>`
+      +(baixo?'<span class="lu-alerta">Saldo baixo — recarregue em app.lusha.com para continuar revelando.</span>':'');
+  }
+
+  const lim=lusha.limites&&lusha.limites.dia;
+  const uso=(lim&&lim.restante!==null&&lim.restante!==undefined&&lim.limite)
+    ?`<div class="lu-linha">Requisições hoje: ${lim.limite-lim.restante} de ${lim.limite}</div>`:'';
+
+  return `<div class="lu-box">
+    <div class="lu-topo">${saldo}</div>
+    ${uso}
+    <div class="lu-custos">
+      <div class="lu-linha">Listar contatos de uma empresa · <strong>${busca.credits} crédito por ${busca.per}</strong></div>
+      <div class="lu-linha">Revelar e-mail · <strong>${porEmail} crédito</strong></div>
+      <div class="lu-linha">Revelar telefone · <strong>${porTel} créditos</strong></div>
+    </div>
+    <div class="lu-nota">Os créditos são da sua conta Lusha. Nada é debitado sem você clicar em <strong>Mostrar detalhes</strong> num contato.</div>
+  </div>`;
+}
+
+function _lushaFeedback(msg,ok){
+  const el=document.getElementById('lusha-feedback');
+  if(!el)return;
+  el.textContent=msg;
+  el.className='set-feedback '+(ok?'ok':'err');
+}
+
+async function conectarLusha(){
+  const chave=(document.getElementById('lusha-key')?.value||'').trim();
+  if(!chave){_lushaFeedback('Informe a chave da sua conta Lusha.',false);return;}
+
+  _lushaFeedback('Validando a chave com a Lusha…',true);
+  try{
+    const resp=await authFetch('/api/me/lusha',{method:'PUT',body:JSON.stringify({api_key:chave})});
+    const json=await resp.json();
+    if(!resp.ok){_lushaFeedback(json.detail||'A chave não foi aceita pela Lusha.',false);return;}
+    _lushaFeedback('Lusha conectado. Seus créditos serão usados no enriquecimento.',true);
+    document.getElementById('lusha-key').value='';
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_lushaFeedback('Erro de conexão.',false);
+  }
+}
+
+async function desconectarLusha(){
+  if(!confirm('Desconectar a Lusha? O enriquecimento continuará pelo caminho gratuito.'))return;
+  try{
+    const resp=await authFetch('/api/me/lusha',{method:'DELETE'});
+    if(!resp.ok){_lushaFeedback('Não foi possível desconectar.',false);return;}
+    loadSettings();
+  }catch(e){
+    if(e.message!=='not_authenticated')_lushaFeedback('Erro de conexão.',false);
+  }
+}
+
+function _crmFeedback(msg,ok){
+  const el=document.getElementById('crm-feedback');
+  if(!el)return;
+  el.textContent=msg;
+  el.className='set-feedback '+(ok?'ok':'err');
+}
+
+async function saveCrmWebhook(){
+  const url=(document.getElementById('crm-url')?.value||'').trim();
+  const secret=(document.getElementById('crm-secret')?.value||'').trim();
+  if(!url||!/^https?:\/\//.test(url)){_crmFeedback('Informe uma URL válida (https://…).',false);return;}
+  try{
+    const resp=await authFetch('/api/crm/connections',{method:'POST',body:JSON.stringify({provider:'webhook',webhook_url:url,webhook_secret:secret||null})});
+    const json=await resp.json();
+    if(!resp.ok){_crmFeedback(json.detail||'Erro ao salvar.',false);return;}
+    _crmFeedback('Webhook salvo e ativado.',true);
+    loadIntegrations();
+    loadSettings();
+  }catch(e){if(e.message!=='not_authenticated')_crmFeedback('Erro de conexão.',false);}
+}
+
+async function toggleCrmConn(provider){
+  try{
+    await authFetch(`/api/crm/connections/${provider}/toggle`,{method:'PATCH'});
+    loadIntegrations();loadSettings();
+  }catch(_){}
+}
+
+async function deleteCrmConn(provider){
+  if(!confirm('Remover esta conexão CRM?'))return;
+  try{
+    await authFetch(`/api/crm/connections/${provider}`,{method:'DELETE'});
+    loadIntegrations();loadSettings();
+  }catch(_){}
+}
+
+/* ══════ IMPORTAÇÃO DE PLANILHA ══════
+   Sobe .xlsx/.csv, mostra o que foi reconhecido e cria as linhas como leads.
+   A grade em si vive em sheet.js — aqui fica só o caminho até ela. */
+function loadImport(){
+  _imp={preview:null,file:null,busy:false};
+  renderImportDrop();
+}
+
+function renderImportDrop(errorMsg){
+  document.getElementById('import-body').innerHTML=`
+    <div class="panel panel-pad">
+      ${errorMsg?`<div class="imp-error">${esc(errorMsg)}</div>`:''}
+      <div class="imp-drop" id="imp-drop"
+           ondragover="impDragOver(event)" ondragleave="impDragLeave(event)" ondrop="impDrop(event)"
+           onclick="document.getElementById('imp-file').click()">
+        <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <strong>Arraste a planilha aqui ou clique para escolher</strong>
+        <span>.xlsx ou .csv · até 5.000 linhas · todas as colunas são preservadas</span>
+      </div>
+      <input type="file" id="imp-file" accept=".xlsx,.xlsm,.csv,.tsv" style="display:none"
+             onchange="impFileChange(this)" />
+      <div class="imp-hint">
+        Nada é descartado: cada coluna do seu arquivo vira uma coluna da planilha, com o mesmo
+        nome e na mesma ordem. As que o sistema entende — <em>Empresa, Domínio, Site, LinkedIn,
+        E-mail, Telefone, Funcionários</em> — também alimentam o enriquecimento, que acrescenta
+        colunas novas sem mexer nas suas.
+      </div>
+    </div>`;
+}
+
+function impDragOver(e){e.preventDefault();document.getElementById('imp-drop').classList.add('over');}
+function impDragLeave(e){
+  const drop=document.getElementById('imp-drop');
+  if(!drop.contains(e.relatedTarget))drop.classList.remove('over');
+}
+function impDrop(e){
+  e.preventDefault();
+  document.getElementById('imp-drop')?.classList.remove('over');
+  const file=e.dataTransfer?.files?.[0];
+  if(file)uploadImportFile(file);
+}
+function impFileChange(input){if(input.files&&input.files[0])uploadImportFile(input.files[0]);}
+
+async function uploadImportFile(file,sheet){
+  const token=await getToken();
+  if(!token){openAuthModal();return;}
+  _imp.file=file;
+  document.getElementById('import-body').innerHTML=
+    `<div class="panel"><div class="muted-box">Lendo <strong>${esc(file.name)}</strong>…</div></div>`;
+  const form=new FormData();
+  form.append('file',file,file.name);
+  if(sheet)form.append('sheet',sheet);
+  try{
+    // FormData define o próprio Content-Type (com boundary) — por isso o fetch
+    // aqui é manual, sem o header JSON do authFetch.
+    console.log('uploadImportFile: iniciando upload com token', token?.substring(0,20)+'...');
+    const resp=await fetch('/api/import/preview',{method:'POST',
+      headers:{Authorization:`Bearer ${token}`},body:form});
+    console.log('uploadImportFile: resposta recebida', resp.status);
+    const json=await resp.json().catch(()=>({}));
+    console.log('uploadImportFile: json parseado', json.message?.substring(0,50));
+    if(!resp.ok){
+      if(resp.status===401||resp.status===403){
+        renderImportDrop('Sua sessão expirou. Por favor, entre novamente.');
+        setTimeout(()=>location.reload(),2000);return;
+      }
+      renderImportDrop(json.detail||'Não consegui ler esta planilha.');return;
+    }
+    if(!json||!json.columns){throw new Error('Resposta inválida do servidor: '+JSON.stringify(json).substring(0,100));}
+    _imp.preview=json;
+    console.log('uploadImportFile: renderizando preview', json.total_rows+'linhas');
+    renderImportPreview();
+  }catch(e){
+    console.error('Import upload error:',e.message,e.stack);
+    const msg=e.message.includes('Resposta inválida')?e.message:(e.name==='TypeError'?'Erro de conexão ou timeout. Verifique sua internet e tente novamente.':'Erro de conexão ao enviar o arquivo.');
+    renderImportDrop(msg);
+  }
+}
+
+function renderImportPreview(){
+  const p=_imp.preview;
+  const mapped=p.columns.filter(c=>c.field);
+  const chips=mapped.map(c=>
+    `<span class="imp-chip"><span class="imp-chip-f">${IMP_FIELDS[c.field]||c.field}</span>${esc(c.label)}</span>`).join('');
+  const extras=p.columns.length-mapped.length;
+
+  const sheetPicker=p.sheets.length>1?`
+    <div class="imp-sheets">
+      <span class="imp-map-lbl">Aba</span>
+      ${p.sheets.map(s=>`<button class="sh-chip${s.name===p.sheet?' on':''}"
+        onclick="uploadImportFile(_imp.file,${JSON.stringify(s.name).replace(/"/g,'&quot;')})">
+        ${esc(s.name)} <span class="imp-sheet-n">${s.rows}</span></button>`).join('')}
+    </div>`:'';
+
+  // Mostra as primeiras colunas do arquivo, do jeito que estão
+  const cols=p.columns.slice(0,IMP_PREVIEW_COLS);
+  const head=cols.map(c=>`<th>${esc(c.label)}</th>`).join('');
+  const rows=p.rows.map(r=>{
+    const st=IMP_STATUS[r.status]||{label:r.status,cls:''};
+    const tds=cols.map(c=>{
+      const v=r.cells[c.label];
+      return `<td>${v==null?'':esc(String(v)).slice(0,80).replace(/\n/g,' ⏎ ')}</td>`;
+    }).join('');
+    return `<tr class="${r.status==='invalid'?'imp-row-off':''}">
+      <td class="td-mono">${r.row_number}</td>${tds}
+      <td><span class="imp-badge ${st.cls}">${st.label}</span></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('import-body').innerHTML=`
+    <div class="panel">
+      <div class="imp-head">
+        <div>
+          <div class="imp-file">${esc(p.filename)} <span class="imp-sheet-tag">${esc(p.sheet)}</span></div>
+          <div class="imp-sum">${esc(p.message)}</div>
+        </div>
+        <button class="ghost-btn" onclick="loadImport()">Trocar arquivo</button>
+      </div>
+      ${sheetPicker}
+      <div class="imp-map">
+        <div class="imp-map-lbl">${p.columns.length} colunas — ${mapped.length} reconhecidas pelo sistema</div>
+        <div class="imp-chips">${chips||'<span class="imp-unmapped">nenhuma</span>'}</div>
+        ${extras?`<div class="imp-unmapped">As outras ${extras} coluna(s) entram na planilha do mesmo jeito, sem interpretação.</div>`:''}
+      </div>
+      ${p.truncated?'<div class="imp-warn">O arquivo passa de 5.000 linhas — só as primeiras 5.000 foram lidas.</div>':''}
+      <div class="tbl-scroll"><table class="lead-tbl imp-tbl">
+        <thead><tr><th>Linha</th>${head}<th>Situação</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      <div class="imp-more">Mostrando ${p.rows.length} de ${p.total_rows} linhas e ${cols.length} de ${p.columns.length} colunas — a planilha completa aparece depois de importar.</div>
+      <div class="imp-foot">
+        <label class="imp-check">
+          <input type="checkbox" id="imp-skip-dup" ${p.counts.duplicate_db?'checked':''} />
+          Pular ${p.counts.duplicate_db||0} empresa(s) que já estão no histórico
+        </label>
+        <button class="app-btn-primary" id="imp-commit-btn" onclick="commitImport()"
+                ${p.importable?'':'disabled'}>
+          Importar ${p.importable} empresa(s)
+        </button>
+      </div>
+    </div>`;
+}
+
+async function commitImport(){
+  const p=_imp.preview;
+  if(!p)return;
+  const btn=document.getElementById('imp-commit-btn');
+  if(btn){btn.disabled=true;btn.textContent='Importando…';}
+  const skipExisting=document.getElementById('imp-skip-dup')?.checked!==false;
+  try{
+    const resp=await authFetch(`/api/import/${p.batch_id}/commit`,{method:'POST',
+      body:JSON.stringify({skip_existing:skipExisting,skip_duplicates:false})});
+    const json=await resp.json().catch(()=>({}));
+    if(!resp.ok){renderImportPreview();alert(json.detail||'Erro ao importar a planilha.');return;}
+    renderImportDone(json);
+  }catch(e){
+    if(e.message!=='not_authenticated'){renderImportPreview();alert('Erro de conexão.');}
+  }
+}
+
+function renderImportDone(result){
+  document.getElementById('import-body').innerHTML=`
+    <div class="panel panel-pad imp-done">
+      <div class="imp-done-ico">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <h3>${result.created} empresa(s) importada(s)</h3>
+      <p class="imp-done-sub">
+        ${result.skipped?`${result.skipped} linha(s) ignorada(s) por já existirem ou por não terem identificação.<br/>`:''}
+        A planilha completa já está no sistema, com todas as colunas do seu arquivo.
+        O enriquecimento roda de lá e acrescenta site, LinkedIn, DNS/MX e telefone.
+      </p>
+      <div class="imp-done-actions">
+        <button class="app-btn-primary" onclick="nav('sheet')">Abrir a planilha</button>
+        <button class="ghost-btn" onclick="loadImport()">Importar outra</button>
+      </div>
+    </div>`;
+}
+
+async function downloadImportTemplate(fmt){
+  const token=await getToken();
+  if(!token){openAuthModal();return;}
+  const resp=await fetch(`/api/import/template?format=${fmt}`,{headers:{Authorization:`Bearer ${token}`}});
+  if(!resp.ok){alert('Erro ao baixar o modelo.');return;}
+  const url=URL.createObjectURL(await resp.blob());
+  const a=document.createElement('a');
+  a.href=url;a.download=`modelo_importacao.${fmt}`;
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
+}
+
+/* Enriquecimento avulso de um lead importado (botão do histórico) */
+async function enrichImportedLead(leadId,btn){
+  if(btn){btn.disabled=true;btn.textContent='…';}
+  try{
+    const resp=await authFetch(`/api/leads/${leadId}/enrich`,{method:'POST'});
+    const json=await resp.json().catch(()=>({}));
+    if(!resp.ok){alert(json.detail||'Erro ao enriquecer.');return;}
+    loadHistory();
+  }catch(e){
+    if(e.message!=='not_authenticated')alert('Erro de conexão.');
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='Enriquecer';}
+  }
+}
+
+/* ══════ HELPERS ══════ */
+function setLoading(s){
+  const btn=document.getElementById('search-btn');
+  const txt=document.getElementById('search-btn-text');
+  const sp=document.getElementById('search-btn-spinner');
+  btn.disabled=s;txt.textContent=s?'Analisando...':'Analisar';sp.style.display=s?'inline-block':'none';
+}
+function showError(m){const el=document.getElementById('error-banner');el.textContent=m;el.style.display='block';}
+function hideError(){document.getElementById('error-banner').style.display='none';}
+function hideResults(){
+  document.getElementById('results-section').innerHTML='';
+  document.getElementById('view-search')?.classList.remove('has-result');
+  const block=document.getElementById('recent-block');
+  if(block&&document.getElementById('recent-grid')?.children.length)block.style.display='block';
+}
+function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+/* ══════ ATALHOS DE TECLADO ══════ */
+document.addEventListener('keydown',e=>{
+  if((e.metaKey||e.ctrlKey)&&e.key==='k'){
+    e.preventDefault();
+    // troca a view de forma síncrona para o foco funcionar (hashchange é assíncrono)
+    if(location.hash)history.replaceState(null,'',location.pathname);
+    showView('search');
+    document.getElementById('domain-input')?.focus();
+  }
+  if(e.key==='Escape'){
+    document.querySelectorAll('.modal-overlay.open').forEach(m=>m.classList.remove('open'));
+  }
+});
+
+/* ══════ INIT ══════ */
+document.addEventListener('DOMContentLoaded',async()=>{
+  document.getElementById('domain-input').addEventListener('keydown',e=>{if(e.key==='Enter')enrich();});
+
+  // Lote: contagem ao digitar e leitura do CSV no próprio navegador (o
+  // servidor recebe texto, não arquivo — uma dependência a menos).
+  document.getElementById('lote-input')?.addEventListener('input',atualizarContagemLote);
+  document.getElementById('lote-file')?.addEventListener('change',ev=>{
+    const arquivo=ev.target.files&&ev.target.files[0];
+    if(!arquivo)return;
+    const leitor=new FileReader();
+    leitor.onload=()=>{
+      document.getElementById('lote-input').value=String(leitor.result||'');
+      atualizarContagemLote();
+    };
+    leitor.readAsText(arquivo);
+  });
+
+  // domínio vindo da landing (/app?domain=…) — pré-preenche e foca
+  const _qDomain=new URLSearchParams(window.location.search).get('domain');
+  if(_qDomain){
+    const inp=document.getElementById('domain-input');
+    inp.value=_qDomain;inp.focus();
+    window.history.replaceState({},'',window.location.pathname+window.location.hash);
+  }
+
+  // erro devolvido pelo provedor no retorno do OAuth
+  const _erroOAuth=_erroDeRetornoOAuth();
+
+  // sessão existente
+  const{data:{session}}=await _sb.auth.getSession();
+  if(session){
+    _limparLoginPendente();
+    const ok=await loadProfile();
+    loadIntegrations();
+    applyRoute();
+    if(ok&&!location.hash&&!_qDomain)focusSearch();
+  }else{
+    updateNavUser();
+    applyRoute();   // rota protegida sem sessão → volta pra busca e abre login
+    if(!_qDomain)focusSearch();
+  }
+  if(_erroOAuth){
+    _limparLoginPendente();
+    showAuthMsg(`O provedor recusou o login: ${_erroOAuth}`);openAuthModal();
+  }else if(!session){
+    // Voltou do provedor sem credencial e sem erro: o retorno foi descartado
+    // antes de chegar aqui. Dizer isso na hora é a diferença entre uma
+    // configuração de dois minutos no painel e horas achando que o login
+    // "simplesmente não funciona".
+    const pend=_loginPendente();
+    if(pend){
+      _limparLoginPendente();
+      showAuthMsg(
+        `O login com ${pend.provedor||'o provedor'} foi concluído, mas o Supabase `
+        +'devolveu esta página sem credencial nenhuma. Isso acontece quando a URL '
+        +`de retorno não está autorizada no projeto: cadastre ${pend.volta} em `
+        +'Authentication > URL Configuration > Redirect URLs (e confira a Site URL) '
+        +`no projeto ${_SB_URL.replace('https://','').split('.')[0]}.`);
+      openAuthModal();
+    }
+  }
+
+  // mudanças de auth (callback do OAuth)
+  _sb.auth.onAuthStateChange(async(event,session)=>{
+    if(session){
+      _limparLoginPendente();   // chegou credencial: o retorno não se perdeu
+      const wasLoggedIn=!!_profile;
+      const ok=await loadProfile();
+      // Só fecha o modal quando o servidor aceitou a sessão: fechar antes
+      // esconderia justamente a mensagem que explica a recusa.
+      if(!ok)return;
+      closeAuthModal();
+      loadIntegrations();
+      if(!wasLoggedIn){
+        if(_pendingRoute){const r=_pendingRoute;_pendingRoute=null;location.hash=r;}
+        else{applyRoute();focusSearch();}
+      }
+    }else{
+      _profile=null;
+      updateNavUser();
+    }
+  });
+});

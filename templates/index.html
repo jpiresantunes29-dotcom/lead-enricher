@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+{% include '_seo_head.html' %}
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>' />
+  <!-- Fontes self-hosted (scripts/fetch_fonts.py) -->
+  <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-700.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=28" />
+</head>
+<body class="app-body">
+
+<div class="app-shell">
+
+<!-- ══════════════════════════════════
+     SIDEBAR — cada item diz o que faz.
+     Colapsa para ícones em telas médias e vira
+     barra superior no mobile.
+════════════════════════════════════ -->
+<aside class="app-sidebar" aria-label="Navegação do app">
+
+  <a href="/" class="sb-logo" title="Voltar ao site">
+    <span class="sb-logo-mark" aria-hidden="true">L</span>
+    <span class="sb-logo-text">LeadEnricher</span>
+  </a>
+
+  <nav class="sb-nav" id="app-nav">
+    <p class="sb-group">Prospecção</p>
+    <button class="app-nav-btn" data-route="" onclick="nav('')" title="Analisar um domínio e gerar a ficha da empresa">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Nova análise</span>
+        <span class="nav-desc">Domínio → ficha completa</span>
+      </span>
+    </button>
+    <button class="app-nav-btn" data-route="lote" onclick="nav('lote')" title="Analisar uma lista inteira de domínios de uma vez">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Análise em lote</span>
+        <span class="nav-desc">Lista ou CSV de domínios</span>
+      </span>
+    </button>
+    <button class="app-nav-btn" data-route="import" onclick="nav('import')" title="Subir uma planilha .xlsx ou .csv com suas empresas">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Importar planilha</span>
+        <span class="nav-desc">.xlsx ou .csv de empresas</span>
+      </span>
+    </button>
+    <button class="app-nav-btn" data-route="sheet" onclick="nav('sheet')" title="Suas linhas como na planilha original, com o que o sistema descobriu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Planilha</span>
+        <span class="nav-desc">Suas colunas + as nossas</span>
+      </span>
+    </button>
+    <button class="app-nav-btn" data-route="pipeline" onclick="nav('pipeline')" title="Acompanhar os leads por estágio de negociação">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="4" height="18" rx="1"/><rect x="10" y="3" width="4" height="12" rx="1"/><rect x="17" y="3" width="4" height="16" rx="1"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Pipeline</span>
+        <span class="nav-desc">Leads por estágio</span>
+      </span>
+    </button>
+    <button class="app-nav-btn" data-route="followups" onclick="nav('followups')" title="Tarefas de retorno criadas a partir das ligações">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Follow-ups</span>
+        <span class="nav-desc">O que retornar hoje</span>
+      </span>
+      <span id="nav-today-count" class="nav-badge" style="display:none" title="Tarefas para hoje"></span>
+    </button>
+    <button class="app-nav-btn" data-route="conversas" onclick="nav('conversas')" title="Conversas de WhatsApp com os leads: ver, assumir ou pausar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Conversas</span>
+        <span class="nav-desc">WhatsApp com os leads</span>
+      </span>
+      <span id="nav-wa-count" class="nav-badge" style="display:none" title="Conversas esperando você responder"></span>
+    </button>
+
+    <p class="sb-group">Análise</p>
+    <button class="app-nav-btn" data-route="dashboard" onclick="nav('dashboard')" title="Números de esforço e conversão do período">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Dashboard</span>
+        <span class="nav-desc">Taxas e funil</span>
+      </span>
+    </button>
+    <button class="app-nav-btn" data-route="history" onclick="nav('history')" title="Todas as empresas já analisadas, com exportação">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 8v4l3 3"/><circle cx="12" cy="12" r="9"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Histórico</span>
+        <span class="nav-desc">Empresas analisadas</span>
+      </span>
+    </button>
+
+    <p class="sb-group">Conta</p>
+    <button class="app-nav-btn" id="nav-btn-settings" data-route="settings" onclick="nav('settings')" title="Conta, webhook de CRM e extensão">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Configurações</span>
+        <span class="nav-desc">Conta, CRM e extensão</span>
+      </span>
+    </button>
+  </nav>
+
+  <div class="sb-bottom">
+    <!-- Pré-auth -->
+    <div id="header-preauth" class="sb-auth">
+      <p class="sb-auth-hint">Entre para salvar seus leads e usar o pipeline.</p>
+      <button class="app-btn-primary sb-enter-btn" onclick="openAuthModal()">Entrar</button>
+    </div>
+
+    <!-- Pós-auth: com quem este navegador está logado -->
+    <div id="header-postauth" class="sb-user" style="display:none">
+      <button class="sb-user-card" onclick="nav('settings')" title="Ver conta e integrações">
+        <span class="sb-avatar" id="sb-avatar">•</span>
+        <span class="sb-user-txt">
+          <span class="sb-user-mail" id="sb-user-mail">—</span>
+        </span>
+      </button>
+      <button class="sb-signout" onclick="signOut()" title="Encerrar a sessão neste navegador">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        <span class="nav-lbl">Sair</span>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<!-- ══════════════════════════════════
+     CONTEÚDO — topbar explica a página atual,
+     views trocadas por rota (#hash)
+════════════════════════════════════ -->
+<div class="app-content">
+
+  <header class="app-topbar">
+    <div class="tb-head">
+      <h1 class="tb-title" id="tb-title">Nova análise</h1>
+      <p class="tb-sub" id="tb-sub">Digite o domínio da empresa e receba a ficha completa.</p>
+    </div>
+
+    <div class="tb-actions">
+      <!-- Cada view mostra só as suas ações -->
+      <div class="tb-slot" data-slot="dashboard">
+        <span class="tb-lbl">Período</span>
+        <div class="seg" role="group" aria-label="Período do dashboard">
+          <button class="seg-btn" data-days="7" onclick="setDashPeriod(7)">7 dias</button>
+          <button class="seg-btn active" data-days="30" onclick="setDashPeriod(30)">30 dias</button>
+          <button class="seg-btn" data-days="90" onclick="setDashPeriod(90)">90 dias</button>
+        </div>
+      </div>
+
+      <div class="tb-slot" data-slot="history">
+        <input id="history-filter" class="tb-input" placeholder="Filtrar por empresa ou domínio…"
+               oninput="filterHistory(this.value)" autocomplete="off" aria-label="Filtrar histórico" />
+        <button class="btn-outline" onclick="openExportModal()" title="Baixar os leads do período em Excel ou CSV">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Exportar
+        </button>
+      </div>
+
+      <div class="tb-slot" data-slot="pipeline">
+        <span class="tb-hint">Arraste o card ou use ◀ ▶ para mudar de estágio</span>
+      </div>
+
+      <div class="tb-slot" data-slot="followups">
+        <span class="tb-hint" id="fu-summary"></span>
+      </div>
+
+      <!-- Ação primária: disponível em qualquer tela, menos na própria busca -->
+      <button class="btn-primary tb-new" id="tb-new-btn" onclick="nav('');focusSearch()" title="Analisar um novo domínio (Ctrl+K)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Nova análise
+        <kbd class="kbd">Ctrl K</kbd>
+      </button>
+    </div>
+  </header>
+
+<main class="app-main">
+
+  <!-- ── VIEW: NOVA ANÁLISE (padrão) ── -->
+  <section class="view active" id="view-search">
+
+    <div class="search-layout" id="search-layout">
+      <div class="search-primary panel">
+        <div class="sp-head">
+          <span class="sp-step">Passo 1</span>
+          <h2 class="sp-title">Qual empresa você quer analisar?</h2>
+          <p class="sp-sub">
+            Informe o domínio do site (não o e-mail). Em segundos devolvemos porte,
+            setor, localização, infraestrutura de e-mail e o caminho para os decisores.
+          </p>
+        </div>
+
+        <div class="hero-search-box">
+          <span class="hero-search-icon" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </span>
+          <input id="domain-input" class="hero-search-input" placeholder="nubank.com.br"
+                 autocomplete="off" spellcheck="false" aria-label="Domínio para analisar" />
+          <button id="search-btn" class="hero-search-btn" onclick="enrich()">
+            <span id="search-btn-text">Analisar</span>
+            <span id="search-btn-spinner" class="spinner" style="display:none"></span>
+          </button>
+        </div>
+
+        <button class="btn-link sp-clear" onclick="clearResult()">← Limpar e analisar outra empresa</button>
+
+        <div class="sp-examples">
+          <span class="sp-ex-lbl">Testar com:</span>
+          <button class="hero-ex-btn" onclick="useExample('nubank.com.br')">nubank.com.br</button>
+          <button class="hero-ex-btn" onclick="useExample('rdstation.com')">rdstation.com</button>
+          <button class="hero-ex-btn" onclick="useExample('magazineluiza.com.br')">magazineluiza.com.br</button>
+        </div>
+
+        <div class="hero-loading" id="loading-status">
+          <span class="ldot"></span><span class="ldot"></span><span class="ldot"></span>
+          <span id="loading-msg">Consultando...</span>
+        </div>
+      </div>
+
+      <aside class="search-aside panel">
+        <div class="sa-title">O que você recebe em cada análise</div>
+        <ul class="sa-list">
+          <li>
+            <span class="sa-ic" aria-hidden="true">1</span>
+            <span><strong>Ficha da empresa</strong><small>Nome oficial, site, LinkedIn, porte, setor e localização.</small></span>
+          </li>
+          <li>
+            <span class="sa-ic" aria-hidden="true">2</span>
+            <span><strong>Infraestrutura de e-mail</strong><small>Servidor MX e, no relatório completo, SPF, DMARC, DKIM, hosts e titular do domínio.</small></span>
+          </li>
+          <li>
+            <span class="sa-ic" aria-hidden="true">3</span>
+            <span><strong>Decisores por cargo</strong><small>Você informa o cargo; devolvemos perfis com LinkedIn e e-mail corporativo provável.</small></span>
+          </li>
+          <li>
+            <span class="sa-ic" aria-hidden="true">4</span>
+            <span><strong>Registro da ligação</strong><small>O resultado da chamada vira follow-up com data ou reunião com convite .ics.</small></span>
+          </li>
+        </ul>
+        <p class="sa-foot">Reabrir uma empresa analisada nos últimos 7 dias sai do cache, na hora.</p>
+      </aside>
+    </div>
+
+    <div class="results-wrap">
+      <div id="error-banner" class="error-msg" style="display:none"></div>
+      <div id="results-section"></div>
+    </div>
+
+    <!-- Últimas análises: ocupa a área que ficava vazia antes da primeira busca -->
+    <section class="recent-block" id="recent-block" style="display:none">
+      <div class="block-head">
+        <h3>Continuar de onde parou</h3>
+        <button class="btn-link" onclick="nav('history')">Ver histórico completo →</button>
+      </div>
+      <div class="recent-grid" id="recent-grid"></div>
+    </section>
+  </section>
+
+  <!-- ── VIEW: ANÁLISE EM LOTE ── -->
+  <section class="view" id="view-lote">
+    <div class="lote-layout">
+      <div class="panel panel-pad">
+        <div class="sp-head">
+          <span class="sp-step">Passo 1</span>
+          <h2 class="sp-title">Cole a lista ou solte um CSV</h2>
+          <p class="sp-sub">
+            Um domínio por linha, ou o CSV exportado do seu CRM — encontramos a coluna
+            do site sozinhos. As empresas que você já pesquisou nos últimos 7 dias saem
+            do cache, sem refazer a coleta.
+          </p>
+        </div>
+
+        <textarea id="lote-input" class="lote-textarea" spellcheck="false"
+          placeholder="nubank.com.br&#10;stone.com.br&#10;rdstation.com"></textarea>
+
+        <div class="lote-actions">
+          <label class="set-btn ghost lote-file">
+            Escolher arquivo CSV
+            <input type="file" id="lote-file" accept=".csv,.txt,text/csv,text/plain" hidden />
+          </label>
+          <span class="lote-count" id="lote-count"></span>
+          <button class="set-btn primary" id="lote-start" onclick="iniciarLote()">
+            Analisar lista
+          </button>
+        </div>
+        <p id="lote-feedback" class="set-feedback"></p>
+      </div>
+
+      <div class="panel panel-pad" id="lote-progress-panel" style="display:none">
+        <div class="block-head">
+          <h3 id="lote-progress-title">Processando</h3>
+          <button class="btn-link" id="lote-stop" onclick="pararLote()">Pausar</button>
+        </div>
+        <div class="usage-track"><div class="usage-fill" id="lote-bar" style="width:0%"></div></div>
+        <p class="set-lbl" id="lote-progress-sub"></p>
+        <div class="lote-items" id="lote-items"></div>
+      </div>
+
+      <div class="panel panel-pad" id="lote-recent-panel" style="display:none">
+        <div class="block-head"><h3>Lotes recentes</h3></div>
+        <div id="lote-recent"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── VIEW: IMPORTAR PLANILHA ──
+       Sobe .xlsx/.csv, reconhece as colunas e cria as linhas como leads.
+       O enriquecimento de cada linha roda depois, pela fila. -->
+  <section class="view" id="view-import">
+    <div class="view-note">
+      Suba um .xlsx ou .csv com suas empresas — as colunas são reconhecidas automaticamente.
+      <span class="view-note-actions">
+        <button class="ghost-btn" onclick="downloadImportTemplate('xlsx')">Modelo Excel</button>
+        <button class="ghost-btn" onclick="downloadImportTemplate('csv')">Modelo CSV</button>
+      </span>
+    </div>
+    <div id="import-body"></div>
+  </section>
+
+  <!-- ── VIEW: PLANILHA ──
+       As linhas importadas do jeito que vieram, mais as colunas que o
+       sistema descobre. Edição célula a célula. -->
+  <section class="view view--full" id="view-sheet">
+    <div class="view-note">
+      Suas colunas do jeito que estão, mais as que o sistema descobre. Clique para
+      selecionar, digite para editar, Enter para salvar.
+    </div>
+    <div id="sheet-body"></div>
+  </section>
+
+  <!-- ── VIEW: DASHBOARD ── -->
+  <section class="view" id="view-dashboard">
+    <div class="view-note" id="dash-period">Últimos 30 dias</div>
+    <div id="dashboard-body"></div>
+  </section>
+
+  <!-- ── VIEW: PIPELINE ── -->
+  <section class="view view--wide" id="view-pipeline">
+    <div id="pipeline-body"></div>
+  </section>
+
+  <!-- ── VIEW: FOLLOW-UPS ── -->
+  <section class="view" id="view-followups">
+    <div id="followups-body"></div>
+  </section>
+
+  <!-- ── VIEW: CONVERSAS (WhatsApp) ──
+       Uma lista só, com um card fixo "Conversa de teste" no topo (mesma IA
+       configurada, sem nada saindo para a Meta — vive na memória do
+       servidor, é teste, não histórico) junto das conversas reais. -->
+  <section class="view view--wide" id="view-conversas">
+    <div id="conversas-body"></div>
+  </section>
+
+  <!-- ── VIEW: HISTÓRICO ── -->
+  <section class="view view--wide" id="view-history">
+    <div class="view-note" id="history-count"></div>
+    <div class="panel" id="history-body"></div>
+  </section>
+
+  <!-- ── VIEW: CONFIGURAÇÕES ── -->
+  <section class="view" id="view-settings">
+    <div id="settings-body" class="set-grid"></div>
+  </section>
+
+</main>
+
+<footer class="app-footer">
+  <span>LeadEnricher © 2026</span>
+  <nav class="app-footer-links" aria-label="Institucional">
+    <a href="/guias">Guias</a>
+    <a href="/termos">Termos de Uso</a>
+    <a href="/privacidade">Privacidade</a>
+    <a href="/seguranca">Segurança</a>
+    <a href="/remover-meus-dados">Remover meus dados</a>
+  </nav>
+</footer>
+</div><!-- /.app-content -->
+</div><!-- /.app-shell -->
+
+<!-- ══════════════════════════════════
+     MODAIS
+════════════════════════════════════ -->
+
+<!-- EXPORTAR -->
+<div class="modal-overlay" id="export-modal" onclick="closeIfBackdrop(event,'export-modal')">
+  <div class="modal export-modal">
+    <button class="modal-close" onclick="closeExportModal()" aria-label="Fechar">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <h3 class="modal-title" style="text-align:left">Exportar leads</h3>
+    <p class="modal-text" style="text-align:left;margin-bottom:18px">Uma linha por lead, com decisores e dados da empresa. Escolha o período e o formato.</p>
+
+    <div class="export-sec-label">Período</div>
+    <div class="export-opts">
+      <button class="export-opt" data-preset="today" onclick="setExportPreset('today')">Hoje</button>
+      <button class="export-opt" data-preset="7days" onclick="setExportPreset('7days')">Últimos 7 dias</button>
+      <button class="export-opt" data-preset="30days" onclick="setExportPreset('30days')">Últimos 30 dias</button>
+      <button class="export-opt" data-preset="month" onclick="setExportPreset('month')">Mês atual</button>
+      <button class="export-opt" data-preset="all" onclick="setExportPreset('all')">Todo o histórico</button>
+      <button class="export-opt" data-preset="custom" onclick="setExportPreset('custom')">Intervalo customizado</button>
+    </div>
+
+    <div id="export-custom-range" class="export-custom-range" style="display:none">
+      <div class="export-date-field">
+        <label for="export-date-start">De</label>
+        <input type="date" id="export-date-start" />
+      </div>
+      <div class="export-date-field">
+        <label for="export-date-end">Até</label>
+        <input type="date" id="export-date-end" />
+      </div>
+    </div>
+
+    <div class="export-sec-label">Formato</div>
+    <div class="export-formats">
+      <button id="export-btn-csv" class="btn-outline" onclick="runExport('csv')">CSV</button>
+      <button id="export-btn-xlsx" class="modal-cta" style="width:auto;flex:1" onclick="runExport('xlsx')">Baixar Excel</button>
+    </div>
+  </div>
+</div>
+
+<!-- RESUMO RÁPIDO DO LEAD -->
+<div class="modal-overlay" id="lead-summary-modal" onclick="closeIfBackdrop(event,'lead-summary-modal')">
+  <div class="modal lead-summary-modal">
+    <button class="modal-close" onclick="closeLeadSummary()" aria-label="Fechar">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div id="lead-summary-body"></div>
+  </div>
+</div>
+
+<!-- AUTH -->
+<div class="modal-overlay" id="auth-modal" onclick="closeIfBackdrop(event,'auth-modal')">
+  <div class="auth-card">
+    <button class="auth-close" onclick="closeAuthModal()" aria-label="Fechar">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="auth-logo">
+      <span class="auth-logo-name">LeadEnricher</span>
+    </div>
+    <h3 class="auth-heading">Acesse sua conta</h3>
+    <p class="auth-sub">Entre com um provedor. Sem senha, sem cartão — todas as funções ficam liberadas.</p>
+    <p class="auth-msg" id="auth-msg" style="display:none"></p>
+    <div class="auth-oauth-grid">
+      <button class="auth-oauth-btn" data-prov="google" onclick="signInWithGoogle()">
+        <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+        Google
+      </button>
+      <button class="auth-oauth-btn" data-prov="github" onclick="signInWithGitHub()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.477 2 12c0 4.42 2.865 8.166 6.839 9.489.5.092.682-.217.682-.482 0-.237-.008-.866-.013-1.7-2.782.603-3.369-1.342-3.369-1.342-.454-1.155-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.029-2.683-.103-.253-.446-1.27.098-2.647 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.336 1.909-1.294 2.747-1.025 2.747-1.025.546 1.377.202 2.394.1 2.647.64.699 1.028 1.592 1.028 2.683 0 3.842-2.339 4.687-4.566 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.743 0 .267.18.578.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z"/></svg>
+        GitHub
+      </button>
+      <button class="auth-oauth-btn" data-prov="microsoft" onclick="signInWithMicrosoft()">
+        <svg viewBox="0 0 23 23" fill="none"><rect x="1" y="1" width="10" height="10" fill="#F25022"/><rect x="12" y="1" width="10" height="10" fill="#7FBA00"/><rect x="1" y="12" width="10" height="10" fill="#00A4EF"/><rect x="12" y="12" width="10" height="10" fill="#FFB900"/></svg>
+        Microsoft
+      </button>
+      <button class="auth-oauth-btn" data-prov="apple" onclick="signInWithApple()">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+        Apple
+      </button>
+    </div>
+  </div>
+</div>
+
+{# Supabase self-hosted (static/vendor/README.md): a área logada não pode
+   depender de um CDN de terceiros — quem serve este arquivo controla o token
+   de sessão de todo mundo que abre o app. #}
+<script src="/static/vendor/supabase.js?v=2.112.0"></script>
+<script src="/static/js/app.js?v=31"></script>
+{# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
+   com edição célula a célula e teclado próprio. #}
+<script src="/static/js/sheet.js?v=23"></script>
+</body>
+</html>

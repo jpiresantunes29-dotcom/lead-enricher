@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+{% include '_seo_head.html' %}
+  <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%231D4ED8"/><path d="M10 8v13h12v-3h-8.6V8z" fill="white"/></svg>'/>
+  <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin/>
+  <link rel="stylesheet" href="/static/fonts/fonts.css?v=1"/>
+  <style>{% include 'legal_base.css' %}</style>
+  <style>
+    .rd-form{margin:28px 0;padding:24px;border:1px solid rgba(148,163,184,.35);border-radius:14px}
+    .rd-form label{display:block;font-weight:600;margin:16px 0 6px;font-size:.95rem}
+    .rd-form select,.rd-form input,.rd-form textarea{
+      width:100%;padding:11px 13px;border:1px solid rgba(148,163,184,.5);border-radius:9px;
+      font:inherit;font-size:1rem;background:#fff;color:inherit;box-sizing:border-box}
+    .rd-form textarea{min-height:80px;resize:vertical}
+    .rd-btn{margin-top:20px;padding:13px 22px;border:0;border-radius:9px;background:#1D4ED8;
+      color:#fff;font:inherit;font-weight:600;font-size:1rem;cursor:pointer}
+    .rd-btn:hover{background:#1e40af}
+    .rd-btn[disabled]{opacity:.6;cursor:progress}
+    .rd-msg{margin-top:18px;padding:14px 16px;border-radius:9px;font-size:.95rem;display:none}
+    .rd-msg.ok{display:block;background:#ecfdf5;border:1px solid #6ee7b7;color:#065f46}
+    .rd-msg.err{display:block;background:#fef2f2;border:1px solid #fca5a5;color:#991b1b}
+    .rd-hint{font-size:.87rem;opacity:.75;margin-top:6px}
+  </style>
+</head>
+<body>
+<header class="lg-header">
+  <a class="lg-logo" href="/">LeadEnricher</a>
+  <a class="lg-back" href="/app">Ir para o app →</a>
+</header>
+<main class="lg-wrap">
+  <div class="lg-kicker">Seus direitos</div>
+  <h1>Remover meus dados</h1>
+  <p class="lg-updated">Direito de oposição e eliminação — art. 18 da LGPD</p>
+
+  <p>Se você encontrou seu contato profissional no LeadEnricher e não quer mais aparecer,
+  preencha o formulário abaixo. <strong>Não é preciso ter conta nem pagar nada.</strong>
+  O dado é apagado e o identificador fica <strong>permanentemente bloqueado</strong>, de modo
+  que ele não volta para a base nem que apareça de novo em outra fonte pública.</p>
+
+  <form class="rd-form" id="rd-form" novalidate>
+    <label for="rd-kind">O que você quer remover</label>
+    <select id="rd-kind">
+      <option value="email">Meu e-mail profissional</option>
+      <option value="phone">Meu telefone</option>
+      <option value="linkedin">Meu perfil do LinkedIn</option>
+    </select>
+
+    <label for="rd-value">Dado a remover</label>
+    <input id="rd-value" type="text" autocomplete="off"
+           placeholder="joao.silva@empresa.com.br"/>
+    <p class="rd-hint" id="rd-hint">Digite o e-mail exatamente como ele aparece.</p>
+
+    <div id="rd-contact-row" style="display:none">
+      <label for="rd-contact">E-mail para confirmação</label>
+      <input id="rd-contact" type="email" autocomplete="email"
+             placeholder="voce@empresa.com.br"/>
+      <p class="rd-hint">Enviamos o link de confirmação para este endereço.</p>
+    </div>
+
+    <label for="rd-reason">Motivo (opcional)</label>
+    <textarea id="rd-reason" placeholder="Se quiser, conte por que está pedindo a remoção."></textarea>
+
+    <button class="rd-btn" id="rd-submit" type="submit">Solicitar remoção</button>
+    <div class="rd-msg" id="rd-msg" role="status" aria-live="polite"></div>
+  </form>
+
+  <h2>O que acontece depois</h2>
+  <ul>
+    <li>Enviamos um <strong>link de confirmação</strong> por e-mail, válido por 24 horas.
+    A confirmação existe para que ninguém possa pedir a remoção de dados de outra
+    pessoa — nem apagar contatos alheios em massa.</li>
+    <li>Ao abrir o link, o contato é <strong>apagado da nossa base</strong> na hora.</li>
+    <li>Guardamos apenas um <strong>código irreversível (hash)</strong> do dado — nunca o
+    dado em si — para conseguir bloquear futuras reinserções.</li>
+    <li>O bloqueio vale para sempre e não depende de novo pedido.</li>
+  </ul>
+
+  <h2>Por que meus dados estavam aí?</h2>
+  <p>O LeadEnricher trata <strong>dados profissionais de contato B2B</strong> obtidos de
+  fontes públicas: sites de empresas, registros públicos da Receita Federal e perfis
+  profissionais públicos. A base legal é o <strong>legítimo interesse</strong>
+  (art. 7º, IX da LGPD) para prospecção comercial entre empresas. Não tratamos dados de
+  pessoas físicas fora do contexto de trabalho, nem dados sensíveis.</p>
+
+  <h2>Outros direitos</h2>
+  <p>Para confirmar se tratamos algum dado seu, corrigir uma informação errada ou pedir
+  esclarecimentos, escreva para
+  <a href="mailto:privacidade@leadenricher.app">privacidade@leadenricher.app</a>.
+  Respondemos em até 15 dias, conforme a LGPD.</p>
+</main>
+<footer class="lg-footer">
+  LeadEnricher © 2026 ·
+  <a href="/guias">Guias</a>·
+  <a href="/termos">Termos de Uso</a>·
+  <a href="/privacidade">Privacidade</a>·
+  <a href="/seguranca">Segurança</a>
+</footer>
+
+<script>
+(function(){
+  var form=document.getElementById('rd-form');
+  var kind=document.getElementById('rd-kind');
+  var value=document.getElementById('rd-value');
+  var hint=document.getElementById('rd-hint');
+  var msg=document.getElementById('rd-msg');
+  var btn=document.getElementById('rd-submit');
+
+  var contactRow=document.getElementById('rd-contact-row');
+  var contact=document.getElementById('rd-contact');
+
+  var PLACEHOLDERS={
+    email:['joao.silva@empresa.com.br','Digite o e-mail exatamente como ele aparece. O link de confirmação vai para ele.'],
+    phone:['+55 11 91234-5678','Pode digitar com ou sem formatação.'],
+    linkedin:['https://www.linkedin.com/in/seu-perfil','Cole o endereço completo do seu perfil.']
+  };
+
+  kind.addEventListener('change',function(){
+    var p=PLACEHOLDERS[kind.value];
+    value.placeholder=p[0];
+    hint.textContent=p[1];
+    // Telefone e LinkedIn não têm como receber o link — pedimos um e-mail.
+    contactRow.style.display=kind.value==='email'?'none':'block';
+  });
+
+  form.addEventListener('submit',function(e){
+    e.preventDefault();
+    var v=(value.value||'').trim();
+    if(v.length<4){
+      msg.className='rd-msg err';
+      msg.textContent='Preencha o dado que você quer remover.';
+      return;
+    }
+    var c=kind.value==='email'?v:(contact.value||'').trim();
+    if(c.indexOf('@')<0){
+      msg.className='rd-msg err';
+      msg.textContent='Informe um e-mail válido para receber o link de confirmação.';
+      return;
+    }
+    btn.disabled=true;
+    msg.className='rd-msg';
+    msg.textContent='';
+
+    fetch('/api/privacidade/opt-out',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({kind:kind.value,value:v,contact_email:c,reason:(document.getElementById('rd-reason').value||'').trim()||null})
+    }).then(function(r){return r.json().catch(function(){return {};});})
+      .then(function(data){
+        msg.className='rd-msg ok';
+        msg.textContent=data.message||'Pedido registrado. Confirme pelo link enviado ao seu e-mail.';
+        form.reset();
+        kind.dispatchEvent(new Event('change'));
+      })
+      .catch(function(){
+        msg.className='rd-msg err';
+        msg.textContent='Não conseguimos registrar agora. Tente novamente ou escreva para privacidade@leadenricher.app.';
+      })
+      .then(function(){btn.disabled=false;});
+  });
+})();
+</script>
+</body>
+</html>
