@@ -101,3 +101,28 @@ def test_busca_decisores_erro_interno_vira_502(client):
     with patch("routers.enrichment.find_decision_makers", side_effect=RuntimeError("motor de busca fora do ar")):
         resp = client.post("/api/decisores", json={"lead_id": lead["id"], "roles": ["CTO"]})
     assert resp.status_code == 500
+
+
+def test_popular_contacts_endpoint_auto_loads(client):
+    """Teste do novo endpoint GET /api/leads/{id}/popular-contacts"""
+    lead = _make_lead(client)
+
+    with patch("routers.enrichment.find_decision_makers", return_value=_RESULTADO_MOCK) as mock:
+        resp = client.get(f"/api/leads/{lead['id']}/popular-contacts")
+
+    assert resp.status_code == 200
+    dados = resp.json()
+    assert dados["success"] is True
+    assert len(dados["decisores"]) > 0
+    
+    # Verifica que foi chamado com os cargos executivos esperados
+    mock.assert_called_once()
+    call_kwargs = mock.call_args.kwargs
+    assert "founder" in call_kwargs["roles"]
+    assert "ceo" in call_kwargs["roles"]
+
+
+def test_popular_contacts_lead_nao_existe(client):
+    """Testa que retorna 404 se lead não existe"""
+    resp = client.get("/api/leads/999999/popular-contacts")
+    assert resp.status_code == 404
