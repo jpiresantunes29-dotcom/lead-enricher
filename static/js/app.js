@@ -965,6 +965,7 @@ function renderResult(data){
   currentLeadId=data.id;
   currentLeadData=data;
   setTimeout(loadTimeline,300);
+  setTimeout(loadPopularContacts,500);
   // Com uma ficha na tela, o formulário encolhe e o painel de apoio sai
   document.getElementById('view-search')?.classList.add('has-result');
   const recent=document.getElementById('recent-block');
@@ -1018,23 +1019,7 @@ function renderResult(data){
     <div class="result-grid">${cards.join('')}</div>
     ${dns}
     <div class="dec-section">
-      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Passo 2 · Encontrar decisores</div>
-      <div class="dec-sub">Diga o cargo que você quer alcançar. Buscamos perfis públicos nessa empresa e devolvemos LinkedIn e e-mail corporativo provável, com a confiança de cada endereço. Leva até 15 segundos.</div>
-      <div class="role-irow">
-        <input id="role-input" class="role-inp" placeholder="Ex: Coordenador de TI, CFO, Diretor Comercial..." />
-        <button class="role-srch-btn" id="role-btn" onclick="searchDecisores()" title="Buscar pessoas com esse cargo na empresa">
-          <span id="role-btn-text">Buscar decisores</span>
-          <span id="role-btn-spinner" class="spinner" style="display:none"></span>
-        </button>
-      </div>
-      <div class="role-chips">
-        <span class="role-chips-lbl">Cargos comuns:</span>
-        <button class="role-chip" onclick="setRole('Coordenador de TI')">Coordenador de TI</button>
-        <button class="role-chip" onclick="setRole('Diretor de TI')">Diretor de TI</button>
-        <button class="role-chip" onclick="setRole('CTO')">CTO</button>
-        <button class="role-chip" onclick="setRole('Gerente Comercial')">Gerente Comercial</button>
-        <button class="role-chip" onclick="setRole('CFO')">CFO</button>
-      </div>
+      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Contatos populares da empresa</div>
       <div id="decisores-list" class="dec-list">
         <div class="empty-state-box">
           <div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
@@ -2193,6 +2178,21 @@ async function savePhone(){
 }
 
 function setRole(v){const el=document.getElementById('role-input');if(el)el.value=v;}
+
+/* MVP: carrega contatos populares automaticamente ao abrir uma empresa */
+async function loadPopularContacts(){
+  if(!currentLeadId)return;
+  const list=document.getElementById('decisores-list');
+  if(!list)return;
+  list.innerHTML=`<div class="muted-box">Carregando contatos populares da empresa…</div>`;
+  try{
+    const cargos=['founder','ceo','cto','cfo','vp','president','director','manager'];
+    const resp=await authFetch('/api/decisores',{method:'POST',body:JSON.stringify({lead_id:currentLeadId,roles:cargos})});
+    const json=await resp.json();
+    if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">Nenhum contato encontrado.</div>`;return;}
+    renderDecisoresV2(json.decisores);
+  }catch(e){list.innerHTML='<div class="muted-box">Erro ao carregar contatos.</div>';}
+}
 
 async function searchDecisores(){
   if(!currentLeadId)return;
