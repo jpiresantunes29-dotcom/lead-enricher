@@ -778,3 +778,64 @@ def test_localizacao_toda_em_caixa_baixa_ganha_capitalizacao(monkeypatch):
         cnpj_data={"municipio": "CURITIBA", "uf": "PR", "cnae": "Saneamento"},
     )
     assert enricher.enrich_company("sanepar.com.br")["location"] == "Curitiba, PR"
+
+
+# ── setor: qual fonte descreve o negócio ────────────────────────────────────
+
+def test_rotulo_administrativo_e_reconhecido_como_generico():
+    from services.enricher import setor_generico
+
+    assert setor_generico("Atividades de sedes de empresas e unidades administrativas")
+    assert setor_generico("Gestão de ativos intangíveis não-financeiros")
+    assert setor_generico("Serviços combinados de escritório e apoio administrativo")
+    assert not setor_generico("Ensino médio")
+    assert not setor_generico("Restaurantes e outros serviços de alimentação")
+    assert not setor_generico(None)
+    # Fica de fora de propósito: é exato para uma empresa de facilities, e
+    # cegar o rótulo tiraria o setor certo de quem vive dele.
+    assert not setor_generico("Serviços combinados para apoio a edifícios")
+
+
+def test_setor_generico_cede_a_vez_nas_duas_direcoes():
+    """
+    Nenhuma das duas fontes é sempre a boa, e foi por isso que a escolha
+    deixou de ser por ordem fixa. Medido ao vivo:
+
+      positivo.com.br  LinkedIn administrativo  → vale o CNAE "Ensino médio"
+      madero           CNAE da unidade fabril   → vale o LinkedIn "Restaurantes"
+    """
+    from services.enricher import _melhor_setor
+
+    assert _melhor_setor(None, "Serviços combinados de escritório e apoio administrativo",
+                         "Ensino médio") == "Ensino médio"
+    assert _melhor_setor(None, "Restaurantes e outros serviços de alimentação",
+                         "Fabricação de produtos de carne") ==         "Restaurantes e outros serviços de alimentação"
+
+
+def test_setor_generico_ainda_e_melhor_que_campo_vazio():
+    """Escolher entre fontes não é apagar o campo quando só há uma."""
+    from services.enricher import _melhor_setor
+
+    assert _melhor_setor(None, None, "Atividades de sedes de empresas") ==         "Atividades de sedes de empresas"
+    assert _melhor_setor(None, None, None) is None
+
+
+def test_cnae_generico_perde_para_o_setor_do_linkedin(monkeypatch):
+    """O caso que o pedido descreve, ponta a ponta."""
+    from services import enricher
+
+    pagina = {"confidence": "verified", "sector": "Tecnologia da informação",
+              "location": None, "size": None, "name": "Acme", "html": None}
+    enricher_mod = _stub_coleta(
+        monkeypatch, site=dict(_SITE_COM_GEO_LIXO),
+        rdap={"owner_cnpj": "76.484.013/0001-45"},
+        cnpj_data={"municipio": "CURITIBA", "uf": "PR",
+                   "cnae": "Holdings de instituições não-financeiras"},
+        page=pagina,
+    )
+    monkeypatch.setattr(
+        enricher_mod, "find_company_linkedin",
+        lambda d, n: {"url": "https://www.linkedin.com/company/acme",
+                      "confidence": "verified", "source": "site", "page": pagina},
+    )
+    assert enricher_mod.enrich_company("acme.com.br")["sector"] == "Tecnologia da informação"

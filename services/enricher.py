@@ -66,7 +66,70 @@ ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "50"))
 #       A metatag geo.* do site cai para último recurso na localização:
 #       boticario.com.br declara Simferopol (Crimeia) no template e isso
 #       entrava por cima da sede correta da Receita e do LinkedIn.
-ENRICHMENT_VERSION = 8
+#   9 — o setor deixa de sair por ordem fixa de fonte: rótulo que descreve a
+#       administração (holding, sede, apoio administrativo) cede a vez para o
+#       que descreve o negócio, venha ele do LinkedIn ou da Receita.
+ENRICHMENT_VERSION = 9
+
+
+# Rótulos de setor que descrevem a ADMINISTRAÇÃO de uma empresa, não o que
+# ela vende. Aparecem dos dois lados: no CNAE, quando o CNPJ consultado é o da
+# holding ou da unidade administrativa; no LinkedIn, quando o perfil foi
+# cadastrado por quem cuidava do prédio e não do negócio.
+#
+# Só entram aqui rótulos que NENHUMA empresa usaria para explicar seu mercado a
+# um cliente. "Serviços combinados para apoio a edifícios" fica de fora de
+# propósito: é genérico para o Grupo Positivo e exato para uma empresa de
+# facilities — e cegar esse rótulo tiraria o setor certo de quem vive dele.
+_SETORES_GENERICOS = (
+    "sedes de empresas",
+    "atividades de sedes",
+    "unidades administrativas",
+    "holdings de instituicoes",
+    "holdings de instituições",
+    "gestao de ativos intangiveis",
+    "gestão de ativos intangíveis",
+    "servicos combinados de escritorio",
+    "serviços combinados de escritório",
+    "apoio administrativo",
+    "aluguel de imoveis proprios",
+    "aluguel de imóveis próprios",
+    "nao especificadas anteriormente",
+    "não especificadas anteriormente",
+)
+
+
+def setor_generico(valor) -> bool:
+    """
+    O rótulo descreve a estrutura societária em vez do negócio?
+
+    Serve para escolher ENTRE as fontes, não para apagar o campo: um setor
+    genérico ainda é melhor que nenhum, e só perde quando existe alternativa
+    que diga o que a empresa faz.
+    """
+    if not valor:
+        return False
+    texto = " ".join(str(valor).lower().split())
+    return any(marcador in texto for marcador in _SETORES_GENERICOS)
+
+
+def _melhor_setor(*candidatos) -> str:
+    """
+    Primeiro setor que descreve o negócio; se todos forem genéricos, o
+    primeiro que existir.
+
+    A ordem dos argumentos continua sendo a de confiança (site, LinkedIn,
+    Receita) — o que muda é que um rótulo administrativo cede a vez para o
+    seguinte. Medido: a Receita diz "Ensino médio" para o Grupo Positivo
+    enquanto o LinkedIn diz "Serviços combinados para apoio a edifícios"; e o
+    LinkedIn diz "Restaurantes" para o Madero enquanto o CNPJ da unidade diz
+    "Fabricação de produtos de carne". Nenhuma das duas fontes é sempre a boa.
+    """
+    validos = [c for c in candidatos if c]
+    for candidato in validos:
+        if not setor_generico(candidato):
+            return candidato
+    return validos[0] if validos else None
 
 
 def _cnpj_do_titular(rdap_data) -> str:
@@ -198,6 +261,7 @@ def enrich_company(domain_input: str) -> dict:
             result["cnpj"] = do_titular
             logger.info("CNPJ obtido do titular do domínio domain=%s", domain)
 
+    setor_da_receita = None
     cnpj_pool = cnpj_future = None
     if result.get("cnpj"):
         cnpj_pool = ThreadPoolExecutor(max_workers=1)
@@ -272,8 +336,8 @@ def enrich_company(domain_input: str) -> dict:
     # maioria dos casos: site institucional sem dados estruturados e sem CNPJ
     # no rodapé deixaria os dois campos vazios.
     page_html = page["html"] if page else None
+    setor_do_linkedin = page["sector"] if page else None
     if page:
-        result["sector"] = result.get("sector") or page["sector"]
         result["location"] = result.get("location") or page["location"]
 
     # Etapa 3: employee count (cascata multi-fonte; aba People tem prioridade).
@@ -311,11 +375,17 @@ def enrich_company(domain_input: str) -> dict:
             cnpj_pool.shutdown(wait=False)
         if cnpj_data:
             result["location"] = result.get("location") or location_from_cnpj(cnpj_data)
-            result["sector"] = result.get("sector") or sector_from_cnpj(cnpj_data)
+            setor_da_receita = sector_from_cnpj(cnpj_data)
             # Último recurso para funcionários: melhor uma faixa declarada
             # como estimativa do que campo vazio na tela do vendedor.
             if not result.get("employee_count"):
                 result["employee_count"] = employee_band_from_cnpj(cnpj_data)
+
+    # Setor decidido com as três fontes em mãos: quem descreve o negócio ganha
+    # de quem descreve a administração, seja qual for a origem.
+    result["sector"] = _melhor_setor(
+        result.get("sector"), setor_do_linkedin, setor_da_receita
+    )
 
     # Nem a Receita nem o LinkedIn responderam: aí sim a metatag do site é
     # melhor que campo vazio — sabendo que ela pode ser lixo de template.
