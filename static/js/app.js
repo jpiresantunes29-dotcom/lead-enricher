@@ -3155,20 +3155,63 @@ const IC_EXIT='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 const IC_WA='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3 20.5l1.7-5.2A8.5 8.5 0 1 1 21 11.5z"/><path d="M8.5 9.5c0 3.3 2.7 6 6 6"/></svg>';
 const IC_LUSHA='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a4 4 0 0 1 4-4h2a4 4 0 0 1 4 4v4"/></svg>';
 
+/* ══════ CONFIGURAÇÕES: seções ══════
+   A tela reunia conta, CRM, WhatsApp, Lusha, extensão e sessão numa pilha só
+   — seis formulários abertos ao mesmo tempo, e o usuário caçando o campo
+   certo. Agora cada assunto é uma seção com lugar próprio na sub-navegação da
+   esquerda, e o painel da direita mostra uma de cada vez. */
+
+/* Qual seção está aberta. Vive fora do render porque salvar qualquer
+   formulário chama loadSettings() de novo — sem isso o usuário voltaria para
+   "Conta" toda vez que clicasse em salvar. */
+let _setTab='conta';
+
+const SET_SECOES=[
+  {id:'conta',      lbl:'Conta',       desc:'Perfil e sessão',       icon:IC_USER},
+  {id:'integracoes',lbl:'Integrações', desc:'CRM e enriquecimento',  icon:IC_PLUG},
+  {id:'whatsapp',   lbl:'WhatsApp',    desc:'Número que fala',       icon:IC_WA},
+  {id:'extensao',   lbl:'Extensão',    desc:'LinkedIn no navegador', icon:IC_EXT},
+];
+
+function setTab(id){
+  if(!SET_SECOES.some(s=>s.id===id))id='conta';
+  _setTab=id;
+  document.querySelectorAll('.set-nav-btn').forEach(b=>{
+    const on=b.dataset.tab===id;
+    b.classList.toggle('active',on);
+    b.setAttribute('aria-selected',on?'true':'false');
+  });
+  document.querySelectorAll('.set-sec').forEach(s=>s.classList.toggle('active',s.dataset.sec===id));
+}
+
+/* Cabeçalho de uma sub-área dentro de um painel — separa credenciais de
+   mensagem de abertura sem precisar de mais um cartão. Abre a <div>; quem
+   chama fecha. */
+const _setSub=(t)=>`<div class="set-sub"><div class="set-sub-t">${t}</div>`;
+
+/* Bolinha de estado na sub-navegação: verde = funcionando, âmbar = existe mas
+   incompleto, nada = ainda não configurado. Sem ela o usuário abre as quatro
+   seções só para descobrir o que falta. */
+const _setDot=(estado)=>estado?`<span class="set-nav-dot ${estado}" aria-hidden="true"></span>`:'';
+
 /* O cartão do WhatsApp. Diz sempre por qual número as mensagens saem: com a
    conta conectada, o do usuário; sem ela, o do servidor — e "configurado"
    sozinho não distingue os dois. */
 function _cardWhatsApp(wa){
-  if(!wa)return'';
+  if(!wa){
+    return`<div class="panel panel-pad">
+      <div class="muted-box">Não foi possível carregar a configuração do WhatsApp agora.</div>
+    </div>`;
+  }
   const conectado=!!wa.conectado;
   const pelaConta=wa.origem==='conta';
   const estado=conectado
     ?`<div class="crm-conn">
         <div class="crm-conn-info">
           <span class="crm-conn-name">${esc(wa.display_phone_number||'Número conectado')}</span>
-          <span class="crm-conn-meta">id ${esc(wa.phone_number_id||'—')}${wa.verificado_em?' · confirmado com a Meta em '+new Date(wa.verificado_em).toLocaleDateString('pt-BR'):' · ainda não confirmado'}</span>
+          <span class="crm-conn-meta">id ${esc(wa.phone_number_id||'—')}${wa.verificado_em?' · confirmado com a Meta em '+new Date(wa.verificado_em).toLocaleDateString('pt-BR'):' · ainda não confirmado'}${pelaConta?' · as mensagens saem por este número':''}</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div class="crm-conn-acts">
           <span class="crm-conn-state ${wa.configurado?'on':'off'}">${wa.configurado?'pronto':'incompleto'}</span>
           <button class="set-btn danger" onclick="disconnectWhatsApp()">Desconectar</button>
         </div>
@@ -3183,29 +3226,34 @@ function _cardWhatsApp(wa){
 
   return`
     <div class="panel panel-pad">
-      ${_setHead(IC_WA,'Seu WhatsApp Business','Conecte o número da sua conta para conversar com os leads por ele. As credenciais vêm do <strong>Meta Business</strong> (Apps → WhatsApp → Configuração da API) e ficam cifradas aqui — depois de salvas não voltam para esta tela.')}
+      ${_setHead(IC_WA,'Conexão com o Meta Business','Conecte o número da sua conta para conversar com os leads por ele. As credenciais vêm do <strong>Meta Business</strong> (Apps → WhatsApp → Configuração da API) e ficam cifradas aqui — depois de salvas não voltam para esta tela.')}
       ${estado}
       ${erro}
       <div class="set-form">
-        <div class="set-field">
-          <label for="wa-pnid">ID do número (Phone Number ID)</label>
-          <input id="wa-pnid" class="set-input" placeholder="Ex.: 109876543210987" autocomplete="off" spellcheck="false" value="${esc(wa.phone_number_id||'')}"/>
+        ${_setSub('Credenciais')}
+          <div class="set-field">
+            <label for="wa-pnid">ID do número (Phone Number ID)</label>
+            <input id="wa-pnid" class="set-input" placeholder="Ex.: 109876543210987" autocomplete="off" spellcheck="false" value="${esc(wa.phone_number_id||'')}"/>
+          </div>
+          <div class="set-field">
+            <label for="wa-token">Token de acesso${wa.tem_token?' (preenchido — deixe em branco para manter)':''}</label>
+            <input id="wa-token" class="set-input" type="password" placeholder="${wa.tem_token?'••••••••••••':'EAAG…'}" autocomplete="off" spellcheck="false"/>
+          </div>
+          <div class="set-field">
+            <label for="wa-secret">App Secret${wa.tem_app_secret?' (preenchido — deixe em branco para manter)':''}</label>
+            <input id="wa-secret" class="set-input" type="password" placeholder="${wa.tem_app_secret?'••••••••••••':'Assina o webhook: sem ele nada é recebido'}" autocomplete="off" spellcheck="false"/>
+          </div>
+          <div class="set-field">
+            <label for="wa-verify">Token de verificação${wa.tem_verify_token?' (preenchido — deixe em branco para manter)':''}</label>
+            <input id="wa-verify" class="set-input" type="password" placeholder="${wa.tem_verify_token?'••••••••••••':'Uma frase que você inventa e repete na Meta'}" autocomplete="off" spellcheck="false"/>
+          </div>
         </div>
-        <div class="set-field">
-          <label for="wa-token">Token de acesso${wa.tem_token?' (preenchido — deixe em branco para manter)':''}</label>
-          <input id="wa-token" class="set-input" type="password" placeholder="${wa.tem_token?'••••••••••••':'EAAG…'}" autocomplete="off" spellcheck="false"/>
-        </div>
-        <div class="set-field">
-          <label for="wa-secret">App Secret${wa.tem_app_secret?' (preenchido — deixe em branco para manter)':''}</label>
-          <input id="wa-secret" class="set-input" type="password" placeholder="${wa.tem_app_secret?'••••••••••••':'Assina o webhook: sem ele nada é recebido'}" autocomplete="off" spellcheck="false"/>
-        </div>
-        <div class="set-field">
-          <label for="wa-verify">Token de verificação${wa.tem_verify_token?' (preenchido — deixe em branco para manter)':''}</label>
-          <input id="wa-verify" class="set-input" type="password" placeholder="${wa.tem_verify_token?'••••••••••••':'Uma frase que você inventa e repete na Meta'}" autocomplete="off" spellcheck="false"/>
-        </div>
-        <div class="set-field">
-          <label for="wa-template">Template de abertura aprovado</label>
-          <input id="wa-template" class="set-input" placeholder="Ex.: primeiro_contato" autocomplete="off" spellcheck="false" value="${esc(wa.template_name||'')}"/>
+        ${_setSub('Mensagem de abertura')}
+          <div class="set-field">
+            <label for="wa-template">Template aprovado na Meta</label>
+            <input id="wa-template" class="set-input" placeholder="Ex.: primeiro_contato" autocomplete="off" spellcheck="false" value="${esc(wa.template_name||'')}"/>
+            <p class="set-desc">É o único formato que a Meta deixa você enviar primeiro, antes de o lead responder.</p>
+          </div>
         </div>
         <div class="set-actions">
           <button class="set-btn primary" onclick="saveWhatsApp()">${conectado?'Atualizar conexão':'Conectar WhatsApp'}</button>
@@ -3213,25 +3261,40 @@ function _cardWhatsApp(wa){
         ${pendencias}
         <p id="wa-feedback" class="set-feedback"></p>
       </div>
-      <div class="set-row" style="align-items:flex-start">
+    </div>
+
+    <div class="panel panel-pad">
+      ${_setHead(IC_PLUG,'Webhook de recebimento','Cadastre esta URL e o token de verificação na Meta (WhatsApp → Configuração → Webhook) e assine o campo <strong>messages</strong>. É o que faz as respostas dos leads chegarem aqui.')}
+      <div class="set-row set-row--stack">
         <span class="set-lbl">URL do webhook</span>
-        <span class="set-val" style="user-select:all;word-break:break-all">${esc(wa.webhook_url||'')}</span>
+        <span class="set-val set-val--code">${esc(wa.webhook_url||'')}</span>
       </div>
-      <p class="set-desc">Cadastre essa URL e o token de verificação na Meta (WhatsApp → Configuração → Webhook) e assine o campo <strong>messages</strong>. É o que faz as respostas dos leads chegarem aqui.</p>
     </div>`;
 }
 
-function renderSettings(me,conns,wa,lusha){
-  const body=document.getElementById('settings-body');
+/* ══════ Conteúdo de cada seção ══════ */
 
-  const webhook=(conns||[]).find(c=>c.provider==='webhook');
+function _secConta(me){
+  return`
+    <div class="panel panel-pad">
+      ${_setHead(IC_USER,'Identificação','A conta com que você entrou neste navegador. Todas as funções do LeadEnricher — análises, lote, planilha, extensão e conversas — estão liberadas, sem limite de uso.')}
+      <div class="set-row"><span class="set-lbl">E-mail</span><span class="set-val">${esc(me?.email||'—')}</span></div>
+    </div>
+
+    <div class="panel panel-pad">
+      ${_setHead(IC_EXIT,'Sessão neste navegador','Encerra o acesso neste navegador. Seus leads continuam salvos na conta.')}
+      <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
+    </div>`;
+}
+
+function _secIntegracoes(webhook,lusha){
   const connCard=webhook
     ?`<div class="crm-conn">
         <div class="crm-conn-info">
           <span class="crm-conn-name">Webhook</span>
           <span class="crm-conn-meta">${webhook.webhook_configured?'URL configurada':'sem URL'}${webhook.updated_at?' · atualizado em '+new Date(webhook.updated_at).toLocaleDateString('pt-BR'):''}</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div class="crm-conn-acts">
           <span class="crm-conn-state ${webhook.is_active?'on':'off'}">${webhook.is_active?'ativo':'inativo'}</span>
           <button class="set-btn ghost" onclick="toggleCrmConn('webhook')">${webhook.is_active?'Desativar':'Ativar'}</button>
           <button class="set-btn danger" onclick="deleteCrmConn('webhook')">Remover</button>
@@ -3239,16 +3302,9 @@ function renderSettings(me,conns,wa,lusha){
       </div>`
     :'';
 
-  const head=_setHead;
-
-  body.innerHTML=`
+  return`
     <div class="panel panel-pad">
-      ${head(IC_USER,'Conta','A conta com que você entrou neste navegador. Todas as funções do LeadEnricher — análises, lote, planilha, extensão e conversas — estão liberadas, sem limite de uso.')}
-      <div class="set-row"><span class="set-lbl">E-mail</span><span class="set-val">${esc(me?.email||'—')}</span></div>
-    </div>
-
-    <div class="panel panel-pad">
-      ${head(IC_PLUG,'Enviar leads para o seu CRM','Cada lead — com decisores e atividades — é enviado por <strong>POST assinado com HMAC-SHA256</strong> ao endereço que você informar. Funciona com Zapier, Make, Power Automate ou um sistema próprio. Com o webhook ativo, o botão “Enviar ao CRM” fica habilitado na ficha do lead.')}
+      ${_setHead(IC_PLUG,'Enviar leads para o seu CRM','Cada lead — com decisores e atividades — é enviado por <strong>POST assinado com HMAC-SHA256</strong> ao endereço que você informar. Funciona com Zapier, Make, Power Automate ou um sistema próprio. Com o webhook ativo, o botão “Enviar ao CRM” fica habilitado na ficha do lead.')}
       ${connCard}
       <div class="set-form">
         <div class="set-field">
@@ -3266,17 +3322,15 @@ function renderSettings(me,conns,wa,lusha){
       </div>
     </div>
 
-    ${_cardWhatsApp(wa)}
-
     <div class="panel panel-pad">
-      ${head(IC_LUSHA,'Lusha (enriquecimento pago, opcional)','Conecte a chave API da sua conta Lusha para enriquecer contatos com telefone e dados adicionais. A chave fica cifrada e só você gasta seus créditos. Sem ela, tudo funciona 100% gratuito. Você gera a chave em app.lusha.com → Hub de APIs → Copiar chave da API.')}
+      ${_setHead(IC_LUSHA,'Lusha (enriquecimento pago, opcional)','Conecte a chave API da sua conta Lusha para enriquecer contatos com telefone e dados adicionais. A chave fica cifrada e só você gasta seus créditos. Sem ela, tudo funciona 100% gratuito. Você gera a chave em app.lusha.com → Hub de APIs → Copiar chave da API.')}
       ${lusha?.conectado
         ?`<div class="crm-conn">
           <div class="crm-conn-info">
             <span class="crm-conn-name">Conectado</span>
             <span class="crm-conn-meta">Sua chave está salva e criptografada</span>
           </div>
-          <div style="display:flex;align-items:center;gap:8px">
+          <div class="crm-conn-acts">
             <span class="crm-conn-state on">ativo</span>
             <button class="set-btn danger" onclick="desconectarLusha()">Desconectar</button>
           </div>
@@ -3293,20 +3347,81 @@ function renderSettings(me,conns,wa,lusha){
         </div>
         <p id="lusha-feedback" class="set-feedback"></p>
       </div>
-    </div>
+    </div>`;
+}
 
+function _secExtensao(){
+  return`
     <div class="panel panel-pad">
-      ${head(IC_EXT,'Extensão do navegador (LinkedIn)','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Revelar contato é livre — não há limite de revelações.')}
+      ${_setHead(IC_EXT,'Parear este navegador','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Revelar contato é livre — não há limite de revelações.')}
       <div class="set-actions">
         <button class="set-btn primary" onclick="generatePairCode()">Gerar código de pareamento</button>
         <span class="set-lbl">Válido por poucos minutos, uso único</span>
       </div>
       <p id="ext-feedback" class="set-feedback"></p>
-    </div>
+    </div>`;
+}
 
-    <div class="panel panel-pad">
-      ${head(IC_EXIT,'Sessão','Encerra o acesso neste navegador. Seus leads continuam salvos na conta.')}
-      <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
+function renderSettings(me,conns,wa,lusha){
+  const body=document.getElementById('settings-body');
+  const webhook=(conns||[]).find(c=>c.provider==='webhook');
+
+  /* Estado de cada seção para a bolinha da sub-navegação. "warn" é o caso que
+     mais confunde: existe configuração, mas ela não está funcionando. */
+  const estados={
+    conta:'on',
+    integracoes:((webhook&&webhook.is_active)||lusha?.conectado)?'on':(webhook?'warn':''),
+    whatsapp:wa?.conectado?(wa.configurado?'on':'warn'):(wa?.configurado?'warn':''),
+    extensao:'',
+  };
+
+  const secoes={
+    conta:{
+      sub:'Quem está usando este navegador e como encerrar o acesso.',
+      html:_secConta(me),
+    },
+    integracoes:{
+      sub:'Para onde os leads vão depois de prontos, e de onde vêm os dados pagos.',
+      html:_secIntegracoes(webhook,lusha),
+    },
+    whatsapp:{
+      sub:'O número que fala com os leads e o webhook que traz as respostas de volta.',
+      html:_cardWhatsApp(wa),
+    },
+    extensao:{
+      sub:'Conecte este navegador para ver os dados dentro do LinkedIn.',
+      html:_secExtensao(),
+    },
+  };
+
+  if(!secoes[_setTab])_setTab='conta';
+
+  const abas=SET_SECOES.map(s=>`
+    <button class="set-nav-btn${s.id===_setTab?' active':''}" data-tab="${s.id}" role="tab"
+            aria-selected="${s.id===_setTab?'true':'false'}" aria-controls="set-sec-${s.id}"
+            onclick="setTab('${s.id}')">
+      <span class="set-nav-ic">${s.icon}</span>
+      <span class="set-nav-txt">
+        <span class="set-nav-lbl">${s.lbl}</span>
+        <span class="set-nav-desc">${s.desc}</span>
+      </span>
+      ${_setDot(estados[s.id])}
+    </button>`).join('');
+
+  const paineis=SET_SECOES.map(s=>`
+    <section class="set-sec${s.id===_setTab?' active':''}" data-sec="${s.id}"
+             id="set-sec-${s.id}" role="tabpanel" aria-label="${s.lbl}">
+      <div class="set-sec-head">
+        <h2>${s.lbl}</h2>
+        <p>${secoes[s.id].sub}</p>
+      </div>
+      ${secoes[s.id].html}
+    </section>`).join('');
+
+  body.innerHTML=`
+    <div class="set-layout">
+      <nav class="set-nav" role="tablist" aria-label="Seções das configurações">${abas}</nav>
+      <div class="set-pane">${paineis}</div>
     </div>`;
 }
 

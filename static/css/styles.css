@@ -1895,8 +1895,77 @@ body{
 }
 .imp-prog-now{margin-top:6px;font-size:12.5px;color:var(--text-3)}
 
-/* ══════════════ VIEW: CONFIGURAÇÕES ══════════════ */
+/* ══════════════ VIEW: CONFIGURAÇÕES ══════════════
+   Sub-navegação à esquerda, uma seção por vez à direita. Antes eram seis
+   formulários empilhados na mesma rolagem. */
 .set-grid{display:flex;flex-direction:column;gap:16px}
+
+.set-layout{display:grid;grid-template-columns:238px minmax(0,1fr);gap:20px;align-items:start}
+
+.set-nav{
+  position:sticky;top:18px;
+  display:flex;flex-direction:column;gap:3px;
+  background:var(--bg-2);border:1px solid var(--border);
+  border-radius:12px;padding:8px;box-shadow:var(--shadow-sm);
+}
+.set-nav-btn{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:9px 10px;border-radius:9px;color:var(--text-2);
+  transition:background .15s,color .15s;
+}
+.set-nav-btn:hover{background:var(--surface)}
+.set-nav-btn.active{background:var(--accent-bg);color:var(--accent)}
+.set-nav-ic{
+  width:27px;height:27px;border-radius:7px;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--surface);border:1px solid var(--border);color:var(--text-3);
+  transition:background .15s,border-color .15s,color .15s;
+}
+.set-nav-btn.active .set-nav-ic{background:var(--bg-2);border-color:var(--accent-border);color:var(--accent)}
+.set-nav-ic svg{width:14px;height:14px}
+.set-nav-txt{display:flex;flex-direction:column;min-width:0;flex:1}
+.set-nav-lbl{font-size:13px;font-weight:700;line-height:1.35}
+.set-nav-desc{
+  font-size:11px;color:var(--text-3);line-height:1.35;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+/* Verde = funcionando, âmbar = configurado mas incompleto. Ausente quando não
+   há nada para relatar — bolinha cinza em tudo vira ruído. */
+.set-nav-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;background:var(--border-2)}
+.set-nav-dot.on{background:var(--ok)}
+.set-nav-dot.warn{background:var(--warn)}
+
+.set-pane{min-width:0}
+.set-sec{display:none;flex-direction:column;gap:14px}
+.set-sec.active{display:flex;animation:viewIn .2s ease}
+.set-sec-head h2{
+  font-family:'Plus Jakarta Sans',sans-serif;
+  font-size:16px;font-weight:700;letter-spacing:-.2px;
+}
+.set-sec-head p{font-size:12.5px;color:var(--text-3);line-height:1.55;margin-top:3px;max-width:74ch}
+
+/* Sub-área dentro de um painel (ex.: credenciais × mensagem de abertura). */
+.set-sub{
+  display:flex;flex-direction:column;gap:10px;
+  padding-top:14px;border-top:1px solid var(--border);
+}
+.set-sub:first-child{padding-top:2px;border-top:none}
+.set-sub-t{
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--text-3);
+}
+
+@media(max-width:900px){
+  .set-layout{grid-template-columns:1fr;gap:14px}
+  .set-nav{position:static;flex-direction:row;gap:6px;overflow-x:auto;scrollbar-width:none}
+  .set-nav::-webkit-scrollbar{display:none}
+  /* width:100% da versão em coluna esticaria cada aba até ocupar a faixa
+     inteira, e só uma caberia na tela. */
+  .set-nav-btn{flex:0 0 auto;width:auto;padding:8px 12px;gap:8px}
+  .set-nav-desc{display:none}
+  .set-nav-txt{flex:0 0 auto}
+}
+
 .set-head{display:flex;align-items:flex-start;gap:11px;margin-bottom:14px}
 .set-ic{
   width:30px;height:30px;border-radius:8px;flex-shrink:0;
@@ -1911,8 +1980,16 @@ body{
   padding:11px 0;border-bottom:1px solid var(--border);font-size:13.5px;
 }
 .set-row:last-child{border-bottom:none}
+/* Valor longo (URL de webhook) não cabe ao lado do rótulo. */
+.set-row--stack{flex-direction:column;align-items:flex-start;gap:6px}
 .set-lbl{color:var(--text-3);font-size:12.5px;flex-shrink:0}
 .set-val{font-weight:600;text-align:right;word-break:break-word}
+.set-row--stack .set-val{text-align:left}
+.set-val--code{
+  font-family:var(--mono);font-size:12.5px;font-weight:600;
+  background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:8px 11px;width:100%;user-select:all;word-break:break-all;
+}
 /* Barra de progresso do lote (view #lote) */
 .usage-track{height:8px;background:var(--surface);border-radius:99px;overflow:hidden;margin-top:8px}
 .usage-fill{height:100%;background:var(--accent);border-radius:99px;transition:width .5s ease}
@@ -1948,6 +2025,7 @@ body{
   margin-bottom:14px;background:var(--surface);
 }
 .crm-conn-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.crm-conn-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .crm-conn-name{font-size:13px;font-weight:700}
 .crm-conn-meta{font-size:11.5px;color:var(--text-3)}
 .crm-conn-state{
