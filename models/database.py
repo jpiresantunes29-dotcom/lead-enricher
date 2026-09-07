@@ -110,6 +110,21 @@ class Lead(Base):
     enrichment_version = Column(Integer, nullable=True)
     # Pipeline comercial
     stage = Column(String(20), nullable=False, default="novo")
+    # ── Priorização (services/lead_scorer.py) ───────────────────────────────
+    #
+    # Nulo enquanto a ficha não foi pontuada — o que é diferente de zero. Uma
+    # ficha ainda em coleta ("pending") não tem nota, e listar ela junto com as
+    # de nota 0 esconderia justamente as que faltam terminar.
+    score = Column(Integer, nullable=True, index=True)
+    #: alta | media | baixa — derivado de `score`, guardado para poder filtrar
+    #: e agrupar no banco sem recalcular a régua em SQL.
+    priority = Column(String(10), nullable=True, index=True)
+    #: Sinal a sinal, o que compôs a nota. É o que responde "por que 47?" na
+    #: tela; sem ele a nota seria um número que ninguém consegue conferir.
+    score_breakdown = Column(JSON, nullable=True)
+    #: Régua usada. Ficha pontuada por régua antiga continua reconhecível e
+    #: pode ser recalculada — ver services/lead_scorer.SCORING_VERSION.
+    score_version = Column(String(20), nullable=True)
     # Fase 5 — resumo executivo gerado por IA (cacheado)
     ai_summary = Column(Text, nullable=True)
     # Planilha importada: as células como vieram do arquivo, a linha de origem
@@ -796,7 +811,7 @@ class WhatsAppConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "7d3c1a94ef60"
+ALEMBIC_HEAD = "a1c7e93b4d20"
 
 
 def _stamp_alembic_head() -> None:

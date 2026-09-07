@@ -3,8 +3,10 @@
 > **Criado em**: 2026-09-06
 > **Implementado em**: 2026-09-06
 > **Para**: quem for continuar a integração da Lusha (humano ou LLM)
+> **Atualizado em**: 2026-09-07
 > **Estado**: **fases 1 a 5 implementadas**. Falta fechar a Fase 0 — capturar a
-> resposta real da API numa fixture. Ver §11.
+> resposta real da API numa fixture. Desde 2026-09-07 isso é **um comando**:
+> `scripts/capturar_fixtures_lusha.py`. Falta só a chave. Ver §11.
 
 ---
 
@@ -18,12 +20,18 @@
 | 3 — endpoints | ✅ `/leads/{id}/contacts`, `/decision-makers/{id}/reveal`, `/lusha/filters`, `/me/lusha` estendido |
 | 4 — frontend | ✅ duas colunas, sidebar de filtros, revelação sob clique, paginação |
 | 5 — configuração | ✅ saldo, limites e tabela de custos |
-| testes | ✅ 87 novos (60 de provedor + 27 de endpoint); suíte em **893 passando** |
+| testes | ✅ 87 novos (60 de provedor + 27 de endpoint); suíte em **926 passando** (2026-09-07) |
 
 **O que NÃO foi feito e por quê**: nenhuma chamada real à Lusha foi disparada.
 Não havia chave no ambiente, e gastar crédito da conta de um usuário é decisão
 dele, não de quem implementa. As fixtures em `tests/fixtures/` foram montadas a
 partir da documentação oficial — ver §11 para fechar isso por 1 crédito.
+
+Isso continua valendo em 2026-09-07: seguiu sem chave no ambiente (procurada em
+`.env`, `.env.local` e `.env.producao`). O que mudou é que a captura deixou de
+ser uma receita de quatro passos e virou um comando que, além de gravar as
+fixtures, **compara o resultado com o que o parser consegue ler** e aponta os
+campos divergentes — ver §11.
 
 Este documento é auto-contido: dá para implementar tudo daqui sem ler o histórico
 da conversa que o originou. Ele separa de propósito **o que foi verificado contra
@@ -573,23 +581,46 @@ evita quebrar na primeira divergência, mas **não substitui verificação**: um
 campo pode estar sendo lido do lugar errado e ninguém perceber, que é
 exatamente o que aconteceu com `/v2/company`.
 
-### Como fechar (custa 1 crédito)
+### Como fechar (custa 1 crédito) — agora é um comando
 
-Com uma chave conectada, num terminal — a chave vem de variável de ambiente
-para não ficar no histórico:
+> **Atualizado em 2026-09-07.** Os quatro passos manuais abaixo viraram um
+> script: `scripts/capturar_fixtures_lusha.py`. Passo manual repetido é passo
+> que sai errado, e este em particular custa crédito a cada tentativa.
 
 ```bash
-curl -s -X POST https://api.lusha.com/v3/contacts/prospecting   -H "api_key: $LUSHA_API_KEY"   -H "Content-Type: application/json"   -d '{"filters":{"companies":{"domains":["nubank.com.br"]}},"pages":{"page":0,"size":10}}'   > tests/fixtures/lusha_search.json
+LUSHA_API_KEY=... python -m scripts.capturar_fixtures_lusha --enrich
 ```
 
-Depois:
+O script faz o search (1 crédito), grava `tests/fixtures/lusha_search.json`, e
+— **a parte que o `curl` não fazia** — passa cada contato por `parse_contact()`
+e imprime, campo a campo, quantos foram lidos:
+
+```
+Campo                  preenchidos
+  ✓ name                 10/10
+  ✗ title                 0/10     ← nome divergente, não dado ausente
+```
+
+Um campo em `0/N` é o parser lendo a chave errada: um contato sem cargo
+acontece, dez sem cargo não. É exatamente o modo de falha silencioso que a §2
+descreve, e que o parser tolerante a vários nomes de campo **esconde** em vez
+de resolver.
+
+Com `--enrich`, revela **um** contato (mais 1 crédito pelo e-mail) e grava
+`tests/fixtures/lusha_enrich.json`. Sem a flag, só o search — o que já fecha
+metade desta seção.
+
+A chave só entra por variável de ambiente, nunca por argumento, para não parar
+no histórico do shell. Não há chave no repositório: o modelo é BYOA e cada
+usuário guarda a própria em `profiles.lusha_api_key`, criptografada.
+
+Depois que o script disser que está tudo lido:
 
 1. `python -m pytest tests/test_lusha_prospecting.py -q`
-2. Ajustar `parse_contact()` onde os nomes divergirem.
-3. Repetir para o enrich com **um** ID (`POST /v3/contacts/enrich`, corpo
-   `{"contactIds":["<id>"]}`), gravando em `tests/fixtures/lusha_enrich.json`.
-4. Apagar o aviso no topo de `tests/test_lusha_prospecting.py` e a seção
+2. Ajustar `parse_contact()` onde os nomes divergirem, e rodar de novo.
+3. Apagar o aviso no topo de `tests/test_lusha_prospecting.py` e a seção
    correspondente de `tests/fixtures/LEIA-ME.md`.
+4. Atualizar a §0 e esta seção.
 
 Feito isso, uma mudança futura de formato da Lusha quebra um teste em vez de
 degradar em silêncio — que é o ponto inteiro da §9.4.

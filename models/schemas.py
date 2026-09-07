@@ -84,6 +84,10 @@ class LeadOut(BaseModel):
     phone: Optional[str] = None
     status: str
     stage: Optional[str] = "novo"
+    score: Optional[int] = None
+    priority: Optional[str] = None
+    score_breakdown: Optional[Dict[str, Any]] = None
+    score_version: Optional[str] = None
     ai_summary: Optional[str] = None
     created_at: datetime
 
@@ -104,6 +108,9 @@ class LeadListOut(LeadOut):
     """
     dns_report: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
     mx_records: Optional[List[Any]] = Field(default=None, exclude=True)
+    #: O detalhamento só é lido no popover de UMA ficha. Numa lista de cem ele
+    #: seria centenas de KB que nenhuma coluna usa — mesmo motivo do dns_report.
+    score_breakdown: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
 
 
 class DnsReportResponse(BaseModel):

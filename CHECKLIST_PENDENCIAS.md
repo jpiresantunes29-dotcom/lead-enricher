@@ -1,8 +1,42 @@
 # 📋 CHECKLIST DE PENDÊNCIAS — LeadEnricher
 
-> **Data de atualização**: 2026-09-06  
+> **Data de atualização**: 2026-09-07  
 > **Estado do projeto**: v2.x (FastAPI + Supabase Auth + Stripe + SQLAlchemy)  
-> **Status geral**: ~60% do plano V3 está implementado; 40% em desenvolvimento ou pendente
+> **Status geral**: ~75% do plano V3 implementado
+
+---
+
+## ⚠️ Conferência de 2026-09-07 — o que este documento dizia de errado
+
+A versão anterior foi auditada linha a linha contra o código. Ela errava **nos
+dois sentidos**, e o erro mais caro era o otimista: quem lesse o documento
+priorizaria a coisa errada.
+
+**Dava como pronto o que não existia:**
+
+- **Fase 1 (Lead Scoring)** aparecia como `✅ 80% pronto`, "CRÍTICA". Estava em
+  **0%**: não havia `services/lead_scorer.py`, nem as colunas `score` /
+  `priority` / `score_breakdown` no modelo, nem uma única ocorrência de
+  `score_lead` no projeto. Os "badges de prioridade 🔴🟡🔵" marcados como
+  feitos também não existiam — os `priority` que apareciam em `app.js` eram
+  prioridade de registro MX, outra coisa.
+- `GET /api/dashboard/metrics` era descrito devolvendo `leads_por_prioridade`.
+  Não devolvia: não havia de onde tirar.
+
+**Dava como pendente o que já estava pronto** — a maior parte das Fases 2 a 5:
+
+| Marcado PENDENTE | Onde já estava |
+|---|---|
+| Endpoints de atividades, follow-ups, `.ics` | `routers/activities.py` |
+| Regras automáticas (`meeting_scheduled`, `no_answer`, dias úteis) | `services/activity_rules.py` |
+| Migração de `activities` e `crm_connections` | `alembic/versions/0001`, linhas 186 e 56 |
+| Rate limit por `sub` do JWT em vez de IP | `middleware/auth.py:692` |
+| Webhook CRM assinado + tela de conexões | `services/crm/webhook.py`, `routers/crm_config.py` |
+| AI Insights (dado como "0% implementado") | `services/ai_insights.py`, exposto em `routers/integrations.py` |
+
+**Moral, para quem for atualizar isto:** marque estado por leitura do código,
+não por memória da última sessão. Um checklist que mente para o lado otimista
+é pior que não ter checklist — ele esconde justamente a lacuna crítica.
 
 ---
 
@@ -10,102 +44,132 @@
 
 | Categoria | Status | Progresso | Prioridade |
 |-----------|--------|-----------|-----------|
-| **Core de Enriquecimento** | ✅ 90% pronto | Lead scoring, decisores | ALTA |
-| **Execução Comercial** | ⚠️ 50% pronto | Atividades, pipeline | ALTA |
-| **Dashboard Comercial** | ⚠️ 30% pronto | Métricas, KPIs | ALTA |
-| **Integrações CRM** | 🔴 10% pronto | Dynamics, HubSpot, Pipedrive | ALTA |
-| **WhatsApp Business** | 🔴 Iniciado | Automação de conversa | CRÍTICA |
+| **Core de Enriquecimento** | ✅ 90% pronto | Coleta, decisores | ALTA |
+| **Lead Scoring** | ✅ 90% pronto | Régua, badge, popover, recálculo | ALTA |
+| **Execução Comercial** | ✅ 85% pronto | Atividades, regras, `.ics`, pipeline | ALTA |
+| **Dashboard Comercial** | ⚠️ 50% pronto | Endpoint pronto; faltam gráficos | ALTA |
+| **Integrações CRM** | ⚠️ 35% pronto | Webhook assinado pronto; faltam Dynamics/HubSpot/Pipedrive | ALTA |
+| **WhatsApp Business** | ⚠️ 60% pronto | Orquestrador e portão prontos; falta painel | CRÍTICA |
 | **Landing V3** | ⚠️ 20% pronto | Design visual, marketing | MÉDIA |
-| **Segurança & Conformidade** | ⚠️ 70% pronto | Rate limit, LGPD, Anti-SSRF | ALTA |
+| **Segurança & Conformidade** | ✅ 85% pronto | Rate limit, anti-SSRF e LGPD prontos | ALTA |
 | **Infraestrutura & DevOps** | ✅ 80% pronto | Alembic, Supabase | MÉDIA |
 | **Extensão Chrome** | ✅ 85% pronto | Pareamento, revelação | MÉDIA |
 | **Provedores Premium** | ⚠️ 60% pronto | Hunter e **Lusha (BYOA) feitos**; Apollo/Dropcontact pendentes | BAIXA |
+| **IA (Claude API)** | ⚠️ 60% pronto | Resumo executivo pronto; falta roteiro de ligação | MÉDIA |
 
 ---
 
 ## 🎯 FASE 1: LEAD SCORING (NÚCLEO — Prioridade CRÍTICA)
 
-**Status**: ✅ Parcialmente implementado | Estimativa: 80% pronto
+**Status**: ✅ Implementado em 2026-09-07 | Estimativa: 90% pronto
+
+> Estava em **0%** apesar de o documento anterior dar como 80% — ver a
+> conferência no topo. Implementado do zero nesta sessão.
 
 ### Implementação
-- [x] Criar `services/lead_scorer.py` com função pura `score_lead()`
-- [x] Critérios de scoring (14 sinais): MX provider, SPF/DMARC, hosting, tamanho, LinkedIn, decisores, e-mail SMTP, telefone
-- [x] Colunas no modelo `Lead`: `score`, `priority`, `score_breakdown`, `score_version`
-- [x] Cálculo ao fim do enriquecimento (`POST /enrich`)
-- [x] Recálculo pós-decisores (`POST /api/decisores` → rescore automático)
-- [ ] **PENDENTE**: Endpoint `POST /api/leads/{id}/rescore` para recálculo sob demanda
+- [x] `services/lead_scorer.py` — função pura `score_lead()`, sem banco, rede
+      nem relógio (é o que permite testar os 14 sinais e recalcular em lote)
+- [x] 14 sinais em três eixos, com peso deliberadamente desigual:
+      **alcance** (decisores, e-mail verificado, telefone) pesa 38 dos 75
+      pontos; **maturidade** (MX, SPF, DMARC, DKIM, hosting) 17; **porte e
+      identidade** (tamanho, LinkedIn, setor, descrição, localização) 20.
+      A pergunta que a nota responde é "consigo falar com quem decide?",
+      não "esta empresa é bem configurada?"
+- [x] Colunas em `Lead`: `score`, `priority`, `score_breakdown`, `score_version`
+      (migração `0015_score_do_lead.py`, com índice em `score` e `priority`)
+- [x] Cálculo ao fim da coleta — em `finish_enrichment`, o ponto por onde
+      passam os dois caminhos (busca avulsa e fila de lote)
+- [x] Recálculo pós-decisores (`POST /api/decisores`), depois do commit e lendo
+      da relação: a ficha pode ter decisores de uma busca anterior
+- [x] `POST /api/leads/{id}/rescore` — recálculo sob demanda, idempotente e
+      sem rede. Cobre o que nenhum ponto automático pega: telefone corrigido à
+      mão, contato revelado na Lusha, ficha pontuada por régua anterior
+- [x] `GET /api/leads?sort=score&priority=alta` — ordenação e filtro
+      (`nullslast`: ficha não pontuada vai para o fim, não para o topo)
 - [ ] **PENDENTE**: Pesos configuráveis por usuário (tabela `scoring_profiles`)
-- [ ] **PENDENTE**: Versionamento de pesos (hoje só SCORING_V1)
-- [ ] **PENDENTE**: Cache de scores para performance
-
-### UI/UX
-- [x] Badges de prioridade (🔴🟡🔵) nos cards de resultado
-- [x] Exibição de score normalizado (0-100)
-- [ ] **PENDENTE**: Popover interativo com **breakdown detalhado** ("Por que 47 pontos?")
-- [ ] **PENDENTE**: Visualização de contribuição de cada critério
+- [ ] **PENDENTE**: Recálculo em lote ao subir `SCORING_VERSION` (hoje as fichas
+      da régua antiga só são repontuadas na próxima coleta ou no rescore manual)
 - [ ] **PENDENTE**: Histórico de evolução do score do lead
 
+### UI/UX
+- [x] Badge de prioridade (🔴🟡🔵) com a nota, no cabeçalho da ficha, na coluna
+      nova do Histórico e no resumo rápido
+- [x] Popover com o **detalhamento sinal a sinal** ("por quê?") — inclusive o
+      que **não** pontuou, que é a lista do que buscar para o lead subir
+- [x] Coluna "Prioridade" ordenável no Histórico
+- [x] `GET /api/dashboard/metrics` passa a devolver `leads_por_prioridade`,
+      `leads_nao_pontuados` e `score_medio`
+- [ ] **PENDENTE**: Distribuição de score em histograma (ver Fase 3)
+
 ### Testes
-- [x] Testes unitários de scoring
-- [ ] **PENDENTE**: Testes de recálculo pós-decisores
-- [ ] **PENDENTE**: Testes de casos extremos (empresas com 0 decisores, sem SPF, etc)
+- [x] `tests/test_lead_scorer.py` — 25 testes: ficha vazia, ficha completa,
+      `dns_report` nulo ou com formato inesperado, decisor sem e-mails,
+      a inversão alcance > maturidade, curva de porte, faixas de prioridade,
+      detalhamento que fecha com a nota, e os quatro caminhos HTTP
+      (coleta pontua, decisores repontuam, rescore, ordenação/filtro)
 
 ---
 
 ## 📞 FASE 2: EXECUÇÃO COMERCIAL (ATIVIDADES & PIPELINE — Prioridade CRÍTICA)
 
-**Status**: ⚠️ 50% implementado | Estimativa: 2-3 sessões
+**Status**: ✅ 85% implementado (a versão anterior dizia 50%)
 
 ### Modelo de dados
 - [x] Tabela `activities` com campos: `id`, `lead_id`, `user_id`, `type`, `outcome`, `notes`, `due_at`, `completed_at`
 - [x] Campo `stage` em `Lead`: novo → contatado → reunião_agendada → oportunidade → ganho/perdido
-- [ ] **PENDENTE**: Migração Alembic versionada para `activities` table
-- [ ] **PENDENTE**: Índices em `(lead_id, user_id)` e `(due_at)` para performance
+- [x] Migração Alembic — já em `0001_schema_inicial.py:186`, não faltava
+- [ ] **PENDENTE**: Índice em `(due_at)` para a query de follow-ups pendentes
 
 ### Regras automáticas (`services/activity_rules.py`)
-- [ ] **PENDENTE**: Quando `meeting_scheduled` → muda `lead.stage` + cria evento + gera `.ics` + sync CRM
-- [ ] **PENDENTE**: Quando `no_answer`/`voicemail` → cria task de follow-up +2 dias úteis
-- [ ] **PENDENTE**: Quando `busy` → cria follow-up +1 dia útil
-- [ ] **PENDENTE**: Quando `talked` → muda para `contatado` + sugere follow-up opcional
+- [x] `meeting_scheduled` → muda `lead.stage` + cria evento + gera `.ics`
+- [x] `no_answer`/`voicemail` → follow-up em +2 dias úteis (`add_business_days`)
+- [x] `busy` → follow-up
+- [x] `talked` → move para `contatado`
+- [ ] **PENDENTE**: Sync com CRM ao agendar reunião
 
-### Endpoints novos
-- [ ] **PENDENTE**: `POST /api/leads/{id}/activities` — registrar ligação/nota/tarefa
-- [ ] **PENDENTE**: `GET /api/leads/{id}/activities` — timeline do lead
-- [ ] **PENDENTE**: `GET /api/activities/pending` — follow-ups vencendo (ordenado por `due_at`)
-- [ ] **PENDENTE**: `PATCH /api/activities/{id}` — concluir/reagendar
-- [ ] **PENDENTE**: `GET /api/activities/{id}/ics` — download convite `.ics`
-- [ ] **PENDENTE**: `PATCH /api/leads/{id}/stage` — mover no pipeline
-- [x] `GET /api/dashboard/metrics` — ver seção Dashboard
+### Endpoints (`routers/activities.py`)
+- [x] `POST /api/leads/{id}/activities` — registrar ligação/nota/tarefa
+- [x] `GET /api/leads/{id}/activities` — timeline do lead
+- [x] `GET /api/activities/pending` — follow-ups vencendo
+- [x] `PATCH /api/activities/{id}` — concluir/reagendar
+- [x] `GET /api/activities/{id}/ics` — download do convite
+- [x] `GET /api/followups/today` — fila do dia
+- [x] `PATCH /api/leads/{id}/stage` — mover no pipeline (`routers/leads.py`)
 
 ### Calendário (.ics)
-- [ ] **PENDENTE**: Geração de `.ics` (VCALENDAR) universal (Outlook, Google, Apple Calendar)
-- [ ] **PENDENTE**: Download direto sem salvar no servidor
-- [ ] **PENDENTE**: Pré-preenchimento com contexto do lead (titulo, descrição, local)
+- [x] Geração de `.ics` (VCALENDAR) em `activity_rules.build_ics()`
+- [x] Download direto, sem salvar no servidor
+- [x] Pré-preenchimento com contexto do lead
 
 ### UI/UX
-- [ ] **PENDENTE**: Visão alternável lista/kanban por estágio
-- [ ] **PENDENTE**: Drag-and-drop de cards de lead (muda `stage` via `PATCH`)
-- [ ] **PENDENTE**: Ação rápida "📞 Registrar ligação" — modal em 2 cliques
-- [ ] **PENDENTE**: Fila do dia: seção "Follow-ups de hoje" no topo (consumindo `/api/activities/pending`)
-- [ ] **PENDENTE**: Timeline por lead no detalhe (histórico de atividades)
+- [x] Ação rápida de registrar ligação (botões no card da ficha)
+- [x] Fila do dia e aba de follow-ups
+- [x] Timeline por lead no detalhe
+- [x] Pipeline por estágio
+- [ ] **PENDENTE**: Drag-and-drop de cards no kanban
 - [ ] **PENDENTE**: Notificações de follow-ups atrasados
 
 ### Testes
-- [ ] **PENDENTE**: Testes de regras automáticas (meeting_scheduled, no_answer, etc)
-- [ ] **PENDENTE**: Testes de geração `.ics`
-- [ ] **PENDENTE**: Testes de transação única (sem fila)
+- [x] `tests/test_activities.py` — regras automáticas, `.ics`, timeline, pendentes
+- [ ] **PENDENTE**: Teste do índice/performance com volume
 
 ---
 
 ## 📊 FASE 3: DASHBOARD COMERCIAL (MÉTRICAS & ANALYTICS — Prioridade ALTA)
 
-**Status**: 🔴 10% implementado | Estimativa: 1-2 sessões
+**Status**: ⚠️ 50% implementado — o endpoint está pronto; falta a visualização
 
 ### Endpoint de agregação
-- [x] `GET /api/dashboard/metrics?period=30d` — retorna:
+- [x] `GET /api/dashboard/metrics?days=30` — retorna:
   - `leads_pesquisados`, `ligacoes_realizadas`, `taxa_contato`, `taxa_reuniao`
-  - `conversao_oportunidade`, `funil_por_estagio`, `leads_por_prioridade`
+  - `conversao_oportunidade`, `funil_por_estagio`
+  - `leads_por_prioridade`, `leads_nao_pontuados`, `score_medio` *(2026-09-07)*
   - `followups_pendentes`, `followups_atrasados`
+  - ⚠️ O parâmetro é `days`, não `period` — a versão anterior documentava errado
+  - Nota: a distribuição por prioridade fica **fora** da janela de período de
+    propósito. O funil responde "o que andou nos últimos 30 dias"; a prioridade
+    responde "o que tenho para trabalhar amanhã", e recortar por data esconderia
+    o lead bom que entrou há 40 dias e nunca foi tocado
 - [ ] **PENDENTE**: Filtros por período (7d, 30d, 90d, custom)
 - [ ] **PENDENTE**: Filtros por usuário / time
 - [ ] **PENDENTE**: Comparação período anterior (delta %)
@@ -131,13 +195,14 @@
 
 ## 🔗 FASE 4: INTEGRAÇÕES CRM (SAÍDA PARA ECOSSISTEMA — Prioridade ALTA)
 
-**Status**: 🔴 ~5% implementado | Estimativa: 2-3 sessões
+**Status**: ⚠️ 35% implementado — o webhook genérico está pronto ponta a ponta
 
 ### Arquitetura de conectores (`services/crm/`)
-- [ ] **PENDENTE**: Definir protocolo `CRMConnector.push_lead(lead, decision_makers, activities)`
-- [ ] **PENDENTE**: Camada de credenciais criptografadas (Fernet, em env)
-- [ ] **PENDENTE**: Tabela `crm_connections` com `credentials` **criptografado**
-- [ ] **PENDENTE**: Teste de conexão antes de salvar credenciais
+- [x] Protocolo `push_lead(lead, decision_makers, activities)` — `services/crm/webhook.py`
+- [x] Credenciais criptografadas (Fernet, `services/crypto.py` + `SegredoCriptografado`)
+- [x] Tabela `crm_connections` — já em `0001_schema_inicial.py:56`
+- [x] Tela de conexões (`routers/crm_config.py`): listar, criar, ativar/desativar, remover
+- [ ] **PENDENTE**: Teste de conexão antes de salvar credenciais ("Test connection")
 
 ### Conectores específicos
 
@@ -158,8 +223,10 @@
 - [ ] **PENDENTE**: Estágios do pipeline mapeados automaticamente
 
 #### Webhook genérico
-- [ ] **PENDENTE**: POST JSON assinado (HMAC-SHA256)
-- [ ] **PENDENTE**: Cobertura para Zapier, Make, n8n
+- [x] POST JSON assinado (HMAC-SHA256) — `services/crm/webhook.py`
+- [x] Cobertura para Zapier, Make, n8n (é HTTP + assinatura, serve para os três)
+- [x] `allow_redirects=False` e validação do alvo (`is_valid_target`)
+- [x] Chave de deduplicação (`dedup_key`) para não empurrar o mesmo lead duas vezes
 - [ ] **PENDENTE**: Retry com backoff exponencial
 
 ### Sincronização
@@ -177,23 +244,24 @@
 
 ## 🤖 FASE 5: INTELIGÊNCIA COM IA (Claude API — Prioridade MÉDIA)
 
-**Status**: 🔴 0% implementado | Estimativa: 1 sessão
+**Status**: ⚠️ 60% implementado — o resumo executivo está no ar
 
 ### Serviço (`services/ai_insights.py`)
-- [ ] **PENDENTE**: Resumo executivo da empresa (prompt com description + sector + DNS + decisores)
-- [ ] **PENDENTE**: Cache do resumo no `Lead` (coluna `ai_summary`)
+- [x] Resumo executivo da empresa (`generate_summary`, com contexto de
+      descrição, setor, DNS e decisores), exposto em `routers/integrations.py`
+- [x] Cache do resumo no `Lead` (coluna `ai_summary`)
+- [x] `is_configured()` — degrada em silêncio quando não há chave
 - [ ] **PENDENTE**: Limite de chamadas por plano (free = 0, pro/enterprise = ilimitado)
 
 ### Funcionalidades
-- [ ] **PENDENTE**: Resumo: "Quem são, o que fazem, por que importa"
+- [x] Resumo: "Quem são, o que fazem, por que importa"
 - [ ] **PENDENTE**: Roteiro de ligação personalizado (baseado em resumo + cargo do decisor + produto do usuário)
 - [ ] **PENDENTE**: Sugestão de próxima ação (classificar notas de atividade, sugerir follow-up)
 - [ ] ~~Melhor horário para contato~~ — **Adiado**: requer histórico volumoso
 
 ### UI/UX
-- [ ] **PENDENTE**: Card "Insights de IA" no detalhe do lead
+- [x] Card "Insights de IA" no detalhe do lead (`ai-box`), com botão "regenerar"
 - [ ] **PENDENTE**: Loading state enquanto gera
-- [ ] **PENDENTE**: Botão "Regenerar" para refazer
 
 ### Testes
 - [ ] **PENDENTE**: Testes com mock da Claude API
@@ -331,31 +399,47 @@
 
 ## 🔐 SEGURANÇA & CONFORMIDADE (CROSS-CUTTING — Prioridade ALTA)
 
-**Status**: ⚠️ 70% implementado | Estimativa: 1-2 sessões
+**Status**: ✅ 85% implementado (a versão anterior dizia 70% e listava como
+pendente três travas que já existiam)
 
 ### Rate limiting
 - [x] Base: `slowapi` com `key_func=rate_limit_key` (60/min)
-- [ ] **PENDENTE**: Trocar `get_remote_address` por `sub` do JWT (por usuário, não por IP)
+- [x] Chave por `sub` do JWT, com queda para IP — `middleware/auth.py:692`.
+      Já estava feito: atrás de proxy todos compartilham IP, e limitar só por
+      IP puniria todos os usuários juntos
+- [x] Limite específico em `/enrich` (10/min) e `/api/decisores` (20/min)
 - [ ] **PENDENTE**: Rate limit diferenciado por plano (free: 60/min, pro: 600/min)
 - [ ] **PENDENTE**: Rate limit no `/reveal` (hoje sem limite explícito)
-- [ ] **PENDENTE**: Rate limit no `/api/activities/pending` (query pesada)
 
 ### Anti-SSRF
-- [ ] **PENDENTE**: `scrape_website()` — resolver IP antes do fetch
-- [ ] **PENDENTE**: Bloquear faixas privadas: `10/8`, `172.16/12`, `192.168/16`, `127/8`, `169.254/16`
-- [ ] **PENDENTE**: Bloquear IP de metadata (AWS, Google Cloud, Azure)
-- [ ] **PENDENTE**: Timeout de conexão (5s max)
+- [x] `is_public_host()` / `is_public_url()` em `services/_utils.py` — resolve o
+      host e recusa se **qualquer** IP cair em faixa privada, loopback,
+      link-local (que cobre o metadata `169.254.169.254` de AWS, GCP e Azure),
+      reservada, multicast ou não especificada
+- [x] Aplicado em `scraper._fetch()` e `dns_intel.fetch_http_banner()`
+- [x] Timeout de conexão de 5s (tupla `(connect, read)`)
+- [x] **Revalidação a cada redirect** — `safe_get()`, 2026-09-07. Era o buraco
+      real: a checagem valia só para a URL inicial, e `allow_redirects=True`
+      seguia o `Location` sem perguntar de novo. Um domínio público
+      respondendo `302` para `169.254.169.254` ou `10.0.0.5` passava por dentro
+      do guard. Agora cada salto é resolvido e validado antes de ser buscado,
+      com teto de 30 saltos
+- [x] `tests/test_seguranca.py` — quatro alvos internos parametrizados
+      (metadata, rede privada, loopback, roteador), cada um **alcançável na
+      resposta falsa**, para o teste falhar de verdade se o guard cair;
+      mais redirect relativo legítimo, cadeia longa demais e fechamento do
+      salto intermediário
 
 ### Criptografia de credenciais
 - [x] Base: `services/crypto.py` com Fernet
-- [ ] **PENDENTE**: Aplicar em `crm_connections.credentials` antes de salvar
-- [ ] **PENDENTE**: Descriptografar apenas ao usar (nunca retornar em JSON)
-- [ ] **PENDENTE**: Teste de descriptografia falhada (chave perdida)
+- [x] Aplicado via o tipo `SegredoCriptografado` em `crm_connections.credentials`,
+      `profiles.lusha_api_key` e nas credenciais de WhatsApp
+- [x] Descriptografia só no uso — nunca sai em JSON
+- [x] `tests/test_segredos.py` cobre o ciclo e a chave trocada
 
 ### HMAC em webhooks de saída
-- [ ] **PENDENTE**: Assinatura HMAC-SHA256 em `POST` para webhook customizado
-- [ ] **PENDENTE**: Header `X-LeadEnricher-Signature`
-- [ ] **PENDENTE**: Documentação: como verificar a assinatura
+- [x] Assinatura HMAC-SHA256 em `services/crm/webhook.py`
+- [ ] **PENDENTE**: Documentação pública: como o destinatário verifica a assinatura
 
 ### Trilha de auditoria
 - [x] Tabela `activities` como audit log comercial
@@ -378,8 +462,11 @@
 
 ### Migrações versionadas
 - [x] `alembic` setup
-- [x] Migrations: 0001-0008 já existem
-- [ ] **PENDENTE**: Migração para tabelas novas (activities, crm_connections, scoring_profiles)
+- [x] Migrations 0001–0015 (a última: `0015_score_do_lead.py`)
+- [x] `activities` e `crm_connections` já vinham na `0001` — não faltavam
+- [x] `tests/test_migracoes.py` constrói um banco pelas migrações e compara com
+      os modelos, e confere que `ALEMBIC_HEAD` acompanha a última revisão
+- [ ] **PENDENTE**: Migração de `scoring_profiles` (pesos por usuário)
 - [ ] **PENDENTE**: Teste de rollback (downgrade safety)
 - [ ] **PENDENTE**: CI/CD check: migração falha na PR
 
@@ -487,11 +574,24 @@
          `GET /api/lusha/filters`
    - [x] Tela com filtros, paginação e custo escrito no botão antes do clique
    - [x] 87 testes (60 de provedor, 27 de endpoint)
-   - [ ] **PENDENTE**: capturar a resposta real da API numa fixture. Custa
-         1 crédito. Enquanto não for feito, o parser está escrito contra o
-         formato **documentado**, não contra o observado — que é o mesmo tipo
-         de risco que fez a primeira tentativa chamar o endpoint errado. Ver
-         §11 de `docs/LUSHA_PROSPECTING_IMPLEMENTACAO.md`.
+   - [ ] **PENDENTE (bloqueado por credencial)**: capturar a resposta real da
+         API numa fixture. O parser está escrito contra o formato
+         **documentado**, não contra o observado — o mesmo tipo de risco que
+         fez a primeira tentativa chamar o endpoint errado.
+   - [x] **Ferramenta pronta** *(2026-09-07)*:
+         `scripts/capturar_fixtures_lusha.py` faz a captura num comando só e
+         ainda compara o que voltou com o que `parse_contact()` consegue ler,
+         apontando campo por campo onde o nome diverge. Substitui os quatro
+         passos manuais da §11.
+
+         ```bash
+         LUSHA_API_KEY=... python -m scripts.capturar_fixtures_lusha --enrich
+         ```
+
+         Não foi executado porque **não há chave disponível**: o modelo é BYOA
+         e cada usuário guarda a própria chave criptografada em
+         `profiles.lusha_api_key`. Custa 1 crédito (search) + 1 por e-mail
+         revelado, e os créditos são de quem executa.
 
 ### Testes
 - [x] Fallback quando o provedor falha — coberto para a Lusha
@@ -553,14 +653,25 @@
 
 **Status**: ⚠️ 60% implementado | Estimativa: 1-2 sessões
 
+**Suíte atual: 926 testes passando** (`python -m pytest -q`).
+
+> ⚠️ **Instabilidade conhecida, pré-existente**: rodando a suíte inteira,
+> alguns testes de WhatsApp falham de forma intermitente — testes diferentes a
+> cada rodada (`test_wa_conversas.py`, `test_wa_jornada.py`). Passam quando
+> rodados isolados ou por arquivo. Confirmado que **não** vem das mudanças de
+> 2026-09-07: reproduz na base limpa. Hipótese: vazamento de estado entre
+> testes — as asserções dependem de contagem global (`/api/wa/status`) e do
+> primeiro item da lista (`conversations[0]`).
+
 ### Testes unitários
 - [x] `test_precisao.py` (Nubank, 2.6 mi de funcionários, etc)
 - [x] `test_extension.py`
 - [x] `test_wa_cliente.py`
-- [ ] **PENDENTE**: `test_lead_scorer.py` (100% de coverage)
-- [ ] **PENDENTE**: `test_activity_rules.py`
-- [ ] **PENDENTE**: `test_email_patterns.py`
-- [ ] **PENDENTE**: `test_dns_lookup.py`
+- [x] `test_lead_scorer.py` — 25 testes *(2026-09-07)*
+- [x] `test_activities.py` — cobre as regras de `activity_rules.py`
+- [x] `test_people.py`, `test_phone_normalizer.py`, `test_dns_intel.py`
+- [x] `test_seguranca.py` — JWT, cabeçalhos e **anti-SSRF em redirects**
+- [ ] **PENDENTE**: `test_email_patterns.py` dedicado
 
 ### Testes de integração
 - [ ] **PENDENTE**: `test_crm_connectors.py` (mocks Dynamics, HubSpot, Pipedrive)
@@ -606,38 +717,44 @@
 
 ## 📅 ROADMAP CONSOLIDADO
 
-### **Sprint 1 (AGORA)** — Fundação comercial
-- ✅ Lead scoring completo (popover breakdown)
+> A versão anterior marcava **todos** os itens do roadmap com ✅, inclusive os
+> que nunca começaram — o ✅ ali significava "planejado", não "pronto". Isso
+> tornava o roadmap ilegível. Aqui ✅ é feito, ⬜ é a fazer.
+
+### **Sprint 1 — Fundação comercial** ✅ concluído
 - ✅ Tabela de atividades + regras automáticas
-- ✅ Endpoints de atividades
-- ✅ `.ics` generation
+- ✅ Endpoints de atividades e `.ics`
+- ✅ Lead scoring completo, com popover de detalhamento *(2026-09-07)*
+
+### **Sprint 2 (AGORA) — Dashboard & CRM**
+- ✅ Endpoint de métricas (com distribuição por prioridade)
+- ✅ Webhook CRM assinado + tela de conexões
+- ⬜ **UI do dashboard**: KPIs, funil, histograma de score — o endpoint já
+      entrega tudo o que os gráficos precisam
+- ⬜ Conector Dynamics 365
+- ⬜ Conector HubSpot
 - **Duração**: 2-3 sessões
 
-### **Sprint 2** — Dashboard & CRM
-- ✅ Endpoint de métricas
-- ✅ UI do dashboard (aba nova)
-- ✅ Conector Dynamics 365
-- ✅ Conector HubSpot
+### **Sprint 3 — WhatsApp**
+- ✅ Orquestrador, portão, brain e persistência
+- ✅ Testes de cliente, portão, turno e jornada
+- ⬜ Painel de conversas (aba no app)
+- ⬜ Handoff com contexto para o humano
+- ⬜ Meta approval + submissão
 - **Duração**: 2-3 sessões
 
-### **Sprint 3** — WhatsApp
-- ✅ Testes de orchestrator + brain
-- ✅ UI de conversas
-- ✅ Handoff automático
-- ✅ Meta approval + submissão
+### **Sprint 4 — Landing & IA**
+- ✅ Integração Claude API + resumo executivo
+- ⬜ Landing Page V3 (design, scrollytelling, copy)
+- ⬜ Roteiro de ligação personalizado
 - **Duração**: 2-3 sessões
 
-### **Sprint 4** — Landing & IA
-- ✅ Landing Page V3 (completa)
-- ✅ AI Insights (resumo + roteiro)
-- ✅ Integração Claude API
-- **Duração**: 2-3 sessões
-
-### **Sprint 5** — Provedores & Polish
-- ✅ Provedores premium (Dropcontact, Apollo)
-- ✅ Segurança & compliance (rate limit, anti-SSRF, LGPD)
-- ✅ Testes completos
-- ✅ Documentação
+### **Sprint 5 — Provedores & Polish**
+- ✅ Anti-SSRF, rate limit por usuário, criptografia, LGPD
+- ⬜ Fixture real da Lusha (ferramenta pronta; falta a chave)
+- ⬜ Provedores premium (Dropcontact, Apollo)
+- ⬜ CI/CD (ruff, mypy, pytest, bandit)
+- ⬜ Suíte determinística (ver instabilidade de WhatsApp em Testes)
 - **Duração**: 2-3 sessões
 
 ### **Ongoing**
@@ -679,24 +796,30 @@
 
 ## 📊 PRÓXIMAS AÇÕES
 
-**Hoje (2026-09-06):**
-1. [ ] Priorizar qual sprint começar (recomendação: Sprint 1)
-2. [ ] Criar issues no GitHub por feature
-3. [ ] Alocar tempo com a equipe
-4. [ ] Setup de CI/CD se não tiver
+**Feito em 2026-09-07:**
+- [x] Lead scoring completo — régua, colunas, migração `0015`, cálculo na
+      coleta, recálculo pós-decisores, `POST /leads/{id}/rescore`, ordenação e
+      filtro na listagem, badge, popover de detalhamento e métricas do dashboard
+- [x] Anti-SSRF revalidando cada salto de redirect (`safe_get`)
+- [x] `scripts/capturar_fixtures_lusha.py` — fecha a §11 num comando
+- [x] Este checklist conferido linha a linha contra o código
 
-**Esta semana:**
-- [ ] Migração Alembic para `activities` table
-- [ ] Endpoint `POST /api/leads/{id}/activities`
-- [ ] UI de atividades (timeline)
+**Próximo (Sprint 2):**
+1. [ ] **UI do dashboard** — é o maior retorno agora: o endpoint já entrega
+       KPIs, funil, distribuição por prioridade e score médio, e nada disso
+       aparece na tela
+2. [ ] Conector Dynamics 365 (OAuth2 via Entra ID)
+3. [ ] Conector HubSpot
 
-**Este mês:**
-- [ ] Scoring com popover
-- [ ] Pipeline kanban
-- [ ] Regras automáticas (meeting_scheduled, follow-ups)
-- [ ] `.ics` generation
+**Dívidas que valem uma sessão curta:**
+- [ ] Suíte de testes determinística (instabilidade de WhatsApp — ver Testes)
+- [ ] CI/CD: ruff + mypy + pytest na PR
+- [ ] Fixture real da Lusha, quando houver uma chave à mão (1 crédito)
 
 ---
 
-**Última atualização**: 2026-09-06 por Claude  
-**Mantido em**: `/docs/CHECKLIST_PENDENCIAS.md`
+**Última atualização**: 2026-09-07 por Claude  
+**Mantido em**: a raiz do repositório — `CHECKLIST_PENDENCIAS.md`
+(a versão anterior dizia `/docs/`, onde o arquivo não está).
+A versão em HTML (`CHECKLIST_PENDENCIAS.html`) é escrita à mão e espelha este
+arquivo; ao editar um, atualize o outro.

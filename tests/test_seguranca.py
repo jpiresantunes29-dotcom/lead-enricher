@@ -234,3 +234,140 @@ def test_health_reporta_schema(raw_client):
     dados = raw_client.get("/health").json()
     assert dados["status"] == "ok"
     assert dados["schema_ok"] is True
+
+
+# ── SSRF ─────────────────────────────────────────────────────────────────────
+#
+# O domínio pesquisado é entrada do usuário e vira um GET no servidor. A
+# checagem da URL inicial (`is_public_url`) já existia; o que faltava era o
+# resto da cadeia — `allow_redirects=True` seguia o `Location` sem validar, e
+# um domínio público respondendo 302 para a rede interna passava por dentro do
+# guard. Estes testes são a trava desse caminho.
+
+class _RespostaFalsa:
+    """Só o que `safe_get` e seus chamadores tocam."""
+
+    def __init__(self, status=200, location=None, url="https://exemplo.com/"):
+        self.status_code = status
+        self.headers = {"location": location} if location else {}
+        self.url = url
+        self.text = "<html><title>ok</title></html>"
+        self.fechada = False
+
+    def close(self):
+        self.fechada = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        self.close()
+
+    def raise_for_status(self):
+        pass
+
+    def iter_content(self, n):
+        yield b"<html><title>ok</title></html>"
+
+
+def _rede(monkeypatch, respostas, publicos):
+    """Falsifica DNS e HTTP: `publicos` é o conjunto de hosts que resolvem para IP público."""
+    from services import _utils
+
+    chamadas = []
+
+    def falso_get(url, **kwargs):
+        chamadas.append(url)
+        return respostas[url]
+
+    monkeypatch.setattr(_utils.requests, "get", falso_get)
+    monkeypatch.setattr(_utils, "is_public_host", lambda host: host in publicos)
+    return chamadas
+
+
+# Alvos internos que um atacante tentaria alcançar via redirect. Todos
+# EXISTEM no dicionário de respostas de propósito: se o guard cair, o fetch tem
+# para onde ir e o teste falha de verdade — sem isso ele passaria por acidente,
+# morrendo num KeyError que o `except Exception` do chamador engoliria.
+ALVOS_INTERNOS = [
+    "http://169.254.169.254/latest/meta-data/",  # metadata da nuvem (credenciais)
+    "http://10.0.0.5/admin",                     # rede privada
+    "http://127.0.0.1:8000/",                    # loopback: a própria aplicação
+    "http://192.168.1.1/",                       # roteador da rede local
+]
+
+
+@pytest.mark.parametrize("interno", ALVOS_INTERNOS)
+def test_redirect_para_rede_interna_e_bloqueado(monkeypatch, interno):
+    """
+    O ataque: domínio público responde 302 para um alvo interno. A checagem da
+    URL inicial passa (o domínio é público de verdade) e o destino nunca seria
+    validado se os redirects fossem seguidos pelo `requests`.
+    """
+    from services._utils import safe_get
+
+    respostas = {
+        "https://empresa.com/": _RespostaFalsa(302, interno),
+        interno: _RespostaFalsa(200, url=interno),  # alcançável, se deixarem
+    }
+    chamadas = _rede(monkeypatch, respostas, publicos={"empresa.com"})
+
+    assert safe_get("https://empresa.com/") is None
+    # O que realmente importa: o salto interno nunca chegou a ser buscado.
+    assert chamadas == ["https://empresa.com/"]
+
+
+def test_redirect_relativo_para_host_publico_e_seguido(monkeypatch):
+    """A defesa não pode quebrar o caso normal: redirect legítimo continua funcionando."""
+    from services._utils import safe_get
+
+    respostas = {
+        "https://empresa.com/": _RespostaFalsa(301, "/sobre"),
+        "https://empresa.com/sobre": _RespostaFalsa(200, url="https://empresa.com/sobre"),
+    }
+    _rede(monkeypatch, respostas, publicos={"empresa.com"})
+
+    resp = safe_get("https://empresa.com/")
+    assert resp is not None and resp.status_code == 200
+
+
+def test_cadeia_de_redirect_longa_demais_desiste(monkeypatch):
+    """Laço de redirect não pode segurar a função serverless até o timeout."""
+    from services import _utils
+
+    class Laco(dict):
+        def __getitem__(self, url):
+            return _RespostaFalsa(302, "https://empresa.com/")
+
+    _rede(monkeypatch, Laco(), publicos={"empresa.com"})
+    assert _utils.safe_get("https://empresa.com/") is None
+
+
+def test_salto_intermediario_e_fechado(monkeypatch):
+    """Com stream=True, não fechar o salto deixa a conexão pendurada até o GC."""
+    from services._utils import safe_get
+
+    meio = _RespostaFalsa(302, "https://empresa.com/final")
+    respostas = {
+        "https://empresa.com/": meio,
+        "https://empresa.com/final": _RespostaFalsa(200),
+    }
+    _rede(monkeypatch, respostas, publicos={"empresa.com"})
+
+    safe_get("https://empresa.com/", stream=True)
+    assert meio.fechada is True
+
+
+def test_scraper_nao_segue_redirect_para_rede_interna(monkeypatch):
+    """A defesa vale no caminho real do produto, não só na função isolada."""
+    from services import scraper
+
+    interno = "http://127.0.0.1:8000/"
+    respostas = {
+        "https://empresa.com": _RespostaFalsa(302, interno),
+        interno: _RespostaFalsa(200, url=interno),  # alcançável, se deixarem
+    }
+    chamadas = _rede(monkeypatch, respostas, publicos={"empresa.com"})
+
+    assert scraper._fetch("https://empresa.com") is None
+    assert chamadas == ["https://empresa.com"]

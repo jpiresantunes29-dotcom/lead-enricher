@@ -2102,7 +2102,13 @@ body{
 .export-formats .btn-outline{justify-content:center;padding:13px 20px;font-size:14px}
 
 /* ── Resumo rápido do lead (popup) ── */
-.lead-summary-modal{max-width:490px;text-align:left}
+/* Mesmo motivo do .auth-card: o detalhamento da nota tem 15 sinais em três
+   grupos e passa da altura da tela. Sem rolagem própria, os últimos sinais e
+   o rodapé ficam inalcançáveis — o cartão transborda para fora da viewport. */
+.lead-summary-modal{
+  max-width:490px;text-align:left;
+  max-height:calc(100vh - 40px);overflow-y:auto;
+}
 .ls-hdr{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px;padding-right:24px}
 .ls-co{display:flex;align-items:center;gap:12px;min-width:0}
 .ls-rows{display:flex;flex-direction:column}
@@ -2340,3 +2346,74 @@ body{
 .lu-linha{font-size:11.5px;color:var(--text-3)}
 .lu-linha strong{color:var(--text-2)}
 .lu-nota{font-size:11px;color:var(--text-3);line-height:1.4;margin-top:2px}
+
+/* ── Prioridade do lead (services/lead_scorer.py) ────────────────────────────
+   O badge é a única coisa que o vendedor olha antes de decidir em quem ligar,
+   então ele carrega o número (comparável) e a cor (escaneável) juntos — cor
+   sozinha não distingue 71 de 98, número sozinho não se lê de relance numa
+   lista de cem linhas. */
+.score-badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 10px;border-radius:999px;
+  font-family:'Plus Jakarta Sans',sans-serif;
+  font-size:12.5px;font-weight:800;line-height:1;
+  border:1px solid transparent;white-space:nowrap;
+}
+.score-badge .score-dot{font-size:9px;line-height:1}
+.score-badge.alta{background:var(--err-bg);color:var(--err);border-color:var(--err-border)}
+.score-badge.media{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-border)}
+.score-badge.baixa{background:var(--info-bg);color:var(--info);border-color:var(--info-border)}
+button.score-badge{cursor:pointer;font:inherit;font-weight:800;transition:filter .15s,transform .15s}
+button.score-badge:hover{filter:brightness(.96);transform:translateY(-1px)}
+/* "por quê?" só aparece quando há espaço: na tabela do histórico ele viraria
+   ruído em cem linhas, no cabeçalho da ficha é o convite para abrir. */
+.score-badge .score-why{
+  font-size:10px;font-weight:700;opacity:.75;
+  text-transform:uppercase;letter-spacing:.04em;
+  padding-left:6px;margin-left:2px;border-left:1px solid currentColor;
+}
+.td-score .score-why{display:none}
+.td-score{white-space:nowrap}
+
+/* Detalhamento — a resposta a "por que 47?" */
+.score-detail-hdr{display:flex;align-items:center;gap:16px;margin-bottom:6px}
+.score-big{
+  display:flex;align-items:baseline;gap:2px;
+  padding:10px 16px;border-radius:12px;border:1px solid transparent;
+  font-family:'Plus Jakarta Sans',sans-serif;
+}
+.score-big span{font-size:32px;font-weight:800;line-height:1}
+.score-big small{font-size:13px;font-weight:700;opacity:.6}
+.score-big.alta{background:var(--err-bg);color:var(--err);border-color:var(--err-border)}
+.score-big.media{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-border)}
+.score-big.baixa{background:var(--info-bg);color:var(--info);border-color:var(--info-border)}
+.score-detail-prio{font-size:14px;font-weight:700;color:var(--text)}
+.score-detail-sub{font-size:12px;color:var(--text-3);margin-top:3px}
+.score-detail-help{
+  font-size:12.5px;color:var(--text-2);line-height:1.55;
+  margin:10px 0 18px;padding:10px 12px;
+  background:var(--surface);border-radius:8px;border:1px solid var(--border);
+}
+.score-group{margin-bottom:18px}
+.score-group-hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.score-group-name{font-size:13px;font-weight:700;color:var(--text)}
+.score-group-pts{font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+.score-bar{height:5px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-bottom:10px}
+.score-bar span{display:block;height:100%;background:var(--accent);border-radius:999px}
+.score-sig{
+  display:flex;align-items:flex-start;gap:9px;
+  padding:6px 0;border-top:1px solid var(--border);
+}
+.score-sig-chk{color:var(--ok);font-weight:800;font-size:12px;width:13px;flex-shrink:0;line-height:1.5}
+.score-sig-txt{flex:1;display:flex;flex-direction:column;gap:1px;min-width:0}
+.score-sig-txt strong{font-size:12.5px;font-weight:650;color:var(--text)}
+.score-sig-txt small{font-size:11.5px;color:var(--text-3)}
+.score-sig-pts{
+  font-size:12.5px;font-weight:700;color:var(--text);flex-shrink:0;
+  font-variant-numeric:tabular-nums;
+}
+.score-sig-pts small{font-size:10.5px;font-weight:600;color:var(--text-3)}
+/* O que não pontuou continua legível de propósito: é a lista do que buscar em
+   seguida para o lead subir, não um rodapé de erros a ser escondido. */
+.score-sig.miss{opacity:.55}
+.score-sig.miss .score-sig-chk{color:var(--text-3)}

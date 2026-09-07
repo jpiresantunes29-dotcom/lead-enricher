@@ -13,6 +13,7 @@ from models.schemas import (
 )
 from services import enrichment_service
 from services.decision_finder import find_decision_makers
+from services.lead_scorer import apply_score
 from services.providers import lusha, lusha_prospecting
 from middleware.auth import get_current_user, rate_limit_key
 from routers.auth import get_or_create_profile
@@ -159,6 +160,19 @@ def buscar_decisores(
     db.commit()
     for dm in saved:
         db.refresh(dm)
+    db.refresh(lead)
+
+    # Repontua: decisor com e-mail verificado e telefone é o eixo de maior peso
+    # da régua, então a nota calculada na coleta está desatualizada no instante
+    # em que esta busca termina. Recalcular aqui é o que faz a ficha subir na
+    # lista assim que ela vira acionável, sem o usuário pedir.
+    #
+    # Depois do commit, e lendo da relação em vez de `saved`: a ficha pode já
+    # ter decisores de uma busca anterior, e pontuar só os desta rodada daria
+    # uma nota menor do que a ficha merece. `lead.decision_makers` é a única
+    # fonte que enxerga os dois grupos.
+    apply_score(lead, decision_makers=list(lead.decision_makers))
+    db.commit()
     db.refresh(lead)
 
     return DecisoresResponse(
