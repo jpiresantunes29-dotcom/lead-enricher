@@ -151,3 +151,55 @@ def test_popular_contacts_filtra_sem_linkedin(client):
     assert len(dados["decisores"]) == 1
     assert dados["decisores"][0]["name"] == "Com LinkedIn"
     assert "linkedin.com/in/" in dados["decisores"][0]["linkedin_url"]
+
+
+def test_popular_contacts_usa_lusha_company_api(client):
+    """Valida que usa a API /v2/company do Lusha quando conectado"""
+    from unittest.mock import patch
+    
+    # Mock da resposta do Lusha /company (lista de contatos da empresa)
+    _LUSHA_COMPANY_MOCK = [
+        {
+            "provider": "lusha",
+            "name": "Satya Nadella",
+            "title": "CEO",
+            "emails": [{"email": "satya@microsoft.com", "status": "unknown", "confidence": 92}],
+            "phones": [{"e164": "+1 4258828080", "formatted": "(425) 882-8080", "type": "mobile", "confidence": 92}],
+            "linkedin_url": "https://www.linkedin.com/in/satya-nadella",
+        },
+        {
+            "provider": "lusha",
+            "name": "Bill Gates",
+            "title": "Founder",
+            "emails": [{"email": "bgates@microsoft.com", "status": "unknown", "confidence": 92}],
+            "phones": [{"e164": "+1 4257231580", "formatted": "(425) 723-1580", "type": "mobile", "confidence": 92}],
+            "linkedin_url": "https://www.linkedin.com/in/william-h-gates-iii",
+        },
+    ]
+    
+    # 1. Enriquecer um lead
+    with patch("services.enrichment_service.enrich_company", return_value=MOCK_ENRICH_RESULT):
+        resp = client.post("/api/enrich", json={"domain": "microsoft.com"})
+    
+    lead = resp.json()["data"]
+
+    # 2. Chamar popular-contacts com Lusha mockado (chave presente + resultado)
+    with patch("routers.enrichment._lusha_key_utilizavel", return_value="fake-lusha-key"), \
+         patch("routers.enrichment.lusha.find_company_contacts", return_value=_LUSHA_COMPANY_MOCK):
+        resp = client.get(f"/api/leads/{lead['id']}/popular-contacts")
+    
+    assert resp.status_code == 200
+    dados = resp.json()
+    
+    # 3. Verificar que retornou dados do Lusha (completos com phone)
+    assert dados["success"] is True
+    assert len(dados["decisores"]) == 2
+    
+    # Satya deve ter phone completo (E.164)
+    satya = next(d for d in dados["decisores"] if d["name"] == "Satya Nadella")
+    assert satya["phone"] == "+1 4258828080"
+    assert satya["title_found"] == "CEO"
+    
+    # Bill também deve estar lá
+    bill = next(d for d in dados["decisores"] if d["name"] == "Bill Gates")
+    assert bill["phone"] == "+1 4257231580"

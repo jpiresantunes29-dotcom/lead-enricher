@@ -173,7 +173,7 @@ def popular_contacts(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Contatos populares da empresa — founders, executives, directors."""
+    """Contatos populares da empresa — todos os contatos do Lusha se disponível."""
     user_id = current_user.get("sub")
     lead = db.query(Lead).filter(Lead.id == lead_id, Lead.user_id == user_id).first()
     if not lead:
@@ -181,28 +181,58 @@ def popular_contacts(
 
     profile = get_or_create_profile(db, user_id)
 
-    # Cargos executivos e fundadores — quanto menor a lista, melhor a chance de
-    # trazer gente realmente importante da empresa.
-    cargos = ["founder", "ceo", "cto", "cfo", "vp", "president", "executive"]
+    chave_lusha = _lusha_key_utilizavel(profile)
+    results = []
 
-    try:
-        results = find_decision_makers(
-            domain=lead.domain or lead.raw_input_domain,
-            company_name=lead.company_name,
-            roles=cargos,
-            limit=15,
-            linkedin_url=lead.linkedin_url,
-            db=db,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao buscar contatos: {e}")
+    # PRIORIDADE 1: Se tem Lusha, puxar TODOS os contatos da empresa
+    if chave_lusha:
+        try:
+            lusha_contacts = lusha.find_company_contacts(
+                domain=lead.domain or lead.raw_input_domain,
+                api_key=chave_lusha,
+                limit=50,
+            )
+            if lusha_contacts:
+                # Converter resposta Lusha para formato de decisor
+                for c in lusha_contacts:
+                    emails = c.get("emails", [])
+                    phones = c.get("phones", [])
+                    result_item = {
+                        "name": c.get("name"),
+                        "title_found": c.get("title"),
+                        "title_searched": c.get("title"),
+                        "linkedin_url": c.get("linkedin_url"),
+                        "probable_emails": emails,
+                        "phone": phones[0].get("e164") if phones else None,
+                        "match_confidence": "high",
+                        "snippet": f"{c.get('title', '')} at {lead.company_name or lead.domain}",
+                    }
+                    results.append(result_item)
+                logger.info("Lusha company search retornou %d contatos para %s", len(results), lead.domain)
+        except Exception as e:
+            logger.error("Erro ao buscar contatos no Lusha: %s", e)
+            # Fallback para método gratuito
 
-    # FILTRO DE FIDELIDADE: só guarda quem tem LinkedIn verificado
-    # (elimina contatos de busca sem validação e ex-funcionários)
-    results = [
-        r for r in results
-        if r.get("linkedin_url") and "linkedin.com/in/" in r.get("linkedin_url", "").lower()
-    ]
+    # FALLBACK: Se não tem Lusha ou Lusha falhou, usar find_decision_makers
+    if not results:
+        cargos = ["founder", "ceo", "cto", "cfo", "vp", "president", "executive"]
+        try:
+            results = find_decision_makers(
+                domain=lead.domain or lead.raw_input_domain,
+                company_name=lead.company_name,
+                roles=cargos,
+                limit=15,
+                linkedin_url=lead.linkedin_url,
+                db=db,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Erro ao buscar contatos: {e}")
+
+        # FILTRO DE FIDELIDADE: só guarda quem tem LinkedIn verificado
+        results = [
+            r for r in results
+            if r.get("linkedin_url") and "linkedin.com/in/" in r.get("linkedin_url", "").lower()
+        ]
 
     saved = []
     for r in results:
@@ -220,28 +250,12 @@ def popular_contacts(
         db.add(dm)
         saved.append(dm)
 
-    # Lusha: preencher telefone para quem ficou sem
-    chave_lusha = _lusha_key_utilizavel(profile)
-    if chave_lusha:
-        for dm in saved:
-            if dm.phone:
-                continue
-            achado = lusha.find_contacts(
-                full_name=dm.name,
-                domain=lead.domain or lead.raw_input_domain,
-                company_name=lead.company_name,
-                linkedin_url=dm.linkedin_url,
-                api_key=chave_lusha,
-            )
-            if achado and achado.get("phones"):
-                dm.phone = achado["phones"][0]["e164"]
-
     db.commit()
     for dm in saved:
         db.refresh(dm)
 
     return DecisoresResponse(
         success=True,
-        message=f"{len(saved)} contato(s) popular(es) encontrado(s).",
+        message=f"{len(saved)} contato(s) encontrado(s).",
         decisores=[DecisionMakerOut.model_validate(d) for d in saved],
     )
