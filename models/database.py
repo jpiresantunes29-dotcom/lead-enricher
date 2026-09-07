@@ -158,6 +158,41 @@ class DecisionMaker(Base):
     phone = Column(String(100))
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
+    # ── Contato vindo da Lusha Prospecting ──────────────────────────────────
+    #
+    # A Prospecting API separa listar de revelar: listar 25 contatos custa 1
+    # crédito, revelar o telefone de UM custa 5. Estes campos são o que permite
+    # popular a tela inteira barato e cobrar só o que o usuário clicar.
+
+    #: ID criptografado do contato na Lusha (formato "v1.AbCd..."). Tratado como
+    #: string opaca — é a única chave que permite revelar depois.
+    lusha_contact_id = Column(String(64), index=True, nullable=True)
+
+    #: Já gastou crédito revelando? Revelar duas vezes cobra duas vezes, então
+    #: esta coluna é o que impede o segundo clique de custar de novo.
+    revealed = Column(Boolean, default=False, nullable=True)
+
+    #: `canReveal[]` do search: quais campos este contato deixa revelar e por
+    #: quanto. Fonte da verdade do botão — pedir no enrich um campo que não está
+    #: aqui é 400.
+    can_reveal = Column(JSON, nullable=True)
+
+    #: Contagem por tipo de dado, para os badges do card.
+    data_points = Column(JSON, nullable=True)
+
+    department = Column(String(100), nullable=True)
+    seniority = Column(String(50), nullable=True)
+
+    #: Localização real do contato. Antes a tela escrevia "São Paulo, Brazil"
+    #: fixo no JavaScript, o que estava errado para todo mundo fora de SP.
+    location = Column(String(255), nullable=True)
+
+    company_industries = Column(JSON, nullable=True)
+
+    #: "lusha" ou "free". Sem isso não dá para distinguir "a Lusha não tinha
+    #: este contato" de "a Lusha nunca foi consultada".
+    source = Column(String(20), nullable=True)
+
     lead = orm_relationship("Lead", back_populates="decision_makers")
 
 
@@ -761,7 +796,7 @@ class WhatsAppConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "c5a71f0e3b92"
+ALEMBIC_HEAD = "7d3c1a94ef60"
 
 
 def _stamp_alembic_head() -> None:

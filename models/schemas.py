@@ -41,6 +41,19 @@ class DecisionMakerOut(BaseModel):
     match_confidence: Optional[str] = None
     phone: Optional[str] = None
 
+    # ── Prospecting ────────────────────────────────────────────────────────
+    # `lusha_contact_id` sai de propósito: é a chave que gasta crédito de quem
+    # a tiver, e a tela não precisa dela — quem revela é o backend, pelo id
+    # interno do contato.
+    revealed: Optional[bool] = None
+    can_reveal: Optional[List[Any]] = None
+    data_points: Optional[Dict[str, Any]] = None
+    department: Optional[str] = None
+    seniority: Optional[str] = None
+    location: Optional[str] = None
+    company_industries: Optional[List[Any]] = None
+    source: Optional[str] = None
+
     @computed_field
     @property
     def phone_is_mobile(self) -> Optional[bool]:
@@ -110,6 +123,42 @@ class DecisoresResponse(BaseModel):
     success: bool
     message: str
     decisores: List[DecisionMakerOut] = []
+
+
+class ContatosResponse(BaseModel):
+    """
+    Lista paginada de contatos de uma empresa.
+
+    Carrega `fonte` porque as duas origens têm garantias diferentes e a tela
+    precisa explicar isso: o caminho pago devolve contatos verificados com
+    e-mail e celular reveláveis; o gratuito devolve quem foi possível achar em
+    fonte pública, sem celular. Esconder qual respondeu faria o usuário
+    culpar o produto por um limite que é da fonte.
+    """
+    success: bool
+    message: str
+    fonte: str                    # lusha | free
+    total: int = 0
+    page: int = 0
+    page_size: int = 20
+    contatos: List[DecisionMakerOut] = []
+    erro: Optional[str] = None    # preenchido quando a Lusha recusou
+
+
+class RevelarRequest(BaseModel):
+    #: ["emails"] | ["phones"] | None (= tudo que `canReveal` permitir).
+    #: Existe para o usuário poder pagar 1 crédito por e-mail sem pagar os 5
+    #: do telefone.
+    reveal: Optional[List[str]] = None
+
+
+class RevelarResponse(BaseModel):
+    success: bool
+    message: str
+    contato: Optional[DecisionMakerOut] = None
+    #: True quando o dado já estava gravado e nenhum crédito foi gasto.
+    ja_revelado: bool = False
+    creditos_gastos: Optional[int] = None
 
 
 # ── Execução comercial ────────────────────────────────────────────────────────
