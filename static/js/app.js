@@ -2186,12 +2186,51 @@ async function loadPopularContacts(){
   if(!list)return;
   list.innerHTML=`<div class="muted-box">Carregando contatos populares da empresa…</div>`;
   try{
-    const cargos=['founder','ceo','cto','cfo','vp','president','director','manager'];
-    const resp=await authFetch('/api/decisores',{method:'POST',body:JSON.stringify({lead_id:currentLeadId,roles:cargos})});
+    const resp=await authFetch(`/api/leads/${currentLeadId}/popular-contacts`);
     const json=await resp.json();
     if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">Nenhum contato encontrado.</div>`;return;}
-    renderDecisoresV2(json.decisores);
+    renderLushaContacts(json.decisores);
   }catch(e){list.innerHTML='<div class="muted-box">Erro ao carregar contatos.</div>';}
+}
+
+/* Renderiza contatos estilo Lusha — visual compacto, vertical */
+function renderLushaContacts(list){
+  const root=document.getElementById('decisores-list');
+  if(!list||!list.length){root.innerHTML=`<div class="empty-state-box"><div class="empty-title">Nenhum contato encontrado</div></div>`;return;}
+
+  root.innerHTML=list.map(p=>{
+    const init=(p.name||'?').trim()[0].toUpperCase();
+    const li=p.linkedin_url?`<a class="lusha-li" href="${esc(p.linkedin_url)}" target="_blank" rel="noopener">in</a>`:'';
+    const melhorEmail=(p.probable_emails||[])[0];
+    const email=typeof melhorEmail==='string'?melhorEmail:melhorEmail?.email;
+    const titulo=p.title_found||p.title_searched||'';
+
+    return `<div class="lusha-card">
+      <div class="lusha-head">
+        <div class="lusha-ava">${init}</div>
+        <div class="lusha-info">
+          <div class="lusha-name">${esc(p.name||'—')}${li}</div>
+          ${titulo?`<div class="lusha-title">${esc(titulo)}</div>`:''}
+          <div class="lusha-location">São Paulo, Brazil</div>
+        </div>
+      </div>
+      <div class="lusha-data">
+        ${p.phone?`<div class="lusha-row">
+          <span class="lusha-row-ic">📱</span>
+          <span>${esc(p.phone)}</span>
+        </div>`:''}
+        ${email?`<div class="lusha-row">
+          <span class="lusha-row-ic">✉</span>
+          <span>${esc(email)}</span>
+        </div>`:''}
+      </div>
+      <div class="lusha-actions">
+        <button class="lusha-action-btn" onclick="alert('CRM: ${esc(p.name||'contato')}')" title="Enviar para CRM">CRM</button>
+        <button class="lusha-action-btn" onclick="editDecPhone(${p.id})" title="Copiar telefone">Copiar</button>
+        <button class="lusha-action-btn" onclick="alert('Email: ${esc(email||'não encontrado')}')" title="Enviar email">Email</button>
+      </div>
+    </div>`;
+  }).join('')+'<style>.muted-box{display:none!important}</style>';
 }
 
 async function searchDecisores(){

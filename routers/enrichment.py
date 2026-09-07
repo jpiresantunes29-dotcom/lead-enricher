@@ -163,3 +163,78 @@ def buscar_decisores(
         message=f"{len(saved)} decisor(es) encontrado(s)." if saved else "Nenhum decisor encontrado para os cargos informados.",
         decisores=[DecisionMakerOut.model_validate(d) for d in saved],
     )
+
+
+@router.get("/leads/{lead_id}/popular-contacts", response_model=DecisoresResponse)
+@limiter.limit("20/minute")
+def popular_contacts(
+    request: Request,
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Contatos populares da empresa — founders, executives, directors."""
+    user_id = current_user.get("sub")
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.user_id == user_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead não encontrado.")
+
+    profile = get_or_create_profile(db, user_id)
+
+    # Cargos executivos e fundadores — quanto menor a lista, melhor a chance de
+    # trazer gente realmente importante da empresa.
+    cargos = ["founder", "ceo", "cto", "cfo", "vp", "president", "executive"]
+
+    try:
+        results = find_decision_makers(
+            domain=lead.domain or lead.raw_input_domain,
+            company_name=lead.company_name,
+            roles=cargos,
+            limit=15,
+            linkedin_url=lead.linkedin_url,
+            db=db,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar contatos: {e}")
+
+    saved = []
+    for r in results:
+        dm = DecisionMaker(
+            lead_id=lead.id,
+            name=r.get("name"),
+            title_searched=r.get("title_searched"),
+            title_found=r.get("title_found"),
+            snippet=r.get("snippet"),
+            linkedin_url=r.get("linkedin_url"),
+            probable_emails=r.get("probable_emails"),
+            match_confidence=r.get("match_confidence"),
+            phone=r.get("phone"),
+        )
+        db.add(dm)
+        saved.append(dm)
+
+    # Lusha: preencher telefone para quem ficou sem
+    chave_lusha = _lusha_key_utilizavel(profile)
+    if chave_lusha:
+        for dm in saved:
+            if dm.phone:
+                continue
+            achado = lusha.find_contacts(
+                full_name=dm.name,
+                domain=lead.domain or lead.raw_input_domain,
+                company_name=lead.company_name,
+                linkedin_url=dm.linkedin_url,
+                api_key=chave_lusha,
+            )
+            if achado and achado.get("phones"):
+                dm.phone = achado["phones"][0]["e164"]
+
+    db.commit()
+    for dm in saved:
+        db.refresh(dm)
+
+    return DecisoresResponse(
+        success=True,
+        message=f"{len(saved)} contato(s) popular(es) encontrado(s).",
+        decisores=[DecisionMakerOut.model_validate(d) for d in saved],
+    )
