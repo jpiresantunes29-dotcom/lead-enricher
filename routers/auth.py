@@ -114,7 +114,32 @@ def status_lusha(
     onde ela pode vazar.
     """
     profile = get_or_create_profile(db, current_user.get("sub"))
-    return {"conectado": _lusha_conectado(profile)}
+    conectado = _lusha_conectado(profile)
+    if not conectado:
+        return {"conectado": False}
+
+    # Saldo junto do status porque a tela precisa avisar ANTES: descobrir que
+    # o crédito acabou no meio de uma revelação é descobrir tarde demais — o
+    # usuário já clicou esperando o dado. A consulta de uso não custa crédito.
+    from routers.extension import _lusha_key_utilizavel
+    from services.providers import lusha_prospecting
+
+    resposta = {"conectado": True, "creditos": None, "limites": None}
+    chave = _lusha_key_utilizavel(profile)
+    if chave:
+        uso = lusha_prospecting.get_account_usage(chave)
+        if uso:
+            resposta["creditos"] = {
+                "restantes": uso.get("creditos_restantes"),
+                "usados": uso.get("creditos_usados"),
+                "total": uso.get("creditos_total"),
+            }
+            resposta["limites"] = uso.get("limites")
+    # `creditos` nulo significa "não deu para consultar agora", não "zero".
+    # A tela precisa dessa diferença para não acusar o usuário de estar sem
+    # crédito quando na verdade a Lusha é que não respondeu.
+    resposta["precos"] = lusha_prospecting.PRICING
+    return resposta
 
 
 @router.put("/me/lusha")
