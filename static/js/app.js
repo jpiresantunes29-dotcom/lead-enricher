@@ -2179,58 +2179,278 @@ async function savePhone(){
 
 function setRole(v){const el=document.getElementById('role-input');if(el)el.value=v;}
 
-/* MVP: carrega contatos populares automaticamente ao abrir uma empresa */
+/* ══════ CONTATOS DA EMPRESA (Lusha Prospecting) ══════
+
+   A API separa listar de revelar, e a tela reflete isso: os cards chegam com
+   nome, cargo e localização já visíveis (listar 25 custa 1 crédito), e cada um
+   tem um botão que revela e-mail/telefone (1 e 5 créditos, respectivamente).
+   Revelar acontece um contato por vez, sob clique — nunca em lote, nunca em
+   segundo plano. O crédito é da conta Lusha do próprio usuário.
+
+   Sem chave conectada nada disso chama a Lusha: a lista vem do caminho
+   gratuito e a tela diz de onde veio. */
+
+const _prosp={
+  page:0, pageSize:20, total:0, fonte:'free', contatos:[], erro:null,
+  cargo:'', senioridade:new Set(), departamentos:new Set(), dataPoints:new Set(),
+  vocab:null, carregando:false,
+};
+
+async function _prospVocab(){
+  if(_prosp.vocab)return _prosp.vocab;
+  try{
+    const resp=await authFetch('/api/lusha/filters');
+    _prosp.vocab=await resp.json();
+  }catch(e){
+    // Sem o vocabulário a sidebar não aparece, mas a lista continua vindo —
+    // filtro é conveniência, lista é o produto.
+    _prosp.vocab={seniority:[],departments:[],data_points:[],pricing:{}};
+  }
+  return _prosp.vocab;
+}
+
 async function loadPopularContacts(){
   if(!currentLeadId)return;
   const list=document.getElementById('decisores-list');
   if(!list)return;
-  list.innerHTML=`<div class="muted-box">Carregando contatos populares da empresa…</div>`;
-  try{
-    const resp=await authFetch(`/api/leads/${currentLeadId}/popular-contacts`);
-    const json=await resp.json();
-    if(!resp.ok||!json.success){list.innerHTML=`<div class="muted-box">Nenhum contato encontrado.</div>`;return;}
-    renderLushaContacts(json.decisores);
-  }catch(e){list.innerHTML='<div class="muted-box">Erro ao carregar contatos.</div>';}
+  _prosp.page=0;
+  _prosp.cargo='';_prosp.senioridade.clear();_prosp.departamentos.clear();_prosp.dataPoints.clear();
+  await _prospVocab();
+  await _prospBuscar();
 }
 
-/* Renderiza contatos estilo Lusha — visual compacto, vertical */
-function renderLushaContacts(list){
+function _prospQuery(){
+  const q=new URLSearchParams();
+  q.set('page',_prosp.page);
+  q.set('page_size',_prosp.pageSize);
+  if(_prosp.cargo)q.set('job_titles',_prosp.cargo);
+  _prosp.senioridade.forEach(v=>q.append('seniority',v));
+  _prosp.departamentos.forEach(v=>q.append('departments',v));
+  _prosp.dataPoints.forEach(v=>q.append('data_points',v));
+  return q.toString();
+}
+
+async function _prospBuscar(){
+  const list=document.getElementById('decisores-list');
+  if(!list||!currentLeadId)return;
+  _prosp.carregando=true;
+  list.innerHTML='<div class="muted-box">Carregando contatos da empresa…</div>';
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}/contacts?${_prospQuery()}`);
+    const json=await resp.json();
+    if(!resp.ok||!json.success){
+      list.innerHTML=`<div class="muted-box">${esc(json.detail||'Não foi possível carregar os contatos.')}</div>`;
+      return;
+    }
+    _prosp.contatos=json.contatos||[];
+    _prosp.total=json.total||0;
+    _prosp.fonte=json.fonte||'free';
+    _prosp.page=json.page||0;
+    _prosp.pageSize=json.page_size||20;
+    _prosp.erro=json.erro||null;
+    renderProspecting();
+  }catch(e){
+    list.innerHTML='<div class="muted-box">Erro de conexão ao carregar contatos.</div>';
+  }finally{_prosp.carregando=false;}
+}
+
+/* Cada mudança de filtro volta para a primeira página: manter a página atual
+   mostraria "página 3 de 1" e uma lista vazia que parece falha do produto. */
+function prospFiltro(tipo,valor){
+  const alvo={seniority:_prosp.senioridade,dep:_prosp.departamentos,dp:_prosp.dataPoints}[tipo];
+  if(!alvo)return;
+  const v=tipo==='seniority'?Number(valor):valor;
+  if(alvo.has(v))alvo.delete(v);else alvo.add(v);
+  _prosp.page=0;
+  _prospBuscar();
+}
+
+function prospCargo(valor){
+  _prosp.cargo=(valor||'').trim();
+  _prosp.page=0;
+  _prospBuscar();
+}
+
+function prospPagina(delta){
+  const ultima=Math.max(0,Math.ceil(_prosp.total/_prosp.pageSize)-1);
+  const nova=Math.min(ultima,Math.max(0,_prosp.page+delta));
+  if(nova===_prosp.page)return;
+  _prosp.page=nova;
+  _prospBuscar();
+}
+
+function _prospSidebar(){
+  const v=_prosp.vocab||{seniority:[],departments:[],data_points:[]};
+  const chk=(marcado,rotulo,onclick)=>
+    `<label class="pr-chk"><input type="checkbox" ${marcado?'checked':''} onchange="${onclick}"><span>${esc(rotulo)}</span></label>`;
+
+  const sen=(v.seniority||[]).map(s=>
+    chk(_prosp.senioridade.has(s.id),s.pt||s.label,`prospFiltro('seniority',${s.id})`)).join('');
+  const dep=(v.departments||[]).map(d=>
+    chk(_prosp.departamentos.has(d),d,`prospFiltro('dep','${d.replace(/'/g,"\\'")}')`)).join('');
+
+  // Só dois pontos de dados na sidebar, e são os que mudam a decisão de quem
+  // prospecta: "tem celular" e "tem e-mail". Listar os oito nomes técnicos da
+  // API (unknown_phone, no_dnc_phone…) só ocuparia espaço.
+  const dp=[['mobile_phone','Só com celular'],['work_email','Só com e-mail']].map(([k,r])=>
+    chk(_prosp.dataPoints.has(k),r,`prospFiltro('dp','${k}')`)).join('');
+
+  return `<aside class="pr-side">
+    <div class="pr-side-grp">
+      <div class="pr-side-t">Cargo</div>
+      <input class="pr-busca" type="text" placeholder="ex.: Diretor de TI" value="${esc(_prosp.cargo)}"
+             onchange="prospCargo(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();prospCargo(this.value)}">
+    </div>
+    ${dp?`<div class="pr-side-grp"><div class="pr-side-t">Dados</div>${dp}</div>`:''}
+    ${sen?`<div class="pr-side-grp"><div class="pr-side-t">Senioridade</div>${sen}</div>`:''}
+    ${dep?`<div class="pr-side-grp"><div class="pr-side-t">Departamento</div>
+      <div class="pr-side-scroll">${dep}</div></div>`:''}
+  </aside>`;
+}
+
+function _prospBadges(dp){
+  if(!dp)return '';
+  const cel=(dp.mobile_phone||0)+(dp.direct_phone||0);
+  const mail=(dp.work_email||0)+(dp.email||0)+(dp.private_email||0);
+  const out=[];
+  if(cel)out.push(`<span class="pr-badge" title="${cel} telefone(s) disponível(is)">📱${cel>1?`<sup>${cel}</sup>`:''}</span>`);
+  if(mail)out.push(`<span class="pr-badge" title="${mail} e-mail(s) disponível(is)">✉${mail>1?`<sup>${mail}</sup>`:''}</span>`);
+  return out.join('');
+}
+
+function _prospSetores(lista){
+  if(!lista||!lista.length)return '';
+  const mostra=lista.slice(0,2).map(s=>`<span class="pr-tag">${esc(s)}</span>`).join('');
+  const resto=lista.length-2;
+  return `<div class="pr-tags">${mostra}${resto>0?`<span class="pr-tag pr-tag-mais">+${resto}</span>`:''}</div>`;
+}
+
+function _prospCusto(canReveal){
+  if(!canReveal||!canReveal.length)return null;
+  return canReveal.reduce((soma,i)=>soma+(i&&typeof i.credits==='number'?i.credits:0),0);
+}
+
+function _prospCard(p){
+  const init=((p.name||'?').trim()[0]||'?').toUpperCase();
+  const li=p.linkedin_url?`<a class="pr-li" href="${esc(p.linkedin_url)}" target="_blank" rel="noopener" title="Abrir LinkedIn">in</a>`:'';
+  const cargo=p.title_found||p.title_searched||'';
+  const email=(p.probable_emails||[])[0];
+  const endereco=typeof email==='string'?email:(email&&email.email);
+  const custo=_prospCusto(p.can_reveal);
+
+  let acao;
+  if(p.revealed){
+    // Revelado: dado à vista e ações. Nenhuma delas chama a Lusha de novo.
+    const linhas=[];
+    if(p.phone)linhas.push(`<div class="pr-row"><span class="pr-row-ic">📱</span><span class="pr-val">${esc(p.phone)}</span>
+      <button class="pr-copy" onclick="prospCopiar('${esc(p.phone)}')" title="Copiar telefone">copiar</button></div>`);
+    if(endereco)linhas.push(`<div class="pr-row"><span class="pr-row-ic">✉</span><span class="pr-val">${esc(endereco)}</span>
+      <button class="pr-copy" onclick="prospCopiar('${esc(endereco)}')" title="Copiar e-mail">copiar</button></div>`);
+    if(!linhas.length)linhas.push('<div class="pr-row pr-vazio">A Lusha não tinha e-mail nem telefone deste contato.</div>');
+    acao=`<div class="pr-dados">${linhas.join('')}</div>`;
+  }else if(p.source==='lusha'&&p.can_reveal&&p.can_reveal.length){
+    // O custo aparece ANTES do clique. Quem paga tem que saber quanto vai
+    // gastar antes de gastar — 5 créditos por telefone não é detalhe.
+    acao=`<button class="pr-reveal" onclick="prospRevelar(${p.id},this)">Mostrar detalhes${custo?` · ${custo} crédito${custo>1?'s':''}`:''}</button>`;
+  }else if(p.source==='lusha'){
+    acao='<div class="pr-row pr-vazio">Sem e-mail nem telefone revelável.</div>';
+  }else{
+    const linhas=[];
+    if(p.phone)linhas.push(`<div class="pr-row"><span class="pr-row-ic">📱</span><span class="pr-val">${esc(p.phone)}</span></div>`);
+    if(endereco)linhas.push(`<div class="pr-row"><span class="pr-row-ic">✉</span><span class="pr-val">${esc(endereco)}</span>
+      <span class="pr-palpite" title="E-mail deduzido do padrão do domínio, não verificado">palpite</span></div>`);
+    acao=linhas.length?`<div class="pr-dados">${linhas.join('')}</div>`:'';
+  }
+
+  return `<div class="pr-card" id="pr-${p.id}">
+    <div class="pr-head">
+      <div class="pr-ava">${init}</div>
+      <div class="pr-info">
+        <div class="pr-name">${esc(p.name||'—')}${li}${_prospBadges(p.data_points)}</div>
+        ${cargo?`<div class="pr-cargo">${esc(cargo)}</div>`:''}
+        ${p.location?`<div class="pr-loc">${esc(p.location)}</div>`:''}
+        ${_prospSetores(p.company_industries)}
+      </div>
+    </div>
+    ${acao}
+  </div>`;
+}
+
+function _prospRodape(){
+  const ultima=Math.max(1,Math.ceil(_prosp.total/_prosp.pageSize));
+  if(_prosp.total<=_prosp.pageSize)return '';
+  const ini=_prosp.page*_prosp.pageSize+1;
+  const fim=Math.min(_prosp.total,ini+_prosp.contatos.length-1);
+  return `<div class="pr-pag">
+    <button class="pr-pag-btn" ${_prosp.page<=0?'disabled':''} onclick="prospPagina(-1)">Anterior</button>
+    <span class="pr-pag-txt">${ini}–${fim} de ${_prosp.total}</span>
+    <button class="pr-pag-btn" ${_prosp.page>=ultima-1?'disabled':''} onclick="prospPagina(1)">Próxima</button>
+  </div>`;
+}
+
+function renderProspecting(){
   const root=document.getElementById('decisores-list');
-  if(!list||!list.length){root.innerHTML=`<div class="empty-state-box"><div class="empty-title">Nenhum contato encontrado</div></div>`;return;}
+  if(!root)return;
 
-  root.innerHTML=list.map(p=>{
-    const init=(p.name||'?').trim()[0].toUpperCase();
-    const li=p.linkedin_url?`<a class="lusha-li" href="${esc(p.linkedin_url)}" target="_blank" rel="noopener">in</a>`:'';
-    const melhorEmail=(p.probable_emails||[])[0];
-    const email=typeof melhorEmail==='string'?melhorEmail:melhorEmail?.email;
-    const titulo=p.title_found||p.title_searched||'';
+  // A tela diz de onde veio a lista: pago e gratuito têm garantias diferentes,
+  // e esconder isso faria o usuário culpar o produto por um limite da fonte.
+  const fonte=_prosp.fonte==='lusha'
+    ? '<span class="pr-fonte pr-fonte-paga">Lusha · contatos verificados</span>'
+    : '<span class="pr-fonte">Fontes públicas · sem celular</span>';
 
-    return `<div class="lusha-card">
-      <div class="lusha-head">
-        <div class="lusha-ava">${init}</div>
-        <div class="lusha-info">
-          <div class="lusha-name">${esc(p.name||'—')}${li}</div>
-          ${titulo?`<div class="lusha-title">${esc(titulo)}</div>`:''}
-          <div class="lusha-location">São Paulo, Brazil</div>
-        </div>
-      </div>
-      <div class="lusha-data">
-        ${p.phone?`<div class="lusha-row">
-          <span class="lusha-row-ic">📱</span>
-          <span>${esc(p.phone)}</span>
-        </div>`:''}
-        ${email?`<div class="lusha-row">
-          <span class="lusha-row-ic">✉</span>
-          <span>${esc(email)}</span>
-        </div>`:''}
-      </div>
-      <div class="lusha-actions">
-        <button class="lusha-action-btn" onclick="alert('CRM: ${esc(p.name||'contato')}')" title="Enviar para CRM">CRM</button>
-        <button class="lusha-action-btn" onclick="editDecPhone(${p.id})" title="Copiar telefone">Copiar</button>
-        <button class="lusha-action-btn" onclick="alert('Email: ${esc(email||'não encontrado')}')" title="Enviar email">Email</button>
-      </div>
-    </div>`;
-  }).join('')+'<style>.muted-box{display:none!important}</style>';
+  const aviso=_prosp.erro
+    ? `<div class="pr-aviso">${esc(_prosp.erro)}${/Configura/.test(_prosp.erro)?' <a href="/configuracoes">Abrir Configurações</a>':''}</div>`
+    : '';
+
+  const lista=_prosp.contatos.length
+    ? _prosp.contatos.map(_prospCard).join('')
+    : `<div class="empty-state-box"><div class="empty-title">Nenhum contato com esses filtros</div>
+       <div class="empty-sub">Tente remover um filtro da barra ao lado.</div></div>`;
+
+  root.innerHTML=`<div class="pr-wrap">
+    ${_prospSidebar()}
+    <div class="pr-main">
+      <div class="pr-topo">${fonte}</div>
+      ${aviso}
+      <div class="pr-lista">${lista}</div>
+      ${_prospRodape()}
+    </div>
+  </div>`;
+}
+
+async function prospRevelar(id,btn){
+  if(!btn||btn.disabled)return;
+  const rotulo=btn.textContent;
+  btn.disabled=true;btn.textContent='Revelando…';
+  try{
+    const resp=await authFetch(`/api/decision-makers/${id}/reveal`,{method:'POST',body:JSON.stringify({})});
+    const json=await resp.json();
+    if(!resp.ok){
+      // 402 (sem crédito) e 429 (rate limit) pedem ações diferentes; a
+      // mensagem já vem separada do backend.
+      btn.disabled=false;btn.textContent=rotulo;
+      const card=document.getElementById('pr-'+id);
+      if(card&&!card.querySelector('.pr-erro')){
+        const div=document.createElement('div');
+        div.className='pr-erro';div.textContent=json.detail||'Não foi possível revelar.';
+        card.appendChild(div);
+      }
+      return;
+    }
+    const i=_prosp.contatos.findIndex(c=>c.id===id);
+    if(i>=0){
+      _prosp.contatos[i]=json.contato;
+      const card=document.getElementById('pr-'+id);
+      if(card)card.outerHTML=_prospCard(json.contato);
+    }
+  }catch(e){
+    btn.disabled=false;btn.textContent=rotulo;
+  }
+}
+
+function prospCopiar(txt){
+  if(!txt)return;
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(txt);
 }
 
 async function searchDecisores(){
@@ -3060,7 +3280,8 @@ function renderSettings(me,conns,wa,lusha){
             <span class="crm-conn-state on">ativo</span>
             <button class="set-btn danger" onclick="desconectarLusha()">Desconectar</button>
           </div>
-        </div>`
+        </div>
+        ${_lushaSaldo(lusha)}`
         :''}
       <div class="set-form">
         <div class="set-field">
@@ -3154,6 +3375,50 @@ async function disconnectWhatsApp(){
 }
 
 /* ══════ LUSHA: enriquecimento pago (BYOA) ══════ */
+
+/* Saldo e custo à vista em Configurações.
+
+   Os créditos são da conta Lusha DO USUÁRIO — o produto não revende nada. Duas
+   consequências que a tela precisa deixar claras: o saldo é dele, e o custo de
+   cada ação também. Listar contatos é barato (1 crédito por 25); revelar
+   telefone custa 5, ou seja, cinco vezes o e-mail. Quem não sabe disso
+   descobre no extrato. */
+function _lushaSaldo(lusha){
+  if(!lusha||!lusha.conectado)return '';
+  const c=lusha.creditos;
+  const p=lusha.precos||{};
+  const porTel=(p.revealPhone&&p.revealPhone.credits)||5;
+  const porEmail=(p.revealEmail&&p.revealEmail.credits)||1;
+  const busca=p.contactSearch||{credits:1,per:25};
+
+  let saldo;
+  if(!c||c.restantes===null||c.restantes===undefined){
+    // Nulo é "não deu para consultar agora", não "zero". Acusar o usuário de
+    // estar sem crédito quando a Lusha é que não respondeu seria pior que
+    // não mostrar nada.
+    saldo='<span class="lu-saldo-off">Saldo indisponível no momento</span>';
+  }else{
+    const baixo=c.restantes<=20;
+    saldo=`<span class="lu-saldo ${baixo?'lu-saldo-baixo':''}">${c.restantes} crédito${c.restantes===1?'':'s'} restante${c.restantes===1?'':'s'}</span>`
+      +(baixo?'<span class="lu-alerta">Saldo baixo — recarregue em app.lusha.com para continuar revelando.</span>':'');
+  }
+
+  const lim=lusha.limites&&lusha.limites.dia;
+  const uso=(lim&&lim.restante!==null&&lim.restante!==undefined&&lim.limite)
+    ?`<div class="lu-linha">Requisições hoje: ${lim.limite-lim.restante} de ${lim.limite}</div>`:'';
+
+  return `<div class="lu-box">
+    <div class="lu-topo">${saldo}</div>
+    ${uso}
+    <div class="lu-custos">
+      <div class="lu-linha">Listar contatos de uma empresa · <strong>${busca.credits} crédito por ${busca.per}</strong></div>
+      <div class="lu-linha">Revelar e-mail · <strong>${porEmail} crédito</strong></div>
+      <div class="lu-linha">Revelar telefone · <strong>${porTel} créditos</strong></div>
+    </div>
+    <div class="lu-nota">Os créditos são da sua conta Lusha. Nada é debitado sem você clicar em <strong>Mostrar detalhes</strong> num contato.</div>
+  </div>`;
+}
+
 function _lushaFeedback(msg,ok){
   const el=document.getElementById('lusha-feedback');
   if(!el)return;

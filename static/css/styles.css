@@ -787,52 +787,127 @@ body{
 .dec2-value{color:var(--text-1);font-weight:600}
 .dec2-src{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);background:var(--accent-bg);padding:1px 6px;border-radius:4px;margin-left:auto}
 
-/* ══════ CARD LUSHA: Contato em coluna compacta (replicação exata) ══════ */
-.lusha-card{
-  padding:14px;border-bottom:1px solid var(--border);
-  background:var(--surface);display:flex;flex-direction:column;gap:10px;
+/* ══════ CONTATOS DA EMPRESA (Lusha Prospecting) ══════
+   Duas colunas em pé: filtros estreitos à esquerda, cards à direita. O bloco
+   inteiro fica dentro da ficha da empresa e tem altura limitada de propósito —
+   é uma seção da ficha, não uma tela cheia. */
+.pr-wrap{display:flex;gap:14px;align-items:flex-start}
+
+.pr-side{
+  flex:0 0 172px;max-width:172px;
+  display:flex;flex-direction:column;gap:14px;
+  padding:12px;border:1px solid var(--border);border-radius:8px;
+  background:var(--bg-2);
 }
-.lusha-card:last-child{border-bottom:none}
-.lusha-head{display:flex;gap:10px;align-items:flex-start}
-.lusha-ava{
-  width:40px;height:40px;border-radius:50%;flex-shrink:0;
+.pr-side-grp{display:flex;flex-direction:column;gap:5px}
+.pr-side-t{
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--text-3);margin-bottom:1px;
+}
+/* Departamento tem 16 opções: rolar a lista mantém a sidebar do tamanho da
+   coluna de cards em vez de esticar a página inteira. */
+.pr-side-scroll{max-height:184px;overflow-y:auto;display:flex;flex-direction:column;gap:5px}
+.pr-chk{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;line-height:1.3}
+.pr-chk input{margin:0;flex-shrink:0;cursor:pointer}
+.pr-chk span{color:var(--text-2)}
+.pr-busca{
+  width:100%;padding:5px 7px;font-size:12px;
+  border:1px solid var(--border);border-radius:6px;
+  background:var(--surface);color:var(--text-1);
+}
+
+.pr-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.pr-topo{display:flex;align-items:center;gap:8px}
+.pr-fonte{
+  font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text-3);background:var(--bg-2);border:1px solid var(--border);
+  padding:2px 7px;border-radius:4px;
+}
+.pr-fonte-paga{color:var(--accent);background:var(--accent-bg);border-color:var(--accent-border)}
+.pr-aviso{
+  font-size:12px;padding:7px 10px;border-radius:6px;line-height:1.4;
+  background:var(--warn-bg,var(--bg-2));border:1px solid var(--border);color:var(--text-2);
+}
+.pr-aviso a{color:var(--accent);font-weight:600}
+
+.pr-lista{
+  display:flex;flex-direction:column;
+  border:1px solid var(--border);border-radius:8px;overflow:hidden;
+  max-height:520px;overflow-y:auto;
+}
+.pr-card{
+  padding:12px 14px;border-bottom:1px solid var(--border);
+  background:var(--surface);display:flex;flex-direction:column;gap:9px;
+}
+.pr-card:last-child{border-bottom:none}
+.pr-head{display:flex;gap:10px;align-items:flex-start}
+.pr-ava{
+  width:36px;height:36px;border-radius:50%;flex-shrink:0;
   background:var(--accent-bg);border:1px solid var(--accent-border);
   display:flex;align-items:center;justify-content:center;
-  font-weight:700;font-size:16px;color:var(--accent);
+  font-weight:700;font-size:15px;color:var(--accent);
 }
-.lusha-info{flex:1;min-width:0}
-.lusha-name{font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px}
-.lusha-li{
+.pr-info{flex:1;min-width:0}
+.pr-name{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pr-li{
   display:inline-flex;align-items:center;justify-content:center;
   width:16px;height:16px;border-radius:3px;background:#0a66c2;color:#fff;
-  font-size:10px;font-weight:700;flex-shrink:0;
+  font-size:10px;font-weight:700;flex-shrink:0;text-decoration:none;
 }
-.lusha-title{font-size:13px;color:var(--text-3);margin-top:2px}
-.lusha-location{font-size:12px;color:var(--text-3);margin-top:1px}
-.lusha-changed-jobs{
-  font-size:11px;color:#ff9800;margin-top:4px;
-  display:flex;align-items:center;gap:4px;
+.pr-badge{font-size:11px;color:var(--text-3)}
+.pr-badge sup{font-size:8.5px;font-weight:700}
+.pr-cargo{font-size:12.5px;color:var(--text-2);margin-top:2px}
+.pr-loc{font-size:11.5px;color:var(--text-3);margin-top:1px}
+.pr-tags{display:flex;gap:4px;flex-wrap:wrap;margin-top:5px}
+.pr-tag{
+  font-size:10px;padding:1px 6px;border-radius:4px;
+  background:var(--bg-2);border:1px solid var(--border);color:var(--text-3);
 }
-.lusha-data{display:flex;flex-direction:column;gap:6px}
-.lusha-row{
-  display:flex;align-items:center;gap:8px;
-  font-size:13px;color:var(--text-1);
-}
-.lusha-row-ic{
-  display:flex;align-items:center;justify-content:center;
-  width:18px;height:18px;color:var(--text-3);flex-shrink:0;
-}
-.lusha-actions{
-  display:flex;gap:6px;
-  margin-top:6px;
-  padding-top:8px;border-top:1px solid var(--border);
-}
-.lusha-action-btn{
-  flex:1;padding:6px;border:1px solid var(--border);border-radius:6px;
-  font-size:12px;font-weight:600;background:var(--surface);cursor:pointer;
+.pr-tag-mais{font-weight:700}
+
+/* O custo em créditos fica escrito no botão: quem paga precisa saber quanto
+   vai gastar ANTES de clicar — telefone custa 5, não é detalhe. */
+.pr-reveal{
+  align-self:flex-start;padding:6px 12px;border:none;border-radius:6px;
+  background:var(--accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;
   transition:background .15s;
 }
-.lusha-action-btn:hover{background:var(--bg-2)}
+.pr-reveal:hover{background:#4a30dd}
+.pr-reveal:disabled{opacity:.6;cursor:wait}
+
+.pr-dados{display:flex;flex-direction:column;gap:5px}
+.pr-row{display:flex;align-items:center;gap:8px;font-size:12.5px}
+.pr-row-ic{width:16px;flex-shrink:0;color:var(--text-3);text-align:center}
+.pr-val{color:var(--text-1);font-weight:600;overflow-wrap:anywhere}
+.pr-vazio{color:var(--text-3);font-style:italic}
+.pr-copy{
+  margin-left:auto;flex-shrink:0;background:none;border:none;padding:0;cursor:pointer;
+  font-size:11px;font-weight:600;color:var(--accent);text-decoration:underline;
+}
+.pr-palpite{
+  font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text-3);background:var(--bg-2);border:1px solid var(--border);
+  padding:1px 5px;border-radius:4px;flex-shrink:0;
+}
+.pr-erro{font-size:11.5px;color:var(--err,#c00);margin-top:2px}
+
+.pr-pag{display:flex;align-items:center;justify-content:center;gap:10px;padding-top:4px}
+.pr-pag-btn{
+  padding:4px 10px;border:1px solid var(--border);border-radius:6px;
+  background:var(--surface);color:var(--text-1);
+  font-size:11.5px;font-weight:600;cursor:pointer;
+}
+.pr-pag-btn:disabled{opacity:.4;cursor:default}
+.pr-pag-txt{font-size:11.5px;color:var(--text-3)}
+
+/* Abaixo de 640px a sidebar vira uma faixa horizontal em cima: em duas
+   colunas nessa largura, nem os filtros nem os cards ficariam legíveis. */
+@media (max-width:640px){
+  .pr-wrap{flex-direction:column}
+  .pr-side{flex:1 1 auto;max-width:none;width:100%;flex-direction:row;flex-wrap:wrap;gap:10px}
+  .pr-side-grp{flex:1 1 140px}
+  .pr-side-scroll{max-height:120px}
+}
 
 /* ── Correção manual de campo (telefone) ── */
 .cell-edit{
@@ -2170,3 +2245,20 @@ body{
   .lote-actions{flex-direction:column;align-items:stretch}
   .lote-count{margin:0 0 4px}
 }
+
+/* ══════ SALDO DA LUSHA (Configurações) ══════
+   Créditos são da conta do próprio usuário; a tela mostra saldo e custo antes
+   de ele gastar, não depois. */
+.lu-box{
+  margin-top:10px;padding:10px 12px;border:1px solid var(--border);
+  border-radius:8px;background:var(--bg-2);display:flex;flex-direction:column;gap:6px;
+}
+.lu-topo{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.lu-saldo{font-size:13px;font-weight:700;color:var(--text-1)}
+.lu-saldo-baixo{color:var(--err,#c00)}
+.lu-saldo-off{font-size:12px;color:var(--text-3);font-style:italic}
+.lu-alerta{font-size:11.5px;color:var(--err,#c00)}
+.lu-custos{display:flex;flex-direction:column;gap:2px;margin-top:2px}
+.lu-linha{font-size:11.5px;color:var(--text-3)}
+.lu-linha strong{color:var(--text-2)}
+.lu-nota{font-size:11px;color:var(--text-3);line-height:1.4;margin-top:2px}
