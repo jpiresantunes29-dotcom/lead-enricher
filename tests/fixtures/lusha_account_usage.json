@@ -1,0 +1,53 @@
+{
+  "credits": {
+    "total": 6800,
+    "used": 1458,
+    "remaining": 5342
+  },
+  "rateLimits": {
+    "daily": {
+      "limit": 6000,
+      "used": 70,
+      "remaining": 5930,
+      "resetsAt": "2026-09-07T23:04:21.343Z"
+    },
+    "hourly": {
+      "limit": 600,
+      "used": 17,
+      "remaining": 583,
+      "resetsAt": "2026-09-07T05:00:12.735Z"
+    },
+    "minute": {
+      "limit": 300,
+      "used": 1,
+      "remaining": 299,
+      "resetsAt": "2026-09-07T04:14:51.747Z"
+    }
+  },
+  "plan": {
+    "category": "premium",
+    "renewalType": "month",
+    "startDate": "2026-08-13T20:48:18.322Z",
+    "endDate": "2026-09-13T20:48:18.322Z"
+  },
+  "pricing": {
+    "companySearch": {"credits": 1, "perQuantity": 25},
+    "contactSearch": {"credits": 1, "perQuantity": 25},
+    "revealCompany": {"credits": 1, "perQuantity": 1},
+    "revealCompanyPremiumData": {"credits": 1, "perQuantity": 1},
+    "revealEmail": {"credits": 1, "perQuantity": 1},
+    "revealPhone": {"credits": 5, "perQuantity": 1},
+    "lookalikeCompany": {"credits": 1, "perQuantity": 5},
+    "lookalikeContact": {"credits": 1, "perQuantity": 5},
+    "contactRecommendationsReveal": {"credits": 1, "perQuantity": 1},
+    "companyRecommendationsReveal": {"credits": 1, "perQuantity": 1},
+    "showSignalsCompany": {"credits": 1, "perQuantity": 1},
+    "showSignalsContact": {"credits": 1, "perQuantity": 1},
+    "signalScoreCompany": {"credits": 1, "perQuantity": 1},
+    "signalScoreContact": {"credits": 1, "perQuantity": 1},
+    "tableRead": {"credits": 1, "perQuantity": 25},
+    "buyingGroupReveal": {"credits": 1, "perQuantity": 1},
+    "conversationsSearch": {"credits": 1, "perQuantity": 25},
+    "conversationsTranscript": {"credits": 1, "perQuantity": 1}
+  }
+}

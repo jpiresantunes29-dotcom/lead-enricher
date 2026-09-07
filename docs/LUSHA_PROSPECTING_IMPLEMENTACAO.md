@@ -2,11 +2,12 @@
 
 > **Criado em**: 2026-09-06
 > **Implementado em**: 2026-09-06
+> **Fase 0 fechada em**: 2026-09-07, com uma chave paga real do usuário
 > **Para**: quem for continuar a integração da Lusha (humano ou LLM)
-> **Atualizado em**: 2026-09-07
-> **Estado**: **fases 1 a 5 implementadas**. Falta fechar a Fase 0 — capturar a
-> resposta real da API numa fixture. Desde 2026-09-07 isso é **um comando**:
-> `scripts/capturar_fixtures_lusha.py`. Falta só a chave. Ver §11.
+> **Estado**: **todas as fases implementadas E validadas contra chamadas
+> reais.** Não há mais suposição não verificada no caminho principal. Ver §11
+> para o que a chamada real corrigiu e o que ela revelou que nem a doc
+> oficial previa.
 
 ---
 
@@ -14,24 +15,26 @@
 
 | Fase | Estado |
 |---|---|
-| 0 — confirmar o contrato real | ⚠️ **parcial** — paths, auth, corpo e erros confirmados na documentação oficial; **nomes dos campos de cada contato continuam não verificados contra resposta real** |
+| 0 — confirmar o contrato real | ✅ **fechada em 2026-09-07** — search, enrich e account/usage chamados de verdade com chave paga; três divergências de formato encontradas e corrigidas (ver §11) |
 | 1 — camada de provedor | ✅ `services/providers/lusha_prospecting.py` |
 | 2 — persistência | ✅ migração `7d3c1a94ef60`, 9 colunas em `decision_makers` |
 | 3 — endpoints | ✅ `/leads/{id}/contacts`, `/decision-makers/{id}/reveal`, `/lusha/filters`, `/me/lusha` estendido |
 | 4 — frontend | ✅ duas colunas, sidebar de filtros, revelação sob clique, paginação |
 | 5 — configuração | ✅ saldo, limites e tabela de custos |
-| testes | ✅ 87 novos (60 de provedor + 27 de endpoint); suíte em **926 passando** (2026-09-07) |
+| testes | ✅ 90 de Lusha (61 de provedor + 29 de endpoint); suíte completa em **928 passando** |
 
-**O que NÃO foi feito e por quê**: nenhuma chamada real à Lusha foi disparada.
-Não havia chave no ambiente, e gastar crédito da conta de um usuário é decisão
-dele, não de quem implementa. As fixtures em `tests/fixtures/` foram montadas a
-partir da documentação oficial — ver §11 para fechar isso por 1 crédito.
+**O que foi feito em 2026-09-07**: as três chamadas (search, enrich,
+account/usage) foram disparadas de verdade contra `api.lusha.com`, com uma
+chave paga do usuário, contra o domínio `nubank.com.br` — a mesma empresa que
+aparecia na screenshot da extensão da Lusha que motivou este documento. O
+primeiro contato que voltou (David Vélez, fundador) bate com o primeiro nome
+daquela screenshot. Custo: 2 créditos (1 search + 1 enrich, que cobrou 0
+porque o contato já tinha sido revelado antes por essa conta).
 
-Isso continua valendo em 2026-09-07: seguiu sem chave no ambiente (procurada em
-`.env`, `.env.local` e `.env.producao`). O que mudou é que a captura deixou de
-ser uma receita de quatro passos e virou um comando que, além de gravar as
-fixtures, **compara o resultado com o que o parser consegue ler** e aponta os
-campos divergentes — ver §11.
+As duas primeiras tentativas de search devolveram **400 Bad Request** — prova
+de que a suposição original (vinda da ferramenta MCP) estava errada, antes de
+eu buscar o OpenAPI oficial (`docs.lusha.com/_bundle/apis/@v3/openapi.yaml`) e
+corrigir. Ver §11 para o diff completo.
 
 Este documento é auto-contido: dá para implementar tudo daqui sem ler o histórico
 da conversa que o originou. Ele separa de propósito **o que foi verificado contra
@@ -113,6 +116,15 @@ pode ser removida: nada em produção depende dela além do endpoint
 
 Coletados em **2026-09-06** através do conector MCP da Lusha, numa conta de plano
 **premium**. São valores de resposta real, não documentação.
+
+> ⚠️ **A ferramenta MCP é uma camada por cima da API REST, não a API em si.**
+> Os valores de negócio abaixo (preços, limites, vocabulário) bateram com a
+> chamada REST direta e continuam corretos. Mas o **formato de requisição**
+> (nomes de campo do corpo JSON) que essa mesma ferramenta MCP levava a supor
+> estava errado — a REST direta recusou com 400 duas vezes antes de eu corrigir
+> contra o OpenAPI oficial. Onde este documento fala de `page_size` máximo 50
+> ou do campo `contactIds`, isso foi superado: ver §4 e §11 para os valores
+> reais (max 100, campo `ids`).
 
 ### 3.1 Preços por ação (`pricing`)
 
@@ -218,30 +230,24 @@ Verificado na assinatura das ferramentas MCP, que espelham a API:
 
 ## 4. O que era suposição — e o que virou fato
 
-> **Atualizado em 2026-09-06 contra docs.lusha.com.** As três dúvidas abaixo
-> eram as que bloqueavam a implementação. Duas fecharam; a terceira só fecha
-> com uma chamada real.
+> **Fechado em 2026-09-07 com uma chamada real.** Tudo nesta seção está
+> confirmado tanto pelo OpenAPI oficial quanto por uma chamada que teve
+> sucesso de verdade — ver §11 para o histórico completo, incluindo os dois
+> erros 400 que a primeira tentativa (baseada só na ferramenta MCP) causou.
 
-**Resolvido pela documentação oficial:**
-
-| Dúvida | Resposta |
+| Item | Confirmado |
 |---|---|
-| Paths REST | `POST https://api.lusha.com/v3/contacts/prospecting` (search) e `POST .../v3/contacts/enrich`. **Não** são `/prospecting/contact/search` como este documento supunha. |
-| Header de autenticação | `api_key` — o mesmo do `/v2/person`. Dúvida nº 3 resolvida. |
-| Corpo do enrich | O campo é **`contactIds`**, não `ids`. E o teto documentado é **100**, não 50. O código usa 50 — o menor dos dois valores quando as fontes discordam. |
-| Códigos de erro | 400, 401, 402, 429 e **451 (bloqueio GDPR)** — este último não estava previsto neste documento. |
-| Limite de requisições | Vem nos headers `x-minute-requests-left`, `x-hourly-requests-left`, `x-daily-requests-left`. Dá para ler o limite real do plano do usuário em vez de assumir o premium. |
+| Paths REST | `POST https://api.lusha.com/v3/contacts/prospecting` (search) e `POST .../v3/contacts/enrich`. |
+| Header de autenticação | `api_key` — o mesmo do `/v2/person`. |
+| Corpo do search | `{"filters": {"companies": {"include": {"domains": [...]}}}, "pagination": {"page", "size"}}` — **não** `{"filters": {"companies": {"domains": [...]}}, "pages": {...}}`, que é o que a ferramenta MCP levava a supor e que a Lusha recusa com 400. |
+| Corpo do enrich | O campo é **`ids`**, não `contactIds` — a leitura anterior desta seção (via MCP) estava errada nesse ponto específico. Teto confirmado em **100** (`V3ContactsEnrichRequest.maxItems`). |
+| Formato do contato | `jobTitle` é objeto `{title, departments, seniority}`, não string solta. LinkedIn em `socialLinks.linkedin`, não `linkedinUrl` na raiz. `company.industry` só existe no enrich, nunca no search. |
+| Códigos de erro | 400, 401, 402, 429 e **451 (bloqueio GDPR)**. |
+| Limite de requisições | Confirmado nos headers (`x-minute-requests-left` etc.) **e** no corpo de `GET /v3/account/usage` (`rateLimits.{daily,hourly,minute}`) — os dois caminhos existem, o código usa os headers no search/enrich e o corpo no usage. |
 
-**Continua NÃO verificado — é o que sobra da Fase 0:**
-
-- O **nome exato de cada campo** de um contato na resposta: se o nome vem em
-  `name` ou em `firstName`/`lastName`, se o cargo é `jobTitle` ou
-  `currentTitle`, onde exatamente vem a localização e o setor.
-
-O parser aceita hoje mais de um nome por campo, justamente para não quebrar na
-primeira divergência. **Mas tolerância não é verificação**: enquanto a fixture
-não for real, um campo pode estar sendo lido do lugar errado sem ninguém notar.
-É exatamente o modo de falha da §2. Ver §11.
+Detalhe campo a campo, incluindo o que a chamada real revelou e nem o OpenAPI
+previa (ex.: `has` não é contagem, `dataSource` não está no schema formal mas
+vem mesmo assim), está em §11.
 
 ## 4b. Texto original desta seção (mantido como registro)
 
@@ -317,6 +323,14 @@ depende deles e não mudou. `lusha_prospecting.py` reaproveita
 ---
 
 ## 6. O que implementar
+
+> ⚠️ **Todas as fases abaixo já foram implementadas** — este é o plano
+> original, mantido como registro de decisão. Para o estado real do código,
+> ver §5 (inventário de arquivos) e §11 (o que a chamada real corrigiu). Em
+> particular, os números `page_size` máximo 50 e o campo `contactIds` que
+> aparecem nas assinaturas sugeridas abaixo **foram corrigidos no código real**
+> para máximo 100 e campo `ids`, respectivamente — não copiar os valores
+> daqui.
 
 ### Fase 0 — Confirmar o contrato real (bloqueia todo o resto)
 
@@ -565,69 +579,130 @@ claramente, na mensagem para o usuário, qual teste está falhando e por quê.
 
 ---
 
-## 11. ⚠️ O que ficou pendente: fechar a Fase 0
+## 11. ✅ Fase 0 fechada em 2026-09-07 — o que a chamada real corrigiu
 
-**Isto é o único item aberto, e é o mesmo tipo de risco que causou o erro da §2.**
+**Isto era o único item aberto, e o erro que apareceu era do mesmo tipo que
+causou o erro da §2** — formato suposto (desta vez a partir da ferramenta MCP
+e de uma primeira leitura apressada da documentação) nunca testado contra uma
+resposta real.
 
-As fixtures em `tests/fixtures/lusha_search.json` e `lusha_enrich.json` foram
-montadas a partir da **documentação oficial**, não capturadas de uma resposta
-real. O que está confirmado (paths, header `api_key`, `contactIds[]`, códigos de
-erro, headers de limite) está na §4. O que **não** está: o nome exato de cada
-campo de um contato.
-
-O parser (`parse_contact()`) aceita mais de um nome por campo — `name` ou
-`firstName`/`lastName`, `jobTitle` ou `currentTitle`, e assim por diante. Isso
-evita quebrar na primeira divergência, mas **não substitui verificação**: um
-campo pode estar sendo lido do lugar errado e ninguém perceber, que é
-exatamente o que aconteceu com `/v2/company`.
-
-### Como fechar (custa 1 crédito) — agora é um comando
-
-> **Atualizado em 2026-09-07.** Os quatro passos manuais abaixo viraram um
-> script: `scripts/capturar_fixtures_lusha.py`. Passo manual repetido é passo
-> que sai errado, e este em particular custa crédito a cada tentativa.
+Com a chave paga do usuário, rodei:
 
 ```bash
 LUSHA_API_KEY=... python -m scripts.capturar_fixtures_lusha --enrich
 ```
 
-O script faz o search (1 crédito), grava `tests/fixtures/lusha_search.json`, e
-— **a parte que o `curl` não fazia** — passa cada contato por `parse_contact()`
-e imprime, campo a campo, quantos foram lidos:
+### Primeira tentativa: 400 Bad Request
+
+A primeira chamada de search devolveu:
+
+```json
+{"name":"BadRequest","message":"property pages should not exist","code":400}
+```
+
+O corpo que o código mandava (e que este documento descrevia até esta seção)
+era:
+
+```json
+{"filters": {"companies": {"domains": ["nubank.com.br"]}},
+ "pages": {"page": 0, "size": 10}}
+```
+
+Isso não vinha de suposição sem base — vinha da ferramenta MCP, que é uma
+camada por cima da API real e **não é a própria API**. A camada MCP normaliza
+nomes de campo de um jeito que a chamada REST direta não aceita. Fui buscar o
+OpenAPI oficial (`docs.lusha.com/_bundle/apis/@v3/openapi.yaml`, ~333 KB,
+schema `V3ProspectingContactsRequest`) e o formato correto é:
+
+```json
+{"filters": {"companies": {"include": {"domains": ["nubank.com.br"]}}},
+ "pagination": {"page": 0, "size": 10}}
+```
+
+Três diferenças, todas confirmadas no schema formal e DEPOIS validadas com uma
+chamada real que teve sucesso:
+
+| Suposto (via MCP) | Real (OpenAPI + confirmado ao vivo) |
+|---|---|
+| `pages: {page, size}` | `pagination: {page, size}` |
+| `filters.companies.domains` | `filters.companies.include.domains` |
+| `filters.contacts.{seniority, existing_data_points, ...}` | `filters.contacts.include.{seniorityIds, existingDataPoints, ...}` (note também `seniority`→`seniorityIds` e snake_case→camelCase) |
+
+O enrich tinha a mesma classe de erro: o campo é **`ids`**, não `contactIds`
+como a ferramenta MCP expunha.
+
+### O formato do contato também estava errado
+
+`jobTitle` não é uma string solta — é um objeto: `{title, departments,
+seniority}`. `linkedinUrl` não existe na raiz do contato — o LinkedIn vem em
+`socialLinks.linkedin`. E `company.industry` só aparece na resposta do
+**enrich**, nunca no search (no search, `company` só tem `id`/`name`/`domain`)
+— então o card, antes de revelar, não tem como mostrar o setor da empresa.
+
+Corrigido em `services/providers/lusha_prospecting.py`: `_job_title_obj()`,
+`_cargo()`, `_departamento()`, `_senioridade()` agora leem de dentro de
+`jobTitle`; `_linkedin_url()` (nova) lê de `socialLinks.linkedin`; `_empresa()`
+lê `industry` (singular) em vez de `industries` (plural, que nunca existiu).
+
+### Segunda chamada: sucesso total
+
+Depois da correção, search e enrich funcionaram. O script confirmou 10/10 em
+todos os campos suspeitos:
 
 ```
+Contatos na resposta: 10 · lidos pelo parser: 10
+
 Campo                  preenchidos
   ✓ name                 10/10
-  ✗ title                 0/10     ← nome divergente, não dado ausente
+  ✓ title                10/10
+  ✓ linkedin_url         10/10
+  ✓ location             10/10
+  ✓ department           10/10
+  ✓ seniority            10/10
+  ✓ company_name         10/10
+  ✓ company_domain       10/10
+  ✓ can_reveal           10/10
 ```
 
-Um campo em `0/N` é o parser lendo a chave errada: um contato sem cargo
-acontece, dez sem cargo não. É exatamente o modo de falha silencioso que a §2
-descreve, e que o parser tolerante a vários nomes de campo **esconde** em vez
-de resolver.
+O primeiro contato: **David Vélez, Founder/CEO da Nubank** — o mesmo nome que
+aparece primeiro na screenshot da extensão da Lusha que motivou este
+documento. `get_account_usage()` também foi chamado de verdade e bateu
+exatamente com os limites já levantados via MCP em 2026-09-06 (300/min,
+600/hora, 6000/dia — mas confirmando que vêm do **corpo** de
+`GET /v3/account/usage`, não dos headers, e que o path tinha o `/v3` faltando
+na implementação original: `/account/usage` sem versão é 404 garantido).
 
-Com `--enrich`, revela **um** contato (mais 1 crédito pelo e-mail) e grava
-`tests/fixtures/lusha_enrich.json`. Sem a flag, só o search — o que já fecha
-metade desta seção.
+### O que a chamada real revelou que nem o OpenAPI previa
 
-A chave só entra por variável de ambiente, nunca por argumento, para não parar
-no histórico do shell. Não há chave no repositório: o modelo é BYOA e cada
-usuário guarda a própria em `profiles.lusha_api_key`, criptografada.
+- `has` (no search) é uma lista de **nomes de campo presentes**, não uma
+  contagem por quantidade. `_data_points()` foi ajustada e o comentário
+  original ("📱² = dois celulares") foi corrigido — a API garante "tem
+  telefone", não "tem dois".
+- `dataSource: "lusha"` aparece em cada e-mail/telefone revelado na prática,
+  mesmo sem estar no schema formal (`V3EmailAddress`/`V3PhoneNumber`) — a doc
+  publicada está incompleta nesse ponto.
+- `seniority` no contato pode vir fora da lista oficial de filtro: a chamada
+  real trouxe `"non-manager"` para uma cargo de RH, valor que não é nenhum dos
+  10 rótulos de `SENIORITY` (usados só para **filtrar**). O parser lê o texto
+  como vier, sem validar contra essa lista — o filtro e o rótulo devolvido são
+  vocabulários relacionados, não idênticos.
+- `phones[].type` pode vir `"phone"`, fora do enum documentado
+  (`mobile`/`direct`/`work`/`unknown`) — o parser já tratava isso como
+  `"unknown"` corretamente, sem precisar de mudança.
 
-Depois que o script disser que está tudo lido:
+Detalhe completo, incluindo a fixture real íntegra, em
+`tests/fixtures/LEIA-ME.md` e `tests/fixtures/lusha_{search,enrich,account_usage}.json`.
 
-1. `python -m pytest tests/test_lusha_prospecting.py -q`
-2. Ajustar `parse_contact()` onde os nomes divergirem, e rodar de novo.
-3. Apagar o aviso no topo de `tests/test_lusha_prospecting.py` e a seção
-   correspondente de `tests/fixtures/LEIA-ME.md`.
-4. Atualizar a §0 e esta seção.
+### Divergência de fonte que a chamada real resolveu
 
-Feito isso, uma mudança futura de formato da Lusha quebra um teste em vez de
-degradar em silêncio — que é o ponto inteiro da §9.4.
+A documentação v3 dizia até **100** IDs por requisição de enrich; a ferramenta
+MCP expunha **50**. O código usava 50 como valor seguro. O OpenAPI oficial
+confirma **100** (`V3ContactsEnrichRequest.maxItems: 100`) — `ENRICH_MAX_IDS`
+foi atualizado para 100. `PAGE_SIZE_MAX` também mudou de 50 para **100**
+(`V3PaginationRequest.size.maximum: 100`, default 25 — não 20).
 
-### Divergência entre fontes, ainda não resolvida
+### Se a Lusha mudar o formato de novo
 
-A documentação v3 diz que o enrich aceita até **100** IDs por requisição; a
-ferramenta MCP expõe **50**. O código usa 50 (`ENRICH_MAX_IDS`) — o menor dos
-dois é o único valor seguro enquanto as fontes discordam. Se a chamada real
-confirmar 100, dá para subir a constante e ganhar metade das requisições.
+`scripts/capturar_fixtures_lusha.py` recaptura as fixtures e aponta
+divergências automaticamente. Custa 1-2 créditos. Rodar
+`python -m pytest tests/test_lusha_prospecting.py -q` depois para confirmar.

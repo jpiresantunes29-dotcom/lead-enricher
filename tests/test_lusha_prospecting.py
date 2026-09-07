@@ -8,10 +8,10 @@ pessoas — e a extração tolerante devolvia `None` em silêncio em vez de erro
 Travar o formato numa fixture faz uma mudança da Lusha quebrar um teste, que é
 o comportamento desejado, em vez de degradar calada.
 
-⚠️ ATENÇÃO: as fixtures em tests/fixtures/ ainda foram montadas a partir da
-documentação, não capturadas de uma resposta real. Ver tests/fixtures/LEIA-ME.md
-para fechar isso (custa 1 crédito). Até lá, estes testes provam que o parser é
-coerente com o formato documentado — não que o formato documentado é o real.
+As fixtures em tests/fixtures/ (lusha_search.json, lusha_enrich.json,
+lusha_account_usage.json) foram capturadas de chamadas REAIS em 2026-09-07,
+com uma chave paga de verdade, contra o domínio nubank.com.br — não montadas a
+partir de documentação. Ver tests/fixtures/LEIA-ME.md para o histórico.
 """
 import json
 import unicodedata
@@ -428,7 +428,7 @@ def test_limites_saem_dos_headers_da_resposta():
         "x-rate-limit-hourly": "100", "x-hourly-requests-left": "95",
         "x-rate-limit-daily": "100",  "x-daily-requests-left": "60",
     }
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": []}, headers)):
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []}, headers)):
         r = lp.search_contacts("chave", ["acme.com"])
 
     assert r["limites"]["minuto"] == {"limite": 40, "restante": 38}
@@ -437,9 +437,34 @@ def test_limites_saem_dos_headers_da_resposta():
 
 def test_limites_ausentes_viram_none_e_nao_zero():
     """Zero significaria "acabou"; ausente significa "não sei"."""
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": []})):
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})):
         r = lp.search_contacts("chave", ["acme.com"])
     assert r["limites"]["minuto"] == {"limite": None, "restante": None}
+
+
+def test_account_usage_contra_fixture_real():
+    """
+    Fixture capturada de uma chamada REAL a GET /v3/account/usage em
+    2026-09-07, com a mesma chave usada para o search/enrich acima. Confirma
+    o path (a implementação original tinha /account/usage, sem o /v3 — 404
+    garantido) e que créditos/limites vêm no CORPO da resposta, não nos
+    headers como a implementação original assumia.
+    """
+    payload = _carregar("lusha_account_usage.json")
+    with patch.object(lp.requests, "get", return_value=_resposta(200, payload)) as get:
+        r = lp.get_account_usage("chave")
+
+    assert get.call_args.args[0] == "https://api.lusha.com/v3/account/usage"
+    assert r["creditos_restantes"] == 5342
+    assert r["creditos_usados"] == 1458
+    assert r["creditos_total"] == 6800
+    assert r["plano"]["category"] == "premium"
+    assert r["precos"]["revealPhone"] == {"credits": 5, "perQuantity": 1}
+    # Os mesmos limites já tinham sido levantados via ferramenta MCP em
+    # 2026-09-06 (§3.2 do documento) — a chamada REST bate exatamente.
+    assert r["limites"]["minuto"] == {"limite": 300, "usado": 1, "restante": 299}
+    assert r["limites"]["hora"] == {"limite": 600, "usado": 17, "restante": 583}
+    assert r["limites"]["dia"] == {"limite": 6000, "usado": 70, "restante": 5930}
 
 
 # ── Vocabulário verificado contra a API real ────────────────────────────────
