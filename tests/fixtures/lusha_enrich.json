@@ -1,0 +1,44 @@
+{
+  "requestId": "req_7f3a9c1e",
+  "contacts": [
+    {
+      "id": "v1.eyJjb250YWN0SWQiOiIxMjM0NSJ9",
+      "firstName": "Ana",
+      "lastName": "Ribeiro",
+      "jobTitle": "Chief Technology Officer",
+      "linkedinUrl": "https://www.linkedin.com/in/ana-ribeiro-tech",
+      "emails": [
+        {
+          "email": "ana.ribeiro@nubank.com.br",
+          "emailType": "work",
+          "dataSource": "lusha"
+        },
+        {
+          "email": "ANA.RIBEIRO@nubank.com.br",
+          "emailType": "work",
+          "dataSource": "lusha"
+        }
+      ],
+      "phones": [
+        {
+          "number": "+55 11 3003-4444",
+          "phoneType": "work",
+          "dataSource": "lusha"
+        },
+        {
+          "number": "11987654321",
+          "phoneType": "mobile",
+          "dataSource": "lusha"
+        }
+      ],
+      "missingDataPoints": [],
+      "company": {
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      }
+    }
+  ],
+  "status": "success",
+  "statusReason": null,
+  "statusDescription": null
+}

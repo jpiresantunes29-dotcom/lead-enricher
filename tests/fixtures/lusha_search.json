@@ -1,0 +1,74 @@
+{
+  "requestId": "req_7f3a9c1e",
+  "total": 47,
+  "data": [
+    {
+      "id": "v1.eyJjb250YWN0SWQiOiIxMjM0NSJ9",
+      "firstName": "Ana",
+      "lastName": "Ribeiro",
+      "jobTitle": "Chief Technology Officer",
+      "linkedinUrl": "https://www.linkedin.com/in/ana-ribeiro-tech",
+      "seniority": 9,
+      "department": "Engineering & Technical",
+      "location": {
+        "city": "Sao Paulo",
+        "state": "Sao Paulo",
+        "country": "Brazil"
+      },
+      "company": {
+        "name": "Nubank",
+        "domain": "nubank.com.br",
+        "industries": ["Financial Services", "Banking", "Technology", "Fintech"]
+      },
+      "has": ["work_email", "mobile_phone", "mobile_phone"],
+      "canReveal": [
+        {"field": "emails", "credits": 1},
+        {"field": "phones", "credits": 5}
+      ]
+    },
+    {
+      "id": "v1.eyJjb250YWN0SWQiOiI2Nzg5MCJ9",
+      "firstName": "Bruno",
+      "lastName": "Carvalho",
+      "jobTitle": "VP of Sales",
+      "linkedinUrl": "https://www.linkedin.com/in/bruno-carvalho",
+      "seniority": 8,
+      "department": "Sales",
+      "location": {
+        "city": "Rio de Janeiro",
+        "state": "Rio de Janeiro",
+        "country": "Brazil"
+      },
+      "company": {
+        "name": "Nubank",
+        "domain": "nubank.com.br",
+        "industries": ["Financial Services", "Banking"]
+      },
+      "has": ["work_email"],
+      "canReveal": [
+        {"field": "emails", "credits": 1}
+      ]
+    },
+    {
+      "id": "v1.eyJjb250YWN0SWQiOiIxMTExMSJ9",
+      "firstName": "Carla",
+      "lastName": "Menezes",
+      "jobTitle": "Head of People",
+      "linkedinUrl": null,
+      "seniority": 6,
+      "department": "Human Resources",
+      "location": {
+        "city": "Lisbon",
+        "state": null,
+        "country": "Portugal"
+      },
+      "company": {
+        "name": "Nubank",
+        "domain": "nubank.com.br",
+        "industries": ["Financial Services"]
+      },
+      "has": [],
+      "canReveal": []
+    }
+  ]
+}
