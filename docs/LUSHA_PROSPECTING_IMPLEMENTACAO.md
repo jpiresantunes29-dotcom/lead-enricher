@@ -1,8 +1,29 @@
 # Lusha Prospecting — especificação de implementação
 
 > **Criado em**: 2026-09-06
+> **Implementado em**: 2026-09-06
 > **Para**: quem for continuar a integração da Lusha (humano ou LLM)
-> **Estado**: parcialmente implementado, **com um erro de arquitetura a corrigir antes de seguir**
+> **Estado**: **fases 1 a 5 implementadas**. Falta fechar a Fase 0 — capturar a
+> resposta real da API numa fixture. Ver §11.
+
+---
+
+## 0. Estado da implementação (leia primeiro)
+
+| Fase | Estado |
+|---|---|
+| 0 — confirmar o contrato real | ⚠️ **parcial** — paths, auth, corpo e erros confirmados na documentação oficial; **nomes dos campos de cada contato continuam não verificados contra resposta real** |
+| 1 — camada de provedor | ✅ `services/providers/lusha_prospecting.py` |
+| 2 — persistência | ✅ migração `7d3c1a94ef60`, 9 colunas em `decision_makers` |
+| 3 — endpoints | ✅ `/leads/{id}/contacts`, `/decision-makers/{id}/reveal`, `/lusha/filters`, `/me/lusha` estendido |
+| 4 — frontend | ✅ duas colunas, sidebar de filtros, revelação sob clique, paginação |
+| 5 — configuração | ✅ saldo, limites e tabela de custos |
+| testes | ✅ 87 novos (60 de provedor + 27 de endpoint); suíte em **893 passando** |
+
+**O que NÃO foi feito e por quê**: nenhuma chamada real à Lusha foi disparada.
+Não havia chave no ambiente, e gastar crédito da conta de um usuário é decisão
+dele, não de quem implementa. As fixtures em `tests/fixtures/` foram montadas a
+partir da documentação oficial — ver §11 para fechar isso por 1 crédito.
 
 Este documento é auto-contido: dá para implementar tudo daqui sem ler o histórico
 da conversa que o originou. Ele separa de propósito **o que foi verificado contra
@@ -37,10 +58,15 @@ lateral, paginação, e revelação de e-mail/telefone sob clique.
 
 ---
 
-## 2. ⚠️ O erro que precisa ser corrigido primeiro
+## 2. ✅ O erro que foi corrigido
 
-A implementação atual de `find_company_contacts()` em
-`services/providers/lusha.py` chama:
+> Corrigido em 2026-09-06: `find_company_contacts()` foi **removida** de
+> `services/providers/lusha.py` e substituída pelo par `search` + `enrich` em
+> `services/providers/lusha_prospecting.py`. O texto abaixo fica como registro
+> do que deu errado — é o modo de falha que a §11 ainda pode reintroduzir.
+
+A implementação anterior de `find_company_contacts()` em
+`services/providers/lusha.py` chamava:
 
 ```
 GET https://api.lusha.com/v2/company?domain=...&limit=50
@@ -182,7 +208,34 @@ Verificado na assinatura das ferramentas MCP, que espelham a API:
 
 ---
 
-## 4. ❗ O que ainda NÃO foi verificado
+## 4. O que era suposição — e o que virou fato
+
+> **Atualizado em 2026-09-06 contra docs.lusha.com.** As três dúvidas abaixo
+> eram as que bloqueavam a implementação. Duas fecharam; a terceira só fecha
+> com uma chamada real.
+
+**Resolvido pela documentação oficial:**
+
+| Dúvida | Resposta |
+|---|---|
+| Paths REST | `POST https://api.lusha.com/v3/contacts/prospecting` (search) e `POST .../v3/contacts/enrich`. **Não** são `/prospecting/contact/search` como este documento supunha. |
+| Header de autenticação | `api_key` — o mesmo do `/v2/person`. Dúvida nº 3 resolvida. |
+| Corpo do enrich | O campo é **`contactIds`**, não `ids`. E o teto documentado é **100**, não 50. O código usa 50 — o menor dos dois valores quando as fontes discordam. |
+| Códigos de erro | 400, 401, 402, 429 e **451 (bloqueio GDPR)** — este último não estava previsto neste documento. |
+| Limite de requisições | Vem nos headers `x-minute-requests-left`, `x-hourly-requests-left`, `x-daily-requests-left`. Dá para ler o limite real do plano do usuário em vez de assumir o premium. |
+
+**Continua NÃO verificado — é o que sobra da Fase 0:**
+
+- O **nome exato de cada campo** de um contato na resposta: se o nome vem em
+  `name` ou em `firstName`/`lastName`, se o cargo é `jobTitle` ou
+  `currentTitle`, onde exatamente vem a localização e o setor.
+
+O parser aceita hoje mais de um nome por campo, justamente para não quebrar na
+primeira divergência. **Mas tolerância não é verificação**: enquanto a fixture
+não for real, um campo pode estar sendo lido do lugar errado sem ninguém notar.
+É exatamente o modo de falha da §2. Ver §11.
+
+## 4b. Texto original desta seção (mantido como registro)
 
 **Leia isto antes de escrever qualquer código de rede.** O que segue é inferência
 razoável, não fato confirmado. O erro descrito na seção 2 aconteceu por implementar
@@ -209,38 +262,49 @@ para valer a certeza.
 
 ---
 
-## 5. Estado atual do código
+## 5. Estado do código (atualizado após a implementação)
 
-### Já implementado e funcionando
+### Implementado nesta fase
 
 | Arquivo | O que tem |
 |---|---|
-| `models/database.py:~140` | `profiles.lusha_api_key` (`SegredoCriptografado`) |
-| `alembic/versions/0013_lusha_do_perfil.py` | migração da coluna; head atual = `c5a71f0e3b92` |
-| `routers/auth.py:93-162` | `GET`/`PUT`/`DELETE /api/me/lusha` — conectar, checar, desconectar |
-| `services/providers/lusha.py` | `is_configured()`, `credencial_valida()`, `find_contacts()` (pessoa única, `/v2/person`), `_digits_to_e164()`, extratores tolerantes |
-| `services/people/waterfall.py` | Lusha como passo 5 da cascata de revelação |
-| `routers/extension.py:43` | `_lusha_key_utilizavel()` — decifra a chave e trata o marcador `ILEGIVEL` |
+| `services/providers/lusha_prospecting.py` | **novo** — `search_contacts()`, `enrich_contacts()`, `get_account_usage()`, `parse_contact()`, e as constantes verificadas da §3 (senioridade, departamentos, pontos de dados, preços) |
+| `alembic/versions/0014_contatos_de_prospecting.py` | **novo** — 9 colunas em `decision_makers`; head passa a ser `7d3c1a94ef60` |
+| `models/database.py` | campos de prospecting em `DecisionMaker`; `ALEMBIC_HEAD` atualizado |
+| `models/schemas.py` | `DecisionMakerOut` estendido; `ContatosResponse`, `RevelarRequest`, `RevelarResponse` |
+| `routers/enrichment.py` | `GET /leads/{id}/contacts`, `POST /decision-makers/{id}/reveal`, `GET /lusha/filters` |
+| `routers/auth.py` | `GET /me/lusha` devolve saldo, limites e tabela de preços |
+| `static/js/app.js` | seção de prospecting: sidebar, cards, revelação sob clique, paginação; `_lushaSaldo()` em Configurações |
+| `static/css/styles.css` | classes `.pr-*` (substituíram as `.lusha-*` do card) e `.lu-*` (saldo) |
+| `tests/test_lusha_prospecting.py` | **novo** — 60 testes de provedor |
+| `tests/test_contatos_prospecting.py` | **novo** — 27 testes de endpoint |
+| `tests/fixtures/` | **novo** — `lusha_search.json`, `lusha_enrich.json`, `LEIA-ME.md` |
 
-Nada disso precisa mudar. `find_contacts()` (pessoa única) continua válido para a
-cascata de revelação — o problema é só o `find_company_contacts()`.
+### Removido
 
-### Implementado mas errado — substituir
-
-| Arquivo | Problema |
+| O quê | Por quê |
 |---|---|
-| `services/providers/lusha.py:262-341` | `find_company_contacts()` chama `/v2/company`, endpoint errado (ver seção 2) |
-| `routers/enrichment.py:168-261` | `GET /leads/{id}/popular-contacts` — depende da função acima; sem paginação, sem filtros, sem estado de revelado |
-| `static/js/app.js:2197+` | `renderLushaContacts()` — renderiza tudo já revelado, sem botão de revelar, sem filtros, sem paginação. **Localização está chumbada como "São Paulo, Brazil"** (linha ~2210) |
-| `static/css/styles.css:791-836` | classes `.lusha-*` — servem de base, faltam sidebar, paginação e estados |
+| `lusha.find_company_contacts()` | chamava `/v2/company`, endpoint errado (§2) |
+| `GET /leads/{id}/popular-contacts` | dependia da função acima; substituído por `/contacts` |
+| `renderLushaContacts()` e classes `.lusha-*` do card | substituídos pela seção `.pr-*`, que tem filtros, paginação e estado de revelado |
+| `tests/test_popular_contacts_integration.py` | mockava o formato antigo; coberto por `test_contatos_prospecting.py` |
 
-### Dívida técnica encontrada
+### ⚠️ Correção a uma afirmação deste documento
 
-- `static/js/app.js:~2290-2340`: `renderDecisoresV2()` e as classes `dec2-*` são a
-  implementação anterior, **hoje sem nenhum chamador** (foi substituída por
-  `renderLushaContacts`). Remover junto com o CSS `dec2-*` correspondente.
-- `tests/test_popular_contacts_integration.py`: os testes existentes mockam o
-  formato antigo. Terão de ser reescritos junto com o endpoint.
+A versão original dizia que `renderDecisoresV2()` e as classes `dec2-*` estavam
+**sem nenhum chamador** e mandava removê-las. **Isso está errado**:
+`searchDecisores()` chama `renderDecisoresV2()` em `static/js/app.js`. A função
+é a que renderiza o resultado da busca por cargo (`POST /api/decisores`), que é
+um fluxo diferente e continua vivo. Removê-la quebraria essa busca. **Não foi
+removida.**
+
+### Mantido intacto
+
+`is_configured()`, `credencial_valida()`, `find_contacts()` (pessoa única, via
+`/v2/person`), `_digits_to_e164()` e os extratores tolerantes de `lusha.py`
+continuam válidos — a cascata de revelação (`services/people/waterfall.py`)
+depende deles e não mudou. `lusha_prospecting.py` reaproveita
+`_digits_to_e164()` e `_PHONE_TYPE_MAP` em vez de duplicá-los.
 
 ---
 
@@ -490,3 +554,49 @@ git push origin master
 
 Rodar a suíte **antes** de cada push. Não fazer push com teste vermelho sem dizer
 claramente, na mensagem para o usuário, qual teste está falhando e por quê.
+
+---
+
+## 11. ⚠️ O que ficou pendente: fechar a Fase 0
+
+**Isto é o único item aberto, e é o mesmo tipo de risco que causou o erro da §2.**
+
+As fixtures em `tests/fixtures/lusha_search.json` e `lusha_enrich.json` foram
+montadas a partir da **documentação oficial**, não capturadas de uma resposta
+real. O que está confirmado (paths, header `api_key`, `contactIds[]`, códigos de
+erro, headers de limite) está na §4. O que **não** está: o nome exato de cada
+campo de um contato.
+
+O parser (`parse_contact()`) aceita mais de um nome por campo — `name` ou
+`firstName`/`lastName`, `jobTitle` ou `currentTitle`, e assim por diante. Isso
+evita quebrar na primeira divergência, mas **não substitui verificação**: um
+campo pode estar sendo lido do lugar errado e ninguém perceber, que é
+exatamente o que aconteceu com `/v2/company`.
+
+### Como fechar (custa 1 crédito)
+
+Com uma chave conectada, num terminal — a chave vem de variável de ambiente
+para não ficar no histórico:
+
+```bash
+curl -s -X POST https://api.lusha.com/v3/contacts/prospecting   -H "api_key: $LUSHA_API_KEY"   -H "Content-Type: application/json"   -d '{"filters":{"companies":{"domains":["nubank.com.br"]}},"pages":{"page":0,"size":10}}'   > tests/fixtures/lusha_search.json
+```
+
+Depois:
+
+1. `python -m pytest tests/test_lusha_prospecting.py -q`
+2. Ajustar `parse_contact()` onde os nomes divergirem.
+3. Repetir para o enrich com **um** ID (`POST /v3/contacts/enrich`, corpo
+   `{"contactIds":["<id>"]}`), gravando em `tests/fixtures/lusha_enrich.json`.
+4. Apagar o aviso no topo de `tests/test_lusha_prospecting.py` e a seção
+   correspondente de `tests/fixtures/LEIA-ME.md`.
+
+Feito isso, uma mudança futura de formato da Lusha quebra um teste em vez de
+degradar em silêncio — que é o ponto inteiro da §9.4.
+
+### Divergência entre fontes, ainda não resolvida
+
+A documentação v3 diz que o enrich aceita até **100** IDs por requisição; a
+ferramenta MCP expõe **50**. O código usa 50 (`ENRICH_MAX_IDS`) — o menor dos
+dois é o único valor seguro enquanto as fontes discordam. Se a chamada real
+confirmar 100, dá para subir a constante e ganhar metade das requisições.
