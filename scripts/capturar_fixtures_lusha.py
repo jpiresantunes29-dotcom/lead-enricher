@@ -141,9 +141,14 @@ def main() -> int:
     chave = _chave()
 
     print(f"→ search: {args.domain} ({args.size} contatos, 1 crédito)")
+    # Confirmado em 2026-09-07 contra o OpenAPI oficial: domínio fica em
+    # filters.companies.include.domains, e a paginação é `pagination`, não
+    # `pages`. A primeira tentativa (sem os níveis "include" e com "pages")
+    # devolvia 400 "property X should not exist" — é exatamente o tipo de
+    # divergência que este script existe para pegar.
     busca = _post(_SEARCH_URL, chave, {
-        "filters": {"companies": {"domains": [args.domain]}},
-        "pages": {"page": 0, "size": args.size},
+        "filters": {"companies": {"include": {"domains": [args.domain]}}},
+        "pagination": {"page": 0, "size": args.size},
     })
     destino = _gravar("lusha_search.json", busca)
     print(f"  gravado em {destino.relative_to(_RAIZ)}")
@@ -166,7 +171,8 @@ def main() -> int:
             return 1
         cid = primeiro["lusha_contact_id"]
         print(f"\n→ enrich: 1 contato ({primeiro['name']}, +1 crédito por e-mail)")
-        revelado = _post(_ENRICH_URL, chave, {"contactIds": [cid]})
+        # Campo confirmado é `ids`, não `contactIds`.
+        revelado = _post(_ENRICH_URL, chave, {"ids": [cid]})
         destino = _gravar("lusha_enrich.json", revelado)
         print(f"  gravado em {destino.relative_to(_RAIZ)}")
 

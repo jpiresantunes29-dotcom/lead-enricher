@@ -1,74 +1,512 @@
 {
-  "requestId": "req_7f3a9c1e",
-  "total": 47,
-  "data": [
+  "requestId": "ee918103-e8ec-4c7a-b3fc-ebeda4a9cc61",
+  "pagination": {
+    "page": 0,
+    "size": 10,
+    "total": 10699
+  },
+  "results": [
     {
-      "id": "v1.eyJjb250YWN0SWQiOiIxMjM0NSJ9",
+      "id": "v1.zIfDcBPYH1LrjoDWCmfLU9EDUsnOar6TLQ",
+      "firstName": "David",
+      "lastName": "Vélez",
+      "jobTitle": {
+        "title": "Founder, Chief Executive Officer",
+        "departments": [
+          "General Management"
+        ],
+        "seniority": "founder"
+      },
+      "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      },
+      "location": {
+        "country": "Brazil",
+        "state": "São Paulo",
+        "city": "São Paulo"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/david-vélez-1004875"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 0
+        },
+        {
+          "field": "phones",
+          "credits": 0
+        }
+      ]
+    },
+    {
+      "id": "v1._aodWTH7lOhu9LpVDtXDhlDJmtpo1n1rhQ",
+      "firstName": "John",
+      "lastName": "Walton",
+      "jobTitle": {
+        "title": "Chief Information Security Officer",
+        "departments": [
+          "Information Technology"
+        ],
+        "seniority": "c-suite"
+      },
+      "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      },
+      "location": {
+        "country": "United States",
+        "state": "Washington",
+        "city": "Woodinville"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/john-walton-6960341"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
+      ]
+    },
+    {
+      "id": "v1._xoy6s0bCJOjA-uObg391_Jecp3zdWO0Xg",
+      "firstName": "Rob",
+      "lastName": "Livingston",
+      "jobTitle": {
+        "title": "Chief Financial Officer",
+        "departments": [
+          "Finance"
+        ],
+        "seniority": "c-suite"
+      },
+      "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      },
+      "location": {
+        "country": "United States"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/rob-livingston-4a8924"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
+      ]
+    },
+    {
+      "id": "v1.HPLJDjX1WnTKL_zl-HZZMecukUuE3RJcww",
+      "firstName": "Henrique",
+      "lastName": "Pizzotti",
+      "jobTitle": {
+        "title": "Director of Product - Global Platforms",
+        "departments": [
+          "Product"
+        ],
+        "seniority": "director"
+      },
+      "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      },
+      "location": {
+        "country": "Brazil",
+        "state": "São Paulo",
+        "city": "São Paulo"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/henrique-pizzotti"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
+      ]
+    },
+    {
+      "id": "v1.4MyaJShYdFibqab9XntDrob3Jl2szamb8g",
+      "firstName": "Livia",
+      "lastName": "Chanes",
+      "jobTitle": {
+        "title": "Other",
+        "departments": [
+          "Other"
+        ],
+        "seniority": "non-manager"
+      },
+      "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      },
+      "location": {
+        "country": "Brazil",
+        "state": "São Paulo",
+        "city": "São Paulo"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/livia-chanes-1b147a4"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
+      ]
+    },
+    {
+      "id": "v1.pCv54n4revRvfskZWR2ipLT-DmDqctNHWQ",
+      "firstName": "Cristina",
+      "lastName": "Junqueira",
+      "jobTitle": {
+        "title": "Co-Founder",
+        "departments": [
+          "General Management"
+        ],
+        "seniority": "founder"
+      },
+      "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      },
+      "location": {
+        "country": "United States",
+        "state": "Florida",
+        "city": "Miami"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/crisjunqueira"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 0
+        },
+        {
+          "field": "phones",
+          "credits": 0
+        }
+      ]
+    },
+    {
+      "id": "v1.S8YBymNF79SmQo_gHVyb18oX2YnDze5HjQ",
       "firstName": "Ana",
-      "lastName": "Ribeiro",
-      "jobTitle": "Chief Technology Officer",
-      "linkedinUrl": "https://www.linkedin.com/in/ana-ribeiro-tech",
-      "seniority": 9,
-      "department": "Engineering & Technical",
-      "location": {
-        "city": "Sao Paulo",
-        "state": "Sao Paulo",
-        "country": "Brazil"
+      "lastName": "Portillo",
+      "jobTitle": {
+        "title": "Head of Strategy and Corporate Development",
+        "departments": [
+          "General Management"
+        ],
+        "seniority": "director"
       },
       "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
         "name": "Nubank",
-        "domain": "nubank.com.br",
-        "industries": ["Financial Services", "Banking", "Technology", "Fintech"]
+        "domain": "nubank.com.br"
       },
-      "has": ["work_email", "mobile_phone", "mobile_phone"],
+      "location": {
+        "country": "Mexico",
+        "state": "México",
+        "city": "Mexico City"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/adportillo"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
       "canReveal": [
-        {"field": "emails", "credits": 1},
-        {"field": "phones", "credits": 5}
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
       ]
     },
     {
-      "id": "v1.eyJjb250YWN0SWQiOiI2Nzg5MCJ9",
-      "firstName": "Bruno",
-      "lastName": "Carvalho",
-      "jobTitle": "VP of Sales",
-      "linkedinUrl": "https://www.linkedin.com/in/bruno-carvalho",
-      "seniority": 8,
-      "department": "Sales",
-      "location": {
-        "city": "Rio de Janeiro",
-        "state": "Rio de Janeiro",
-        "country": "Brazil"
+      "id": "v1.yrGy0WS6Q26APW16XaGSseKBEmzMP4k5pQ",
+      "firstName": "Tulio",
+      "lastName": "Oliveira",
+      "jobTitle": {
+        "title": "Vice President and General Manager of High Income and Investments",
+        "departments": [
+          "Finance"
+        ],
+        "seniority": "vice president"
       },
       "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
         "name": "Nubank",
-        "domain": "nubank.com.br",
-        "industries": ["Financial Services", "Banking"]
+        "domain": "nubank.com.br"
       },
-      "has": ["work_email"],
+      "location": {
+        "country": "Brazil",
+        "state": "São Paulo",
+        "city": "São Paulo"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/tulio-oliveira-a3749625"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
       "canReveal": [
-        {"field": "emails", "credits": 1}
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
       ]
     },
     {
-      "id": "v1.eyJjb250YWN0SWQiOiIxMTExMSJ9",
-      "firstName": "Carla",
-      "lastName": "Menezes",
-      "jobTitle": "Head of People",
-      "linkedinUrl": null,
-      "seniority": 6,
-      "department": "Human Resources",
-      "location": {
-        "city": "Lisbon",
-        "state": null,
-        "country": "Portugal"
+      "id": "v1.WaTaXZ0sHIp-l9MFXyx04v9We74r-xxi0g",
+      "firstName": "Taeli",
+      "lastName": "Klaumann",
+      "jobTitle": {
+        "title": "Finance Director",
+        "departments": [
+          "Finance"
+        ],
+        "seniority": "director"
       },
       "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
         "name": "Nubank",
-        "domain": "nubank.com.br",
-        "industries": ["Financial Services"]
+        "domain": "nubank.com.br"
       },
-      "has": [],
-      "canReveal": []
+      "location": {
+        "country": "Brazil",
+        "state": "São Paulo",
+        "city": "São Paulo"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/taeliklaumann"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
+      ]
+    },
+    {
+      "id": "v1.O_gjzm8-HC86BtqvgWE0G8gAfUsQNgbKcw",
+      "firstName": "Joao",
+      "lastName": "Seixas",
+      "jobTitle": {
+        "title": "Director of Software Engineering",
+        "departments": [
+          "Engineering & Technical"
+        ],
+        "seniority": "director"
+      },
+      "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
+        "name": "Nubank",
+        "domain": "nubank.com.br"
+      },
+      "location": {
+        "country": "Brazil",
+        "state": "São Paulo",
+        "city": "São Paulo"
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/joaoboscoseixas"
+      },
+      "has": [
+        "firstName",
+        "lastName",
+        "jobTitle",
+        "company",
+        "location",
+        "socialLinks",
+        "emails",
+        "phones",
+        "previousEmployment",
+        "linkedinConnections",
+        "linkedinFollowers",
+        "jobStartDate",
+        "partialProfile"
+      ],
+      "canReveal": [
+        {
+          "field": "emails",
+          "credits": 1
+        },
+        {
+          "field": "phones",
+          "credits": 5
+        }
+      ]
     }
-  ]
+  ],
+  "billing": {
+    "creditsCharged": 1,
+    "resultsReturned": 10,
+    "lowBalance": false
+  }
 }

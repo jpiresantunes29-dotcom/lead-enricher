@@ -14,6 +14,7 @@ para fechar isso (custa 1 crédito). Até lá, estes testes provam que o parser 
 coerente com o formato documentado — não que o formato documentado é o real.
 """
 import json
+import unicodedata
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -40,25 +41,36 @@ def _resposta(status=200, payload=None, headers=None):
 # ── Parser contra fixture ───────────────────────────────────────────────────
 
 def test_parser_contra_fixture_do_search():
-    """Cada campo que a tela usa sai do lugar certo da resposta."""
+    """
+    Cada campo que a tela usa sai do lugar certo da resposta.
+
+    Fixture capturada de uma chamada REAL em 2026-09-07 (domínio
+    nubank.com.br, chave própria do usuário, 1 crédito) — não montada a
+    partir de documentação. É a mesma empresa que o usuário mostrou numa
+    screenshot da extensão da Lusha, e o primeiro nome que sai (David Vélez,
+    fundador) bate com o primeiro contato da screenshot.
+    """
     payload = _carregar("lusha_search.json")
-    contatos = [lp.parse_contact(c) for c in payload["data"]]
+    contatos = [lp.parse_contact(c) for c in payload["results"]]
     contatos = [c for c in contatos if c]
 
-    assert len(contatos) == 3
+    assert len(contatos) == 10
 
-    ana = contatos[0]
-    assert ana["lusha_contact_id"] == "v1.eyJjb250YWN0SWQiOiIxMjM0NSJ9"
-    assert ana["name"] == "Ana Ribeiro"
-    assert ana["title"] == "Chief Technology Officer"
-    assert ana["linkedin_url"] == "https://www.linkedin.com/in/ana-ribeiro-tech"
-    assert ana["department"] == "Engineering & Technical"
-    # Senioridade vem como ID e precisa virar rótulo: 9 é c-suite.
-    assert ana["seniority"] == "c-suite"
-    assert ana["company_name"] == "Nubank"
-    assert ana["company_industries"] == [
-        "Financial Services", "Banking", "Technology", "Fintech",
-    ]
+    david = contatos[0]
+    assert david["lusha_contact_id"] == "v1.zIfDcBPYH1LrjoDWCmfLU9EDUsnOar6TLQ"
+    # NFC vs NFD: o "é" pode chegar como um único codepoint ou como "e" +
+    # acento combinante — normaliza antes de comparar para não depender de
+    # qual forma o editor deste arquivo escolheu.
+    assert unicodedata.normalize("NFC", david["name"]) == "David Vélez"
+    assert david["title"] == "Founder, Chief Executive Officer"
+    assert david["linkedin_url"] == "https://www.linkedin.com/in/david-vélez-1004875"
+    assert david["department"] == "General Management"
+    # Senioridade no search já vem como rótulo em texto minúsculo, não ID.
+    assert david["seniority"] == "founder"
+    assert david["company_name"] == "Nubank"
+    # `company.industry` não veio no search desta fixture real (só `id`,
+    # `name`, `domain`) — confirma que industry é exclusivo do enrich.
+    assert david["company_industries"] == []
 
 
 def test_parser_monta_localizacao_da_api_e_nao_de_texto_fixo():
@@ -67,12 +79,15 @@ def test_parser_monta_localizacao_da_api_e_nao_de_texto_fixo():
     minoria e errado para todo o resto. A localização tem que vir do contato.
     """
     payload = _carregar("lusha_search.json")
-    contatos = [lp.parse_contact(c) for c in payload["data"]]
+    contatos = [lp.parse_contact(c) for c in payload["results"]]
 
-    assert contatos[0]["location"] == "Sao Paulo, Brazil"
-    assert contatos[1]["location"] == "Rio de Janeiro, Brazil"
-    # Sem estado, não sobra vírgula solta nem campo vazio.
-    assert contatos[2]["location"] == "Lisbon, Portugal"
+    # City e state de David são o mesmo texto ("São Paulo") — o dedup do
+    # parser junta os dois em vez de repetir.
+    assert contatos[0]["location"] == "São Paulo, Brazil"
+    # John Walton mora nos EUA — a fixture prova que o rótulo não é chumbado.
+    assert contatos[1]["location"] == "Woodinville, Washington, United States"
+    # Rob Livingston só tem country — sem vírgula solta nem campo vazio.
+    assert contatos[2]["location"] == "United States"
 
 
 def test_parser_le_can_reveal_com_o_custo():
@@ -81,23 +96,33 @@ def test_parser_le_can_reveal_com_o_custo():
     Sem ele a tela ofereceria revelação que a Lusha recusaria com 400.
     """
     payload = _carregar("lusha_search.json")
-    ana, bruno, carla = [lp.parse_contact(c) for c in payload["data"]]
+    david, john = [lp.parse_contact(c) for c in payload["results"][:2]]
 
-    assert ana["can_reveal"] == [
+    # David já tinha sido revelado antes (por esta conta): credits 0 em
+    # ambos os campos é o sinal real de "grátis para re-enriquecer".
+    assert david["can_reveal"] == [
+        {"field": "emails", "credits": 0},
+        {"field": "phones", "credits": 0},
+    ]
+    # John nunca foi revelado: preço cheio.
+    assert john["can_reveal"] == [
         {"field": "emails", "credits": 1},
         {"field": "phones", "credits": 5},
     ]
-    # Bruno só tem e-mail: o botão de telefone não pode aparecer para ele.
-    assert [i["field"] for i in bruno["can_reveal"]] == ["emails"]
-    # Carla não tem nada revelável — card sem botão.
-    assert carla["can_reveal"] == []
 
 
 def test_parser_conta_pontos_de_dados_para_os_badges():
-    """Dois celulares viram badge "2", não duas entradas soltas."""
+    """
+    `has` no formato real (V3ContactPreview) é um conjunto de nomes de campo
+    presentes, não uma contagem por quantidade — cada campo aparece no máximo
+    uma vez. O badge "quantos celulares" não tem suporte confirmado; o que a
+    API garante é "este contato tem telefone", não "tem dois".
+    """
     payload = _carregar("lusha_search.json")
-    ana = lp.parse_contact(payload["data"][0])
-    assert ana["data_points"] == {"work_email": 1, "mobile_phone": 2}
+    david = lp.parse_contact(payload["results"][0])
+    assert david["data_points"]["phones"] == 1
+    assert david["data_points"]["emails"] == 1
+    assert "mobile_phone" not in david["data_points"]
 
 
 def test_search_nao_traz_email_nem_telefone():
@@ -106,33 +131,47 @@ def test_search_nao_traz_email_nem_telefone():
     ninguém ter clicado — e o crédito teria sido gasto sem pedido.
     """
     payload = _carregar("lusha_search.json")
-    for bruto in payload["data"]:
+    for bruto in payload["results"]:
         c = lp.parse_contact(bruto)
         assert c["emails"] == []
         assert c["phones"] == []
 
 
 def test_parser_contra_fixture_do_enrich():
+    """
+    Fixture capturada de uma chamada REAL de enrich em 2026-09-07 (mesmo
+    contato do search acima, David Vélez — +1 crédito, mas cobrou 0 porque já
+    tinha sido revelado antes por esta conta, confirmando o canReveal.credits
+    de 0 do search).
+    """
     payload = _carregar("lusha_enrich.json")
-    ana = lp.parse_contact(payload["contacts"][0])
+    david = lp.parse_contact(payload["results"][0])
 
-    assert [e["email"] for e in ana["emails"]] == ["ana.ribeiro@nubank.com.br"]
-    assert ana["emails"][0]["confidence"] == lp.CONF_LUSHA
-    assert ana["emails"][0]["dataSource"] == "lusha"
+    assert [e["email"] for e in david["emails"]] == ["david.velez@nubank.com.br"]
+    assert david["emails"][0]["confidence"] == lp.CONF_LUSHA
+    # `dataSource` NÃO está no schema formal (V3EmailAddress/V3PhoneNumber),
+    # mas a resposta real da conta trouxe `"dataSource": "lusha"` mesmo assim
+    # — o schema publicado está incompleto. O parser aceita o campo quando
+    # vem, então o valor certo aqui é "lusha", não None.
+    assert david["emails"][0]["dataSource"] == "lusha"
+    assert david["company_industries"] == ["Finance"]
 
 
 def test_enrich_poe_celular_antes_do_fixo():
     """
     Celular é exatamente o que o caminho gratuito nunca entrega. Se o fixo
     vier primeiro, a tela mostra o número da central como se fosse o do
-    decisor.
+    decisor. A resposta real trouxe dois telefones — um "phone" (tipo não
+    mapeado, cai em "unknown") e um "mobile" — na ordem phone-depois-mobile;
+    o parser reordena.
     """
     payload = _carregar("lusha_enrich.json")
-    ana = lp.parse_contact(payload["contacts"][0])
+    david = lp.parse_contact(payload["results"][0])
 
-    assert ana["phones"][0]["type"] == "mobile"
-    assert ana["phones"][0]["e164"] == "+5511987654321"
-    assert ana["phones"][1]["type"] == "company"
+    assert len(david["phones"]) == 2
+    assert david["phones"][0]["type"] == "mobile"
+    assert david["phones"][0]["e164"] == "+59899381621"
+    assert david["phones"][1]["e164"] == "+16503872695"
 
 
 def test_parser_descarta_contato_sem_id():
@@ -154,16 +193,16 @@ def test_parser_nao_quebra_com_lixo():
 # Tudo aqui é recusado ANTES de sair da máquina. Um 400 da Lusha é uma ida que
 # não devolve dado e ainda pode cobrar — checar na entrada é de graça.
 
-@pytest.mark.parametrize("tamanho", [0, 1, 9, 51, 100, -5, None, "20"])
+@pytest.mark.parametrize("tamanho", [0, 1, 9, 101, 200, -5, None, "20"])
 def test_search_recusa_page_size_invalido_sem_ir_a_rede(tamanho):
     with patch.object(lp.requests, "post") as post:
         assert lp.search_contacts("chave", ["acme.com"], page_size=tamanho) is None
     post.assert_not_called()
 
 
-@pytest.mark.parametrize("tamanho", [10, 20, 50])
+@pytest.mark.parametrize("tamanho", [10, 25, 100])
 def test_search_aceita_page_size_no_intervalo(tamanho):
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": []})) as post:
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
         assert lp.search_contacts("chave", ["acme.com"], page_size=tamanho) is not None
     post.assert_called_once()
 
@@ -190,15 +229,15 @@ def test_search_sem_chave_nao_vai_a_rede():
     post.assert_not_called()
 
 
-def test_enrich_recusa_mais_de_50_ids_sem_ir_a_rede():
+def test_enrich_recusa_mais_de_100_ids_sem_ir_a_rede():
     with patch.object(lp.requests, "post") as post:
-        assert lp.enrich_contacts("chave", ["v1.x"] * 51) is None
+        assert lp.enrich_contacts("chave", ["v1.x"] * 101) is None
     post.assert_not_called()
 
 
-def test_enrich_aceita_exatamente_50_ids():
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"contacts": []})) as post:
-        assert lp.enrich_contacts("chave", ["v1.x"] * 50) is not None
+def test_enrich_aceita_exatamente_100_ids():
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
+        assert lp.enrich_contacts("chave", ["v1.x"] * 100) is not None
     post.assert_called_once()
 
 
@@ -224,17 +263,19 @@ def test_search_descarta_filtro_invalido_em_vez_de_repassar():
     Um ID de senioridade ou departamento inválido faria a Lusha rejeitar a
     requisição inteira. Descartar o valor solto preserva o resto da busca.
     """
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": []})) as post:
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
         lp.search_contacts(
             "chave", ["acme.com"],
             seniority_ids=[9, 999],
             departments=["Sales", "Departamento Inventado"],
             existing_data_points=["mobile_phone", "telepatia"],
         )
-    filtros = post.call_args.kwargs["json"]["filters"]["contacts"]
-    assert filtros["seniority"] == [9]
+    # Confirmado 2026-09-07: filtros de contato ficam em filters.contacts.include,
+    # e o campo de senioridade é seniorityIds (não seniority).
+    filtros = post.call_args.kwargs["json"]["filters"]["contacts"]["include"]
+    assert filtros["seniorityIds"] == [9]
     assert filtros["departments"] == ["Sales"]
-    assert filtros["existing_data_points"] == ["mobile_phone"]
+    assert filtros["existingDataPoints"] == ["mobile_phone"]
 
 
 # ── Degradação: nada aqui pode levantar exceção ─────────────────────────────
@@ -313,24 +354,28 @@ def test_erro_legivel_cobre_os_status_que_pedem_acao_diferente():
 
 def test_paginacao_chega_correta_ao_provedor():
     """`page` é 0-based na API — mandar 1-based pularia a primeira página."""
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": []})) as post:
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
         r = lp.search_contacts("chave", ["acme.com"], page=2, page_size=30)
 
     corpo = post.call_args.kwargs["json"]
-    assert corpo["pages"] == {"page": 2, "size": 30}
+    # Campo confirmado é `pagination`, não `pages` — a Lusha recusava com 400
+    # "property pages should not exist".
+    assert corpo["pagination"] == {"page": 2, "size": 30}
     assert r["page"] == 2
     assert r["page_size"] == 30
 
 
 def test_dominio_vai_normalizado_e_no_lugar_certo():
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": []})) as post:
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
         lp.search_contacts("chave", ["  NuBank.COM.BR  "])
     corpo = post.call_args.kwargs["json"]
-    assert corpo["filters"]["companies"]["domains"] == ["nubank.com.br"]
+    # Confirmado 2026-09-07: domínio fica em companies.include.domains, não
+    # companies.domains direto.
+    assert corpo["filters"]["companies"]["include"]["domains"] == ["nubank.com.br"]
 
 
 def test_chave_vai_no_header_api_key():
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": []})) as post:
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
         lp.search_contacts("  minha-chave  ", ["acme.com"])
     assert post.call_args.kwargs["headers"]["api_key"] == "minha-chave"
 
@@ -343,25 +388,29 @@ def test_total_vem_da_resposta_para_a_paginacao_funcionar():
     payload = _carregar("lusha_search.json")
     with patch.object(lp.requests, "post", return_value=_resposta(200, payload)):
         r = lp.search_contacts("chave", ["nubank.com.br"])
-    assert r["total"] == 47
+    # Total real da base da Lusha para nubank.com.br em 2026-09-07 (a página
+    # devolveu só 10, mas a empresa tem 10699 contatos catalogados).
+    assert r["total"] == 10699
 
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"data": payload["data"]})):
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": payload["results"]})):
         r = lp.search_contacts("chave", ["nubank.com.br"])
-    assert r["total"] == 3
+    # Sem `pagination.total` na resposta, cai para a contagem do que veio.
+    assert r["total"] == 10
 
 
-def test_enrich_manda_contact_ids_e_reveal():
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"contacts": []})) as post:
+def test_enrich_manda_ids_e_reveal():
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
         lp.enrich_contacts("chave", ["v1.a", "v1.b"], reveal=["emails"], waterfall_enabled=False)
     corpo = post.call_args.kwargs["json"]
-    assert corpo["contactIds"] == ["v1.a", "v1.b"]
+    # Campo confirmado é `ids`, não `contactIds` (V3ContactsEnrichRequest).
+    assert corpo["ids"] == ["v1.a", "v1.b"]
     assert corpo["reveal"] == ["emails"]
     assert corpo["waterfallEnabled"] is False
 
 
 def test_enrich_sem_waterfall_nao_manda_o_campo():
     """Omitir deixa a conta decidir; mandar False forçaria só-Lusha."""
-    with patch.object(lp.requests, "post", return_value=_resposta(200, {"contacts": []})) as post:
+    with patch.object(lp.requests, "post", return_value=_resposta(200, {"results": []})) as post:
         lp.enrich_contacts("chave", ["v1.a"])
     assert "waterfallEnabled" not in post.call_args.kwargs["json"]
 

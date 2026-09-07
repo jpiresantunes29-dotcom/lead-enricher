@@ -47,21 +47,22 @@ logger = logging.getLogger(__name__)
 _BASE = "https://api.lusha.com"
 _SEARCH_URL = f"{_BASE}/v3/contacts/prospecting"
 _ENRICH_URL = f"{_BASE}/v3/contacts/enrich"
-_USAGE_URL = f"{_BASE}/account/usage"
+_USAGE_URL = f"{_BASE}/v3/account/usage"
 
 _TIMEOUT = 12
 
-#: A API aceita 10..50 por página. Estourar isso é 400 — e um 400 depois de
-#: montar a requisição é crédito e tempo perdidos por algo que dava para
-#: checar antes de sair da máquina.
+#: Confirmado em 2026-09-07 contra o OpenAPI oficial (V3PaginationRequest):
+#: size aceita 10..100, default 25. A tentativa anterior (10..50, default 20)
+#: vinha da ferramenta MCP, não da API REST — não conferia.
 PAGE_SIZE_MIN = 10
-PAGE_SIZE_MAX = 50
-PAGE_SIZE_DEFAULT = 20
+PAGE_SIZE_MAX = 100
+PAGE_SIZE_DEFAULT = 25
 
-#: Teto de IDs por chamada de enrich. A documentação v3 fala em 100; ficamos em
-#: 50 porque é o limite que a ferramenta MCP expõe e o menor dos dois valores é
-#: o único seguro quando as duas fontes discordam.
-ENRICH_MAX_IDS = 50
+#: Confirmado em 2026-09-07 contra o OpenAPI oficial (V3ContactsEnrichRequest):
+#: minItems 1, maxItems 100. A constante anterior (50) vinha da ferramenta MCP,
+#: que era o menor dos dois valores quando as fontes discordavam — a REST é
+#: quem manda.
+ENRICH_MAX_IDS = 100
 
 
 # ── Vocabulário da API (verificado em 06/09/2026, conta premium) ────────────
@@ -211,8 +212,25 @@ def _nome(c: Dict[str, Any]) -> Optional[str]:
     return junto or None
 
 
+def _job_title_obj(c: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    `jobTitle` é um objeto aninhado na resposta real — `{title, departments,
+    seniority}` — não uma string solta na raiz do contato. Confirmado em
+    2026-09-07 contra o OpenAPI oficial (V3ContactPreview / resposta do
+    enrich). A suposição anterior (`jobTitle` como string) nunca foi testada
+    contra uma resposta real.
+    """
+    v = c.get("jobTitle")
+    return v if isinstance(v, dict) else {}
+
+
 def _cargo(c: Dict[str, Any]) -> Optional[str]:
-    for chave in ("jobTitle", "currentTitle", "title", "position"):
+    v = _job_title_obj(c).get("title")
+    if isinstance(v, str) and v.strip():
+        return v.strip()
+    # Fallback para formatos antigos/hipotéticos, caso um endpoint irmão
+    # (ex.: search-and-enrich) devolva o cargo solto na raiz.
+    for chave in ("currentTitle", "title", "position"):
         v = c.get(chave)
         if isinstance(v, str) and v.strip():
             return v.strip()
@@ -225,7 +243,11 @@ def _empresa(c: Dict[str, Any]) -> Dict[str, Any]:
         bruto = {}
     nome = bruto.get("name") or c.get("currentCompany") or c.get("companyName")
     dominio = bruto.get("domain") or c.get("currentDomain") or c.get("companyDomain")
-    setores = bruto.get("industries") or c.get("companyIndustries") or c.get("industries")
+    # Campo real é `industry`, string singular — não `industries` (lista).
+    # Aceita ambos: singular vira lista de um item, para o resto do código
+    # (que trata setores como lista, para as tags "Finanças, Bancos +2") não
+    # mudar de forma.
+    setores = bruto.get("industry") or bruto.get("industries") or c.get("companyIndustries")
     if isinstance(setores, str):
         setores = [setores]
     if not isinstance(setores, list):
@@ -258,6 +280,21 @@ def _localizacao(c: Dict[str, Any]) -> Optional[str]:
     return ", ".join(dict.fromkeys(partes)) or None
 
 
+def _linkedin_url(c: Dict[str, Any]) -> Optional[str]:
+    # Campo real é socialLinks.linkedin (objeto aninhado) — não linkedinUrl
+    # solto na raiz, que era suposição nunca verificada.
+    social = c.get("socialLinks")
+    if isinstance(social, dict):
+        v = social.get("linkedin")
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    for chave in ("linkedinUrl", "linkedin_url"):
+        v = c.get(chave)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
 def _can_reveal(c: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     `canReveal[]` e a fonte da verdade sobre o botao de revelar: diz quais
@@ -281,8 +318,18 @@ def _can_reveal(c: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def _data_points(c: Dict[str, Any]) -> Dict[str, int]:
     """
-    Contagem por tipo de dado, para os badges do card. Aceita tanto lista de
-    nomes quanto mapa nome->contagem.
+    Presença por campo, para os badges do card.
+
+    Confirmado em 2026-09-07 contra o OpenAPI oficial (V3ContactPreview.has):
+    é uma lista de NOMES DE CAMPO presentes no perfil (ex.: "firstName",
+    "jobTitle", "emails", "phones") — não uma contagem por quantidade de
+    telefone/e-mail. A suposição original ("📱² = dois celulares") não é o que
+    a API garante; cada campo aparece no máximo uma vez em `has`. A função
+    ainda devolve um mapa nome→contagem por compatibilidade com o card, mas na
+    prática todo valor vem 1 (presente) — o badge de contagem por quantidade
+    fica sem suporte confirmado até um teste com resposta real dizer o
+    contrário. Mantém suporte a mapa nome→contagem para não regredir se algum
+    dia a API mudar para isso.
     """
     bruto = c.get("has") or c.get("dataPoints") or c.get("existingDataPoints")
     if isinstance(bruto, dict):
@@ -302,7 +349,10 @@ def _data_points(c: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _senioridade(c: Dict[str, Any]) -> Optional[str]:
-    v = c.get("seniority")
+    # Campo real é jobTitle.seniority — já vem como rótulo em texto
+    # (ex.: "Manager", "Vice President"), não como um dos IDs 1-10 da
+    # constante SENIORITY (esses IDs só existem do lado do filtro de busca).
+    v = _job_title_obj(c).get("seniority")
     if isinstance(v, str) and v.strip():
         return v.strip()
     if isinstance(v, int):
@@ -311,10 +361,19 @@ def _senioridade(c: Dict[str, Any]) -> Optional[str]:
     if isinstance(v, dict):
         nome = v.get("name") or v.get("label")
         return nome.strip() if isinstance(nome, str) and nome.strip() else None
-    return None
+    # Fallback: raiz do contato, caso outro endpoint devolva solto.
+    v = c.get("seniority")
+    return v.strip() if isinstance(v, str) and v.strip() else None
 
 
 def _departamento(c: Dict[str, Any]) -> Optional[str]:
+    # Campo real é jobTitle.departments (lista) — mostramos o primeiro.
+    v = _job_title_obj(c).get("departments")
+    if isinstance(v, list) and v:
+        primeiro = v[0]
+        if isinstance(primeiro, str) and primeiro.strip():
+            return primeiro.strip()
+    # Fallback: raiz do contato, caso outro endpoint devolva solto.
     v = c.get("department") or c.get("departments")
     if isinstance(v, list):
         v = v[0] if v else None
@@ -395,7 +454,7 @@ def parse_contact(c: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "lusha_contact_id": contact_id.strip(),
         "name": nome,
         "title": _cargo(c),
-        "linkedin_url": c.get("linkedinUrl") or c.get("linkedin_url"),
+        "linkedin_url": _linkedin_url(c),
         "location": _localizacao(c),
         "department": _departamento(c),
         "seniority": _senioridade(c),
@@ -503,14 +562,21 @@ def search_contacts(
         logger.warning("Lusha search: page %r invalida (deve ser >= 0).", page)
         return None
 
-    filtros: Dict[str, Any] = {"companies": {"domains": dominios}}
+    # Confirmado em 2026-09-07 contra o OpenAPI oficial: o domínio de empresa
+    # fica em filters.companies.include.domains (não filters.companies.domains
+    # direto), e os filtros de contato ficam em filters.contacts.include.{...}
+    # (não soltos em filters.contacts). A primeira tentativa, sem os níveis
+    # "include", devolvia 400 "property X should not exist" da própria Lusha —
+    # é exatamente o tipo de erro silencioso que a §11 do documento avisava.
+    filtros: Dict[str, Any] = {"companies": {"include": {"domains": dominios}}}
     contatos: Dict[str, Any] = {}
     if job_titles:
         contatos["jobTitles"] = [t for t in job_titles if isinstance(t, str) and t.strip()]
     if seniority_ids:
         # IDs desconhecidos sao descartados em vez de repassados: a Lusha
         # rejeitaria a requisicao inteira por causa de um valor solto.
-        contatos["seniority"] = [s for s in seniority_ids if s in _SENIORITY_BY_ID]
+        # Campo real é `seniorityIds` — o nome `seniority` era suposição.
+        contatos["seniorityIds"] = [s for s in seniority_ids if s in _SENIORITY_BY_ID]
     if departments:
         contatos["departments"] = [d for d in departments if d in DEPARTMENTS]
     if countries:
@@ -518,12 +584,15 @@ def search_contacts(
     if existing_data_points:
         validos = [p for p in existing_data_points if p in DATA_POINTS]
         if validos:
-            contatos["existing_data_points"] = validos
+            # camelCase confirmado (`existingDataPoints`), não snake_case.
+            contatos["existingDataPoints"] = validos
             contatos["existingDataPointsCondition"] = "or"
     if contatos:
-        filtros["contacts"] = contatos
+        filtros["contacts"] = {"include": contatos}
 
-    corpo = {"filters": filtros, "pages": {"page": page, "size": page_size}}
+    # Campo de paginação é `pagination`, não `pages` — a Lusha recusava com
+    # 400 "property pages should not exist".
+    corpo = {"filters": filtros, "pagination": {"page": page, "size": page_size}}
 
     try:
         resp = requests.post(
@@ -565,7 +634,6 @@ def enrich_contacts(
     *,
     reveal: Optional[List[str]] = None,
     waterfall_enabled: Optional[bool] = None,
-    request_id: Optional[str] = None,
     erro_out: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """
@@ -599,13 +667,15 @@ def enrich_contacts(
             logger.warning("Lusha enrich: `reveal` sem campo valido — recusado antes da rede.")
             return None
 
-    corpo: Dict[str, Any] = {"contactIds": ids}
+    # Campo confirmado é `ids`, não `contactIds` — a documentação inicial (via
+    # ferramenta MCP) dizia `contactIds`; o OpenAPI oficial (V3ContactsEnrichRequest)
+    # diz `ids`. `requestId` também não existe nesse request (só em tableId,
+    # reveal, waterfallEnabled) — foi removido daqui.
+    corpo: Dict[str, Any] = {"ids": ids}
     if reveal:
         corpo["reveal"] = reveal
     if waterfall_enabled is not None:
         corpo["waterfallEnabled"] = bool(waterfall_enabled)
-    if request_id:
-        corpo["requestId"] = request_id
 
     try:
         resp = requests.post(
@@ -669,17 +739,49 @@ def get_account_usage(
     if not isinstance(payload, dict):
         return None
 
-    def _num(*chaves: str) -> Optional[int]:
+    # Formato real (AccountUsageResponse, confirmado 2026-09-07 contra o
+    # OpenAPI oficial): créditos e limites vêm no CORPO da resposta —
+    # `credits.{total,used,remaining}` e `rateLimits.{daily,hourly,minute}.
+    # {limit,used,remaining,resetsAt}` — não nos headers `x-*-requests-left`
+    # como a implementação original assumia (esses headers existem nas
+    # respostas de search/enrich, não necessariamente aqui). Mantém
+    # `limites_da_resposta()` como fallback caso o corpo não traga a seção.
+    def _num(fonte: Any, *chaves: str) -> Optional[int]:
+        if not isinstance(fonte, dict):
+            return None
         for chave in chaves:
-            v = payload.get(chave)
+            v = fonte.get(chave)
             if isinstance(v, int):
                 return v
         return None
 
+    credits = payload.get("credits")
+    rate_limits = payload.get("rateLimits")
+
+    def _janela(nome: str) -> Dict[str, Optional[int]]:
+        bruto = rate_limits.get(nome) if isinstance(rate_limits, dict) else None
+        return {
+            "limite": _num(bruto, "limit"),
+            "usado": _num(bruto, "used"),
+            "restante": _num(bruto, "remaining"),
+        }
+
+    limites = {
+        "minuto": _janela("minute"),
+        "hora": _janela("hourly"),
+        "dia": _janela("daily"),
+    }
+    # Se o corpo não trouxe rateLimits (conta sem esse detalhamento), cai para
+    # os headers da própria resposta — mesma ideia, fonte diferente.
+    if not any(v.get("restante") is not None for v in limites.values()):
+        limites = limites_da_resposta(resp)
+
     return {
-        "creditos_restantes": _num("credits_remaining", "creditsRemaining", "remaining"),
-        "creditos_usados": _num("credits_used", "creditsUsed", "used"),
-        "creditos_total": _num("credits_total", "creditsTotal", "total"),
-        "limites": limites_da_resposta(resp),
+        "creditos_restantes": _num(credits, "remaining"),
+        "creditos_usados": _num(credits, "used"),
+        "creditos_total": _num(credits, "total"),
+        "plano": payload.get("plan") if isinstance(payload.get("plan"), dict) else None,
+        "precos": payload.get("pricing") if isinstance(payload.get("pricing"), dict) else None,
+        "limites": limites,
         "bruto": payload,
     }

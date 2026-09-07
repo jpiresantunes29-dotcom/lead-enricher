@@ -143,9 +143,9 @@ def test_filtros_e_paginacao_chegam_ao_provedor(client):
     assert kw["existing_data_points"] == ["mobile_phone"]
 
 
-@pytest.mark.parametrize("pedido,esperado", [(1, 10), (5, 10), (999, 50), (50, 50)])
+@pytest.mark.parametrize("pedido,esperado", [(1, 10), (5, 10), (999, 100), (100, 100)])
 def test_page_size_e_limitado_ao_intervalo_da_api(client, pedido, esperado):
-    """Fora de 10..50 a Lusha devolve 400 — e um 400 pode cobrar crédito."""
+    """Fora de 10..100 a Lusha devolve 400 — e um 400 pode cobrar crédito."""
     lead = _make_lead(client)
 
     with patch("routers.enrichment._lusha_key_utilizavel", return_value="chave"), \
@@ -463,4 +463,4 @@ def test_filtros_nao_consomem_credito_e_vem_na_ordem_da_extensao(client):
     assert [s["id"] for s in d["seniority"]] == [10, 7, 9, 8, 6, 5, 4, 3, 2, 1]
     assert "Engineering & Technical" in d["departments"]
     assert d["pricing"]["revealPhone"]["credits"] == 5
-    assert d["page_size"] == {"min": 10, "max": 50, "default": 20}
+    assert d["page_size"] == {"min": 10, "max": 100, "default": 25}

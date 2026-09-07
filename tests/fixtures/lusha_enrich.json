@@ -1,44 +1,95 @@
 {
-  "requestId": "req_7f3a9c1e",
-  "contacts": [
+  "requestId": "13756e59-44fc-4ab2-abc1-0a77b29cc0cf",
+  "results": [
     {
-      "id": "v1.eyJjb250YWN0SWQiOiIxMjM0NSJ9",
-      "firstName": "Ana",
-      "lastName": "Ribeiro",
-      "jobTitle": "Chief Technology Officer",
-      "linkedinUrl": "https://www.linkedin.com/in/ana-ribeiro-tech",
+      "id": "v1.zIfDcBPYH1LrjoDWCmfLU9EDUsnOar6TLQ",
       "emails": [
         {
-          "email": "ana.ribeiro@nubank.com.br",
-          "emailType": "work",
-          "dataSource": "lusha"
-        },
-        {
-          "email": "ANA.RIBEIRO@nubank.com.br",
-          "emailType": "work",
+          "email": "david.velez@nubank.com.br",
+          "type": "work",
+          "confidence": "A+",
+          "updateDate": "2026-09-07",
           "dataSource": "lusha"
         }
       ],
       "phones": [
         {
-          "number": "+55 11 3003-4444",
-          "phoneType": "work",
+          "number": "+1 650-387-2695",
+          "type": "phone",
+          "doNotCall": false,
+          "countryIso2": "US",
+          "updateDate": "2026-09-07",
           "dataSource": "lusha"
         },
         {
-          "number": "11987654321",
-          "phoneType": "mobile",
+          "number": "+598 99 381 621",
+          "type": "mobile",
+          "doNotCall": false,
+          "countryIso2": "UY",
+          "updateDate": "2026-09-07",
           "dataSource": "lusha"
         }
       ],
-      "missingDataPoints": [],
+      "firstName": "David",
+      "lastName": "Vélez",
+      "fullName": "David Vélez",
+      "updateDate": "2026-09-07",
+      "linkedinConnections": 500,
+      "linkedinFollowers": 364811,
+      "partialProfile": false,
+      "jobTitle": {
+        "title": "Founder, Chief Executive Officer",
+        "departments": [
+          "General Management"
+        ],
+        "seniority": "Founder",
+        "startDate": "2013-05-01"
+      },
       "company": {
+        "id": "v1._DekMiba56PCe5S2mfbwbRnVV-vHpGE4",
         "name": "Nubank",
-        "domain": "nubank.com.br"
-      }
+        "domain": "www.nubank.com.br",
+        "industry": "Finance"
+      },
+      "location": {
+        "country": "Brazil",
+        "countryIso2": "BR",
+        "state": "São Paulo",
+        "stateCode": "SP",
+        "city": "São Paulo",
+        "continent": "South America",
+        "coordinates": [
+          -46.6361083984375,
+          -23.547500610351562
+        ],
+        "isEuContact": false
+      },
+      "socialLinks": {
+        "linkedin": "https://www.linkedin.com/in/david-vélez-1004875",
+        "xUrl": "https://x.com/velez_david"
+      },
+      "previousEmployment": [
+        {
+          "company": {
+            "name": "Nubank",
+            "domain": "nubank.com.br"
+          },
+          "jobTitle": {
+            "departments": [
+              "General Management"
+            ],
+            "title": "Founder and CEO",
+            "seniority": "Founder"
+          }
+        }
+      ]
     }
   ],
-  "status": "success",
-  "statusReason": null,
-  "statusDescription": null
+  "billing": {
+    "creditsCharged": 0,
+    "resultsReturned": 1,
+    "lowBalance": false
+  },
+  "status": "completed",
+  "statusDescription": "All requested data points were processed."
 }
