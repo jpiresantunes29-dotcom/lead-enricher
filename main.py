@@ -1,6 +1,7 @@
 import logging
 import logging.config
 import os
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -249,6 +250,25 @@ app.include_router(wa_connection_router.router)
 app.include_router(wa_sandbox_router.router)
 
 
+# A verificação de schema consulta o banco inteiro; monitor de uptime que bate
+# no /health a cada minuto não precisa refazê-la a cada batida. Só o resultado
+# saudável é guardado: banco degradado é reportado na hora, a cada chamada.
+_HEALTH_SCHEMA_TTL = 60.0
+_health_schema_cache: dict = {"ate": 0.0, "valor": None}
+
+
+def _schema_para_health() -> dict:
+    agora = time.monotonic()
+    if _health_schema_cache["valor"] is not None and agora < _health_schema_cache["ate"]:
+        return _health_schema_cache["valor"]
+    schema = schema_status()
+    if schema["ok"]:
+        _health_schema_cache.update(ate=agora + _HEALTH_SCHEMA_TTL, valor=schema)
+    else:
+        _health_schema_cache.update(ate=0.0, valor=None)
+    return schema
+
+
 @app.get("/health", tags=["meta"])
 def health():
     """
@@ -256,7 +276,7 @@ def health():
     aqui em vez de 500 no clique do usuário. O detalhe do que falta só sai
     fora de produção — em produção seria mapa da estrutura interna.
     """
-    schema = schema_status()
+    schema = _schema_para_health()
     payload = {
         "status": "ok" if schema["ok"] else "degraded",
         "version": app.version,

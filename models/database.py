@@ -641,11 +641,17 @@ def _missing_columns() -> dict:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
 
+    # Uma consulta para todas as tabelas: get_columns por tabela custa uma ida
+    # e volta ao banco cada, e com o banco remoto isso sozinho levava segundos
+    # no boot e em cada /health.
+    to_check = [t.name for t in Base.metadata.sorted_tables if t.name in existing_tables]
+    columns_by_table = inspector.get_multi_columns(filter_names=to_check)
+
     missing: dict = {}
     for table in Base.metadata.sorted_tables:
         if table.name not in existing_tables:
             continue
-        present = {c["name"] for c in inspector.get_columns(table.name)}
+        present = {c["name"] for c in columns_by_table.get((None, table.name), [])}
         absent = [c for c in table.columns if c.name not in present]
         if absent:
             missing[table.name] = absent

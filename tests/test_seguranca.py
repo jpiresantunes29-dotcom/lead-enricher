@@ -236,6 +236,34 @@ def test_health_reporta_schema(raw_client):
     assert dados["schema_ok"] is True
 
 
+def test_health_reaproveita_schema_saudavel_mas_nao_o_degradado(raw_client, monkeypatch):
+    import main
+
+    chamadas = []
+    respostas = iter([
+        {"ok": True, "missing_tables": [], "missing_columns": {}},
+        {"ok": False, "missing_tables": ["leads"], "missing_columns": {}},
+        {"ok": False, "missing_tables": ["leads"], "missing_columns": {}},
+    ])
+
+    def falso():
+        chamadas.append(1)
+        return next(respostas)
+
+    monkeypatch.setattr(main, "schema_status", falso)
+    monkeypatch.setitem(main._health_schema_cache, "valor", None)
+
+    assert raw_client.get("/health").json()["status"] == "ok"
+    assert raw_client.get("/health").json()["status"] == "ok"
+    assert len(chamadas) == 1          # a segunda saiu do cache
+
+    # Expira o cache: o banco degradou, e isso tem que aparecer na hora.
+    monkeypatch.setitem(main._health_schema_cache, "ate", 0.0)
+    assert raw_client.get("/health").json()["status"] == "degraded"
+    assert raw_client.get("/health").json()["status"] == "degraded"
+    assert len(chamadas) == 3          # degradado nunca é guardado
+
+
 # ── SSRF ─────────────────────────────────────────────────────────────────────
 #
 # O domínio pesquisado é entrada do usuário e vira um GET no servidor. A
