@@ -42,7 +42,7 @@ def enrich(
         raise HTTPException(status_code=422, detail="Domínio não pode estar vazio.")
 
     user_id = current_user.get("sub")
-    profile = get_or_create_profile(db, user_id)
+    profile = get_or_create_profile(db, user_id, current_user.get("email"))
 
     outcome = enrichment_service.enrich_for_user(db, profile, body.domain)
 
@@ -76,7 +76,7 @@ def enrich_existing_lead(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
 
-    profile = get_or_create_profile(db, user_id)
+    profile = get_or_create_profile(db, user_id, current_user.get("email"))
 
     outcome = enrichment_service.enrich_existing_lead(db, profile, lead)
 
@@ -108,7 +108,7 @@ def buscar_decisores(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
 
-    profile = get_or_create_profile(db, user_id)
+    profile = get_or_create_profile(db, user_id, current_user.get("email"))
 
     try:
         results = find_decision_makers(
@@ -251,7 +251,7 @@ def contatos_da_empresa(
         raise HTTPException(status_code=404, detail="Lead não encontrado.")
 
     dominio = lead.domain or lead.raw_input_domain
-    profile = get_or_create_profile(db, user_id)
+    profile = get_or_create_profile(db, user_id, current_user.get("email"))
     chave = _lusha_key_utilizavel(profile)
 
     # A validação do page_size acontece aqui também, e não só no provedor,
@@ -445,7 +445,7 @@ def revelar_contato(
             detail="Este contato veio de fonte pública e não pode ser revelado pela Lusha.",
         )
 
-    profile = get_or_create_profile(db, user_id)
+    profile = get_or_create_profile(db, user_id, current_user.get("email"))
     chave = _lusha_key_utilizavel(profile)
     if not chave:
         raise HTTPException(

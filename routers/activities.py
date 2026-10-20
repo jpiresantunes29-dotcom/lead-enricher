@@ -15,6 +15,7 @@ from models.schemas import ActivityCreate, ActivityUpdate, ActivityOut, Activity
 from services.activity_rules import (
     apply_rules, build_ics, ACTIVITY_TYPES, CALL_OUTCOMES,
 )
+from services import cadence
 from middleware.auth import get_current_user
 
 router = APIRouter(prefix="/api", tags=["activities"])
@@ -136,12 +137,18 @@ def update_activity(
 ):
     """Concluir, reagendar ou anotar uma atividade."""
     act = _get_user_activity(db, activity_id, current_user.get("sub"))
+    concluiu_agora = bool(body.completed) and act.completed_at is None
     if body.completed is not None:
         act.completed_at = datetime.now(UTC) if body.completed else None
     if body.due_at is not None:
         act.due_at = body.due_at
     if body.notes is not None:
         act.notes = body.notes
+    if concluiu_agora and act.step:
+        # Fim do ciclo de aquecimento reabre o próximo (o laço do fluxograma).
+        lead = db.query(Lead).filter(Lead.id == act.lead_id).first()
+        if lead:
+            cadence.ao_concluir(db, act, lead)
     db.commit()
     db.refresh(act)
     return act
@@ -180,8 +187,10 @@ def today_followups(
         .filter(
             Lead.user_id == user_id,
             # Follow-ups derivados pelas regras nascem como type=task;
-            # reuniões como type=meeting. Não existe type="followup".
-            Activity.type.in_(("task", "meeting")),
+            # reuniões como type=meeting. Não existe type="followup". A
+            # cadência também agenda ligações (call) e e-mails de aquecimento.
+            Activity.type.in_(("task", "meeting", "call", "email")),
+            Activity.due_at.isnot(None),
             Activity.completed_at.is_(None),
             func.date(Activity.due_at) == today_date,
         )

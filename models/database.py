@@ -130,6 +130,30 @@ class Lead(Base):
     #: Régua usada. Ficha pontuada por régua antiga continua reconhecível e
     #: pode ser recalculada — ver services/lead_scorer.SCORING_VERSION.
     score_version = Column(String(20), nullable=True)
+    # ── Tier comercial (services/tier_classifier.py) ────────────────────────
+    #
+    # Outra pergunta que a nota: a nota diz "consigo falar com quem decide?",
+    # o tier diz "esta empresa é alvo?". É o tier que decide em que lote de
+    # agendamento a ficha entra. Nulo = porte desconhecido, a revisar.
+    tier = Column(Integer, nullable=True, index=True)
+    #: O que a régua calculou. Guardado à parte para a tela mostrar "você pôs
+    #: Tier 1, a régua diria Tier 2" sem recalcular.
+    tier_auto = Column(Integer, nullable=True)
+    #: Escolha do vendedor. Quando preenchido, vence o automático.
+    tier_manual = Column(Integer, nullable=True)
+    #: Frase pronta para a tela ("Porte médio e usa Locaweb — alvo prioritário").
+    tier_reason = Column(String(500), nullable=True)
+    #: Caminho percorrido no fluxograma, serviço de e-mail e porte usados.
+    tier_details = Column(JSON, nullable=True)
+    # ── Cadência comercial (services/cadence.py) ────────────────────────────
+    #
+    # Onde a ficha está nos fluxogramas de contato. Nulo = "base não
+    # executada": é o estoque de onde o agendamento em lote tira os próximos.
+    # Separado de `stage` porque o kanban é do vendedor (ele arrasta); a
+    # cadência é da automação — misturar faria um arrasto desfazer tarefas.
+    cadence = Column(String(20), nullable=True, index=True)
+    cadence_attempt = Column(Integer, nullable=False, default=0)
+    first_contact_at = Column(DateTime(timezone=True), nullable=True)
     # Fase 5 — resumo executivo gerado por IA (cacheado)
     ai_summary = Column(Text, nullable=True)
     # Planilha importada: as células como vieram do arquivo, a linha de origem
@@ -209,9 +233,14 @@ class DecisionMaker(Base):
 
     company_industries = Column(JSON, nullable=True)
 
-    #: "lusha" ou "free". Sem isso não dá para distinguir "a Lusha não tinha
-    #: este contato" de "a Lusha nunca foi consultada".
+    #: "lusha", "free" ou "manual". Sem isso não dá para distinguir "a Lusha
+    #: não tinha este contato" de "a Lusha nunca foi consultada" — nem o
+    #: contato que o vendedor cadastrou de um palpite da coleta.
     source = Column(String(20), nullable=True)
+
+    #: O contato com quem a cadência fala. A agenda monta os links de
+    #: ligação, WhatsApp e e-mail a partir dele.
+    is_primary = Column(Boolean, nullable=False, default=False)
 
     lead = orm_relationship("Lead", back_populates="decision_makers")
 
@@ -232,8 +261,35 @@ class Activity(Base):
     due_at = Column(DateTime(timezone=True), nullable=True)       # follow-ups e reuniões
     completed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    #: Etapa da cadência que gerou a atividade (services/cadence.STEPS). Nula
+    #: em atividade avulsa. É o que permite à agenda dizer "2ª tentativa" em
+    #: vez de "tarefa", e ao fim do aquecimento reabrir o ciclo.
+    step = Column(String(30), nullable=True, index=True)
+    decision_maker_id = Column(Integer, ForeignKey("decision_makers.id", ondelete="SET NULL"),
+                               nullable=True)
 
     lead = orm_relationship("Lead", back_populates="activities")
+
+
+class CustomerDomain(Base):
+    """
+    Base de clientes do time: domínios que já são Skymail ou de revenda.
+
+    É a primeira pergunta do fluxograma de priorização — e a única que a coleta
+    não responde sozinha quando o MX não aponta para a Skymail (cliente de
+    revenda costuma ter MX do parceiro). Por time, não por usuário: a carteira
+    é da empresa, e cada vendedor cadastrar a sua seria pedir divergência.
+    """
+    __tablename__ = "customer_domains"
+    __table_args__ = (UniqueConstraint("team", "domain", name="uq_customer_team_domain"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    #: Domínio do e-mail do vendedor (services/tier_classifier.team_of).
+    team = Column(String(255), nullable=False, index=True)
+    domain = Column(String(255), nullable=False, index=True)
+    kind = Column(String(20), nullable=False, default="skymail")   # skymail | revenda
+    created_by = Column(String(36), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -822,7 +878,7 @@ class WhatsAppConnection(Base):
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "c4b8f21a7e35"
+ALEMBIC_HEAD = "d7e3a915f0c2"
 
 
 def _stamp_alembic_head() -> None:

@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime, UTC
 from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from services.phone_normalizer import normalize_input
 
@@ -53,11 +53,21 @@ class DecisionMakerOut(BaseModel):
     location: Optional[str] = None
     company_industries: Optional[List[Any]] = None
     source: Optional[str] = None
+    is_primary: Optional[bool] = False
 
     @computed_field
     @property
     def phone_is_mobile(self) -> Optional[bool]:
         return _telefone_e_celular(self.phone)
+
+    @computed_field
+    @property
+    def email(self) -> Optional[str]:
+        """Primeiro e-mail não inválido — o que a tela põe no botão de e-mail."""
+        for e in self.probable_emails or []:
+            if isinstance(e, dict) and e.get("email") and e.get("status") != "invalid":
+                return e["email"]
+        return None
 
 
 class LeadOut(BaseModel):
@@ -89,6 +99,15 @@ class LeadOut(BaseModel):
     priority: Optional[str] = None
     score_breakdown: Optional[Dict[str, Any]] = None
     score_version: Optional[str] = None
+    tier: Optional[int] = None
+    tier_auto: Optional[int] = None
+    tier_manual: Optional[int] = None
+    tier_reason: Optional[str] = None
+    tier_details: Optional[Dict[str, Any]] = None
+    relationship: Optional[str] = None
+    cadence: Optional[str] = None
+    cadence_attempt: Optional[int] = 0
+    first_contact_at: Optional[datetime] = None
     ai_summary: Optional[str] = None
     created_at: datetime
 
@@ -112,6 +131,23 @@ class LeadListOut(LeadOut):
     #: O detalhamento só é lido no popover de UMA ficha. Numa lista de cem ele
     #: seria centenas de KB que nenhuma coluna usa — mesmo motivo do dns_report.
     score_breakdown: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
+    #: O caminho do fluxograma só é lido no modal "por que Tier X?".
+    tier_details: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def tier_needs_review(self) -> bool:
+        """
+        Tier suposto (porte não encontrado) ou ausente — o filtro "Revisar".
+        Lê `tier_details` mesmo com ele fora da resposta: `exclude` só tira o
+        campo do JSON, não do objeto.
+        """
+        if self.status in ("pending", "failed"):
+            return False
+        if self.tier_manual:
+            return False
+        detalhes = self.tier_details or {}
+        return self.tier is None or bool(detalhes.get("needs_review"))
 
 
 class DnsReportResponse(BaseModel):
@@ -196,6 +232,20 @@ class ActivityOut(BaseModel):
     due_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     created_at: datetime
+    step: Optional[str] = None
+    decision_maker_id: Optional[int] = None
+
+    @field_validator("due_at", "completed_at", "created_at")
+    @classmethod
+    def _sempre_utc(cls, v: Optional[datetime]) -> Optional[datetime]:
+        """
+        Toda data do banco é UTC, mas o SQLite devolve sem fuso — e sem o
+        "+00:00" o navegador lê "12:00" como hora local, e a tarefa das 9h de
+        Brasília aparece ao meio-dia. Saindo com fuso, a tela converte certo.
+        """
+        if v is not None and v.tzinfo is None:
+            return v.replace(tzinfo=UTC)
+        return v
 
 
 class ActivityResponse(BaseModel):
@@ -212,18 +262,57 @@ class StageUpdate(BaseModel):
 
 class LeadUpdate(BaseModel):
     """
-    Correção manual da ficha.
+    Correção manual da ficha. Campo ausente não é tocado; string vazia no
+    telefone apaga o valor.
 
-    Só o telefone por enquanto — é o campo que a coleta erra com mais
-    frequência e o único que bloqueia o contato por WhatsApp. String vazia
-    apaga o valor; campo ausente não é tocado.
+    - `phone`: o campo que a coleta erra com mais frequência.
+    - `employees`: o porte, quando a coleta não achou — sem ele o tier não sai.
+    - `relationship`: marcar "já é cliente" à mão (vira Tier 4).
     """
     phone: Optional[str] = None
+    employees: Optional[int] = Field(default=None, ge=1, le=10_000_000)
+    relationship: Optional[str] = None
 
 
 class DecisionMakerUpdate(BaseModel):
-    """Celular do decisor, confirmado por quem está prospectando."""
+    """Contato do decisor, corrigido por quem está prospectando."""
+    name: Optional[str] = Field(default=None, max_length=255)
+    title: Optional[str] = Field(default=None, max_length=255)
     phone: Optional[str] = None
+    email: Optional[str] = Field(default=None, max_length=320)
+    linkedin_url: Optional[str] = Field(default=None, max_length=500)
+    is_primary: Optional[bool] = None
+
+
+class DecisionMakerCreate(DecisionMakerUpdate):
+    """Contato cadastrado à mão: o nome é o mínimo para existir."""
+    name: str = Field(min_length=1, max_length=255)
+
+
+# ── Tier e cadência ──────────────────────────────────────────────────────────
+
+class TierUpdate(BaseModel):
+    """Tier escolhido pelo vendedor. `None` devolve a decisão à régua."""
+    tier: Optional[int] = Field(default=None, ge=1, le=4)
+
+
+class CadenciaRequest(BaseModel):
+    resultado: str
+    notas: Optional[str] = Field(default=None, max_length=2000)
+    reuniao_em: Optional[datetime] = None
+
+
+class LoteRequest(BaseModel):
+    dia: date
+    total: int = Field(default=50, ge=1, le=500)
+    #: {"1": 40, "2": 5, "3": 5}
+    mix: Optional[Dict[str, int]] = None
+    preview: bool = True
+
+
+class ClientesRequest(BaseModel):
+    texto: str = Field(min_length=1, max_length=200_000)
+    kind: str = "skymail"
 
 
 # ── WhatsApp ─────────────────────────────────────────────────────────────────

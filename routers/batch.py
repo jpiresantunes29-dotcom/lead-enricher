@@ -35,7 +35,7 @@ def criar_lote(
 ):
     """Recebe domínios (lista ou texto/CSV colado) e enfileira um job por domínio."""
     user_id = current_user.get("sub")
-    get_or_create_profile(db, user_id)
+    get_or_create_profile(db, user_id, current_user.get("email"))
 
     brutos = list(body.domains or [])
     if body.text:

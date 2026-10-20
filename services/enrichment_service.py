@@ -24,6 +24,7 @@ from services.domain_finder import find_domain
 from services.importer import looks_like_domain
 from services.enricher import enrich_company, ENRICHMENT_VERSION
 from services.lead_scorer import apply_score
+from services.tier_classifier import apply_tier
 from services.people.waterfall import ingest_enrichment
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,13 @@ def finish_enrichment(db: Session, profile: Profile, domain: str, lead: Lead,
     # nascer ordenável: sem isso ela entraria no histórico sem nota e ficaria
     # invisível em qualquer lista ordenada por prioridade.
     apply_score(lead, decision_makers=[])
+    # E classifica no fluxograma de priorização: o tier é o que coloca a
+    # ficha num lote de agendamento sem o vendedor fazer nada. Falha aqui não
+    # pode derrubar a coleta — sem tier, a ficha só fica "a revisar".
+    try:
+        apply_tier(db, lead, profile.id, getattr(profile, "email", None))
+    except Exception:
+        logger.exception("Classificação de tier falhou domain=%s", domain)
 
     db.commit()
     db.refresh(lead)

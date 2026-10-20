@@ -314,7 +314,7 @@ async function signOut(){
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
-const ROUTES=['','lote','import','sheet','dashboard','pipeline','followups','conversas','history','settings'];
+const ROUTES=['','lote','import','sheet','dashboard','pipeline','agenda','followups','conversas','history','settings'];
 
 function nav(route){
   if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
@@ -343,6 +343,10 @@ const VIEW_META={
   pipeline:{
     title:'Pipeline de prospecção',
     sub:'Em que estágio está cada lead. Arraste o card ou use os botões para avançar.',
+  },
+  agenda:{
+    title:'Agenda do dia',
+    sub:'Quem contatar hoje, com ligação, WhatsApp e e-mail a um toque. Comece pelas atrasadas e registre o resultado no próprio card.',
   },
   followups:{
     title:'Follow-ups',
@@ -406,6 +410,7 @@ function applyRoute(){
   else if(h==='sheet'&&typeof loadSheet==='function')loadSheet();
   else if(h==='dashboard')loadDashboard();
   else if(h==='pipeline')loadPipeline();
+  else if(h==='agenda')loadAgenda();
   else if(h==='followups')loadFollowups();
   else if(h==='conversas')loadConversas();
   else if(h==='history')loadHistory();
@@ -458,6 +463,7 @@ async function loadRecent(){
           <span class="recent-name">${esc(name)}</span>
           <span class="recent-meta">${esc(stage)}${when?' · '+when:''}</span>
         </span>
+        ${tierBadgeHtml(l)}
       </button>`;
     }).join('');
     // Só aparece quando não há uma ficha aberta ocupando a tela
@@ -563,7 +569,7 @@ async function loadFollowups(){
       const isToday=due&&!isLate&&due.getTime()<=endOfDay.getTime();
       if(isLate)late++;else if(isToday)today++;
       const when=due?due.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'sem data';
-      const kind=a.type==='meeting'?'Reunião':'Retornar contato';
+      const kind=STEP_LABELS[a.step]||(a.type==='meeting'?'Reunião':'Retornar contato');
       const ics=a.type==='meeting'
         ? `<button class="fu-btn" onclick="downloadIcs(${a.id})" title="Baixar convite de calendário (.ics)">Convite .ics</button>`
         : '';
@@ -788,6 +794,7 @@ async function loadDashboard(){
     if(!dicas.length)dicas.push('Nada travado por aqui: follow-ups em dia e leads circulando no funil.');
 
     body.innerHTML=`
+      <div id="dash-tiers"></div>
       <div class="kpi-grid">
         ${kpi(m.leads_pesquisados,'Leads pesquisados','Empresas analisadas no período')}
         ${kpi(m.ligacoes_realizadas,'Ligações registradas','Tentativas anotadas na ficha do lead')}
@@ -810,6 +817,7 @@ async function loadDashboard(){
           </div>
         </div>
       </div>`;
+    loadDashTiers();
   }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
 }
 
@@ -852,7 +860,7 @@ async function loadPipeline(){
           ? `<button class="kb-move" title="Mover para ${STAGE_LABELS[STAGE_ORDER[i+1]]}" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">Avançar ▶</button>`
           : '<span class="kb-move ghost">Avançar ▶</span>';
         return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)" title="Arraste para outra coluna para mudar o estágio">
-          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${nome}">${nome}</button></div>
+          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${nome}">${nome}</button>${tierBadgeHtml(l)}</div>
           <div class="kb-domain">${esc(l.domain||'')}</div>
           <div class="kb-card-actions">${left}${right}</div>
         </div>`;
@@ -930,7 +938,20 @@ async function pushToCrm(){
 }
 
 /* ══════ TIMELINE ══════ */
-const ACT_LABELS={call:'Ligação',voicemail:'Caixa postal',no_answer:'Sem resposta',meeting:'Reunião',note:'Nota',followup:'Follow-up'};
+const ACT_LABELS={call:'Ligação',voicemail:'Caixa postal',no_answer:'Sem resposta',meeting:'Reunião',note:'Nota',followup:'Follow-up',task:'Tarefa',email:'E-mail',whatsapp:'WhatsApp',crm_push:'Envio ao CRM'};
+/* Etapas da cadência (ActivityOut.step) no idioma do vendedor. */
+const STEP_LABELS={
+  primeiro_contato:'1º contato',
+  tentativa_2:'2ª tentativa',
+  tentativa_3:'3ª tentativa',
+  contato_alternativo:'Mapear contato alternativo',
+  reuniao_qualificacao:'Reunião de qualificação',
+  proposta:'Proposta comercial',
+  aquec_email_1:'Aquecimento — e-mail 1',
+  aquec_email_2:'Aquecimento — e-mail 2',
+  aquec_email_3:'Aquecimento — e-mail 3',
+  aquec_whatsapp:'Aquecimento — WhatsApp',
+};
 const OUT_LABELS={no_answer:'não atendeu',busy:'ocupado',voicemail:'caixa postal',talked:'conversou',meeting_scheduled:'reunião agendada'};
 
 async function loadTimeline(){
@@ -944,10 +965,13 @@ async function loadTimeline(){
     box.style.display='block';
     const tl=acts.map(a=>{
       const cls=a.type==='meeting'?' ok':(a.outcome==='no_answer'||a.outcome==='busy'?' warn':'');
-      const when=a.completed_at?new Date(a.completed_at).toLocaleDateString('pt-BR'):(a.due_at?new Date(a.due_at).toLocaleDateString('pt-BR'):'');
-      const label=ACT_LABELS[a.type]||a.type;
+      const pendente=!a.completed_at&&a.due_at;
+      const when=a.completed_at?new Date(a.completed_at).toLocaleDateString('pt-BR'):(a.due_at?'previsto para '+new Date(a.due_at).toLocaleDateString('pt-BR'):'');
+      const tipo=ACT_LABELS[a.type]||a.type;
+      // Etapa da cadência vem primeiro: "2ª tentativa · Ligação" diz mais que "Ligação".
+      const label=STEP_LABELS[a.step]?`${STEP_LABELS[a.step]} · ${tipo}`:tipo;
       const out=a.outcome?(OUT_LABELS[a.outcome]||a.outcome):'';
-      return `<div class="tl-item${cls}"><span class="tl-dot"></span><span class="tl-content"><span><strong>${esc(label)}</strong>${out?' · '+esc(out):''}${when?' · '+when:''}</span>${a.notes?`<small>${esc(a.notes)}</small>`:''}</span></div>`;
+      return `<div class="tl-item${cls}${pendente?' open':''}"><span class="tl-dot"></span><span class="tl-content"><span><strong>${esc(label)}</strong>${out?' · '+esc(out):''}${when?' · '+esc(when):''}</span>${a.notes?`<small>${esc(a.notes)}</small>`:''}</span></div>`;
     }).join('');
     box.innerHTML=`<div class="tl-title">Timeline</div><div class="timeline-rail">${tl}</div>`;
   }catch(_){}
@@ -1040,15 +1064,29 @@ function renderResult(data){
     <div class="result-hdr">
       <div class="result-co">
         <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
-        <div><div class="result-name">${esc(data.company_name||data.domain||'Empresa')}</div><div class="result-domain">${esc(data.domain||'')}</div></div>
+        <div class="result-co-txt"><div class="result-name">${esc(data.company_name||data.domain||'Empresa')}</div><div class="result-domain">${esc(data.domain||'')}</div></div>
       </div>
-      <div class="result-hdr-right"><span id="result-score-badge">${scoreBadgeHtml(data,data.id)}</span><span class="status-pill ${sc}">${sl}</span></div>
+      <div class="result-hdr-right"><span id="result-tier-badge"></span><span id="result-score-badge">${scoreBadgeHtml(data,data.id)}</span><span class="status-pill ${sc}">${sl}</span></div>
+      <div class="result-tier-reason" id="result-tier-reason" style="display:none"></div>
     </div>
     <div class="lead-actions" id="lead-actions"></div>
+    <section class="np-section" id="np-section" aria-label="Próximo passo">
+      <div class="np-empty">Carregando o próximo passo…</div>
+    </section>
     <div class="sec-head"><span class="sec-num">1</span><h4>Ficha da empresa</h4><span>Dados públicos coletados a partir do domínio</span></div>
     ${blockNoteHtml(data)}
     <div class="result-grid">${cards.join('')}</div>
     ${dns}
+    <div class="dec-section mc-section">
+      <div class="mc-head">
+        <div>
+          <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>Contatos do decisor</div>
+          <div class="dec-sub">Quem você já conhece nesta empresa. O contato <strong>principal</strong> é quem a Agenda usa para montar a ligação, o WhatsApp e o e-mail.</div>
+        </div>
+        <button type="button" class="set-btn primary mc-add" id="mc-add" onclick="mcNovo()">+ Adicionar contato</button>
+      </div>
+      <div id="mc-list" class="mc-list"><div class="np-empty">Carregando contatos…</div></div>
+    </div>
     <div class="dec-section">
       <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Contatos populares da empresa</div>
       <div id="decisores-list" class="dec-list">
@@ -1059,8 +1097,11 @@ function renderResult(data){
         </div>
       </div>
     </div>
+    <!-- Registro avulso (anterior à cadência): fica recolhido. O caminho
+         principal é o painel "Próximo passo", no topo da ficha. -->
+    <details class="call-legacy" id="call-legacy">
+    <summary>Registrar uma ligação avulsa, fora da cadência</summary>
     <div class="call-section">
-      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg></span>Passo 3 · Registrar o resultado da ligação</div>
       <div class="dec-sub">Clique no que aconteceu. <strong>Não atendeu</strong>, <strong>Ocupado</strong> e <strong>Caixa postal</strong> criam sozinhos um follow-up para daqui a 2 dias; <strong>Conversou</strong> move o lead para "Contatado"; <strong>Reunião agendada</strong> pede a data e gera o convite .ics.</div>
       <div class="call-row">
         <button class="call-btn" onclick="logCall('no_answer')" title="Cria um follow-up para daqui a 2 dias">Não atendeu</button>
@@ -1073,12 +1114,18 @@ function renderResult(data){
         <input type="datetime-local" id="meet-when" class="role-inp" style="max-width:230px;flex:none"/>
         <button class="role-srch-btn" onclick="logCall('meeting_scheduled')">Confirmar reunião</button>
       </div>
-      <div id="call-feedback" class="call-feedback"></div>
     </div>
+    </details>
+    <div id="call-feedback" class="call-feedback call-feedback-out"></div>
     <div class="ai-box" id="ai-box" style="display:none"></div>
     <div id="timeline-box" style="display:none"></div>
   </div>`;
   renderLeadActions(data);
+  // Tier e próximo passo: a primeira coisa que o vendedor precisa entender.
+  _mcEdit=null;_cad=null;
+  renderTierHeader(data);
+  loadCadencia();
+  loadManualContacts();
   if(data.ai_summary){
     const box=document.getElementById('ai-box');
     box.style.display='block';
@@ -3079,12 +3126,14 @@ function _histSortVal(l,key){
     // Nao pontuada vai para o fim, nao para o topo — mesmo criterio do
     // `nullslast` do servidor em GET /api/leads?sort=score.
     case 'score':return l.score==null?-1:l.score;
+    // Ainda não classificado vai para depois do T4 na ordem crescente.
+    case 'tier':return l.tier==null?9:l.tier;
     default:return l.created_at||'';
   }
 }
 function sortHistory(key){
   if(_histSort.key===key)_histSort.dir*=-1;
-  else _histSort={key,dir:(key==='created_at'||key==='employees'||key==='score')?-1:1};
+  else _histSort={key,dir:(key==='created_at'||key==='employees'||key==='score')?-1:1};   // tier: T1 primeiro
   renderHistory(document.getElementById('history-filter').value);
 }
 
@@ -3092,9 +3141,12 @@ function renderHistory(q){
   const body=document.getElementById('history-body');
   const count=document.getElementById('history-count');
   const norm=(q||'').trim().toLowerCase();
-  const leads=(norm?_histLeads.filter(l=>
-    (l.company_name||'').toLowerCase().includes(norm)||(l.domain||'').toLowerCase().includes(norm)
-  ):[..._histLeads]).sort((a,b)=>{
+  const tf=document.getElementById('history-tier-filter');
+  if(tf)tf.innerHTML=histTierChipsHtml();
+  const leads=_histLeads.filter(l=>{
+    if(norm&&!((l.company_name||'').toLowerCase().includes(norm)||(l.domain||'').toLowerCase().includes(norm)))return false;
+    return _histTierPassa(l);
+  }).sort((a,b)=>{
     const va=_histSortVal(a,_histSort.key),vb=_histSortVal(b,_histSort.key);
     return (va<vb?-1:va>vb?1:0)*_histSort.dir;
   });
@@ -3105,7 +3157,11 @@ function renderHistory(q){
     body.innerHTML=`<div class="muted-box">Nenhuma empresa analisada ainda.<br/>O histórico guarda tudo o que você pesquisar, com exportação para Excel.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Fazer minha primeira análise</a></div>`;
     return;
   }
-  if(!leads.length){body.innerHTML='<div class="muted-box">Nenhuma empresa corresponde ao filtro.</div>';return;}
+  if(!leads.length){
+    const temFiltroTier=_histTier!=='all'||_histNaoExec;
+    body.innerHTML=`<div class="muted-box">Nenhuma empresa corresponde ao filtro.${temFiltroTier?'<br/><a class="empty-cta" href="#" onclick="limparFiltroTier();return false">Mostrar todos os tiers</a>':''}</div>`;
+    return;
+  }
 
   const th=(label,key)=>{
     if(!key)return `<th>${label}</th>`;
@@ -3119,6 +3175,7 @@ function renderHistory(q){
     const emp=e?(typeof e==='object'?(e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'—')):e):'—';
     return `<tr id="row-${l.id}">
       <td class="td-co"><button class="td-name" onclick="openLeadSummary(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
+      <td class="td-tier">${tierBadgeHtml(l,{leadId:l.id})||'<span class="muted">—</span>'}</td>
       <td class="td-score">${scoreBadgeHtml(l,l.id)||'<span class="muted">—</span>'}</td>
       <td class="td-mono">${esc(l.domain||'—')}</td>
       <td><span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
@@ -3132,7 +3189,7 @@ function renderHistory(q){
   }).join('');
   body.innerHTML=`<div class="tbl-scroll"><table class="lead-tbl">
     <thead><tr>
-      ${th('Empresa','company')}${th('Prioridade','score')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Pessoas associadas','employees')}${th('Data','created_at')}${th('Ações',null)}
+      ${th('Empresa','company')}${th('Tier','tier')}${th('Prioridade','score')}${th('Domínio','domain')}${th('Estágio','stage')}${th('Pessoas associadas','employees')}${th('Data','created_at')}${th('Ações',null)}
     </tr></thead>
     <tbody>${rows}</tbody>
   </table></div>`;
@@ -3179,6 +3236,7 @@ function renderLeadSummary(l){
     row('Setor',l.sector?esc(l.sector):''),
     row('Provedor de e-mail',l.mx_provider?`<span class="mx-tag">${esc(l.mx_provider)}</span>${cb(l.mx_provider_confidence)}`:''),
     row('Estágio',`<span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span>`),
+    row('Tier',l.tier!==undefined?`${tierBadgeHtml(l,{long:true})}${l.tier_reason?`<small class="ls-tier-why">${esc(l.tier_reason)}</small>`:''}`:''),
     row('Prioridade',scoreBadgeHtml(l,l.id)),
     row('Criado em',new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'})),
   ].join('');
@@ -3933,6 +3991,1163 @@ async function enrichImportedLead(leadId,btn){
   }finally{
     if(btn){btn.disabled=false;btn.textContent='Enriquecer';}
   }
+}
+
+/* ════════════════════════════════════════════════════════════════
+   FLUXO COMERCIAL (docs/FLUXO_COMERCIAL_API.md)
+   Tier, próximo passo da cadência, contatos cadastrados à mão, agenda do
+   dia, lote de 1º contato e base de clientes. Toda regra mora no servidor:
+   a tela só desenha o que ele devolve (tier, motivo, botões de ação).
+   ════════════════════════════════════════════════════════════════ */
+
+/* ── utilitários ── */
+function _toast(msg,ms){
+  if(!msg)return;
+  if(typeof shToast==='function')shToast(msg,ms);
+  else console.info(msg);
+}
+/* `detail` do FastAPI vem como texto (HTTPException) ou lista (422 de validação). */
+function _detailMsg(json,fallback){
+  const d=json&&json.detail;
+  if(!d)return (json&&json.message)||fallback;
+  if(typeof d==='string')return d;
+  if(Array.isArray(d)){
+    const t=d.map(x=>x&&x.msg?String(x.msg).replace(/^Value error, /,''):'').filter(Boolean).join(' · ');
+    return t||fallback;
+  }
+  return fallback;
+}
+async function _jsonOrNull(resp){try{return await resp.json();}catch(_){return null;}}
+function _pad2(n){return String(n).padStart(2,'0');}
+function _isoDia(d){return `${d.getFullYear()}-${_pad2(d.getMonth()+1)}-${_pad2(d.getDate())}`;}
+function _hojeIso(){return _isoDia(new Date());}
+function _proxDiaUtil(){
+  const d=new Date();d.setDate(d.getDate()+1);
+  while(d.getDay()===0||d.getDay()===6)d.setDate(d.getDate()+1);
+  return d;
+}
+/* Valor padrão do <input type="datetime-local">: próximo dia útil, 10:00 —
+   o mesmo padrão que o servidor usa para `reuniao_marcada` sem data. */
+function _dtLocalPadrao(){return `${_isoDia(_proxDiaUtil())}T10:00`;}
+function _fmtQuando(iso){
+  if(!iso)return 'sem data';
+  const d=new Date(iso);if(isNaN(d))return '';
+  const hora=d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  const hoje=new Date();const amanha=new Date();amanha.setDate(hoje.getDate()+1);
+  if(_isoDia(d)===_isoDia(hoje))return `hoje, ${hora}`;
+  if(_isoDia(d)===_isoDia(amanha))return `amanhã, ${hora}`;
+  return `${d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'})}, ${hora}`;
+}
+/* Só deixa passar link com o esquema esperado — o href vai direto para a tela. */
+function _safeHref(u,esquemas){
+  if(!u||typeof u!=='string')return '';
+  const s=u.trim();
+  return esquemas.some(e=>s.toLowerCase().startsWith(e))?s:'';
+}
+function _linkedinHref(u){
+  if(!u)return '';
+  const s=String(u).trim();
+  if(/^https?:\/\//i.test(s))return s;
+  if(/^[a-z]+:/i.test(s))return '';   // javascript:, data: etc.
+  return 'https://'+s.replace(/^\/+/,'');
+}
+function _telHref(phone){
+  const s=String(phone||'').replace(/[^\d+]/g,'');
+  return s?'tel:'+s:'';
+}
+/* wa.me pede DDI + DDD + número, só dígitos. Número brasileiro sem DDI
+   (10 ou 11 dígitos) ganha o 55. */
+function _waHref(phone){
+  let d=String(phone||'').replace(/\D/g,'');
+  if(!d)return '';
+  if(d.length===10||d.length===11)d='55'+d;
+  return 'https://wa.me/'+d;
+}
+function _kpi(val,lbl,desc,warn){
+  return `<div class="kpi${warn?' warn':''}">
+    <span class="kpi-val">${val}</span>
+    <span class="kpi-lbl">${lbl}</span>
+    <span class="kpi-desc">${desc}</span>
+  </div>`;
+}
+function _setBusy(root,busy){
+  if(!root)return;
+  root.querySelectorAll('button,input,select,textarea').forEach(el=>{el.disabled=busy;});
+  root.classList.toggle('busy',busy);
+}
+const IC_MAIL='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>';
+const IC_LI_SM='<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67h-3.55V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.45v6.29zM5.34 7.43A2.06 2.06 0 1 1 5.34 3.3a2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45z"/></svg>';
+const IC_STAR='<svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>';
+
+/* ══════ TIER ══════ */
+const TIER_META={
+  1:{lbl:'T1',cls:'t1',full:'Tier 1',nome:'Alvo prioritário'},
+  2:{lbl:'T2',cls:'t2',full:'Tier 2',nome:'Usa Microsoft/Google'},
+  3:{lbl:'T3',cls:'t3',full:'Tier 3',nome:'Grande porte'},
+  4:{lbl:'T4',cls:'t4',full:'Tier 4',nome:'Fora do alvo'},
+};
+/* tier null = lead ainda não classificado (anterior à régua, ou coleta em
+   andamento) — resolve com POST /api/tiers/reclassificar. */
+const TIER_NONE={lbl:'—',cls:'none',full:'Sem tier',nome:'Ainda não classificado'};
+
+/* Porte desconhecido: o servidor SUPÕE o tier pelo provedor de e-mail e marca
+   para revisão. Na listagem vem `tier_needs_review`; na ficha completa,
+   `tier_details.needs_review`. */
+function _tierSuposto(l){
+  if(!l)return false;
+  if(l.tier_details&&l.tier_details.needs_review!=null)return !!l.tier_details.needs_review;
+  return !!l.tier_needs_review;
+}
+
+/* Badge do tier. `opts.leadId` torna o badge clicável (abre "Por que Tier X?");
+   `opts.long` acrescenta o nome do tier; `opts.why` mostra o convite "por quê?".
+   Tier suposto ganha um "?" (e "porte suposto" na versão longa). Lead sem o
+   campo, ou ainda não classificado, não ganha badge. */
+function tierBadgeHtml(lead,opts={}){
+  if(!lead||lead.tier==null)return '';
+  const m=TIER_META[lead.tier]||TIER_NONE;
+  const manual=lead.tier_manual!=null;
+  const sup=_tierSuposto(lead)&&!manual;
+  const txt=opts.long?`${m.lbl} · ${m.nome}`:m.lbl;
+  const motivo=lead.tier_reason||m.nome;
+  const titulo=`${m.full}${manual?' (definido por você)':''}${sup?' — porte suposto pelo e-mail; informe o nº de funcionários para confirmar':''} — ${motivo}`;
+  const marca=sup?(opts.long?'<span class="tier-q">porte suposto</span>':'<span class="tier-q" aria-label="porte suposto">?</span>'):'';
+  const extra=marca+(opts.long&&manual?'<span class="tier-manual">manual</span>':'')
+    +(opts.why?'<span class="tier-why">por quê?</span>':'');
+  const cls=`tier-badge ${m.cls}${sup?' sup':''}`;
+  if(opts.leadId!=null){
+    return `<button type="button" class="${cls}" title="${esc(titulo)} · clique para ver o porquê e ajustar" onclick="openTierModal(${Number(opts.leadId)})">${esc(txt)}${extra}</button>`;
+  }
+  return `<span class="${cls}" title="${esc(titulo)}">${esc(txt)}${extra}</span>`;
+}
+
+/* Cabeçalho da ficha: badge + a frase pronta do motivo, logo abaixo do nome. */
+function renderTierHeader(data){
+  const b=document.getElementById('result-tier-badge');
+  if(b)b.innerHTML=tierBadgeHtml(data,{leadId:data.id,long:true,why:true});
+  const r=document.getElementById('result-tier-reason');
+  if(!r)return;
+  if(data.tier===undefined){r.style.display='none';r.innerHTML='';return;}
+  const semTier=data.tier===null;
+  const sup=!semTier&&_tierSuposto(data)&&data.tier_manual==null;
+  const motivo=data.tier_reason||(semTier?'Este lead ainda não foi classificado.':'');
+  const cliente=data.relationship==='CUSTOMER'?'<span class="tier-flag">Já é cliente</span>':'';
+  let acao='';
+  if(sup)acao=` <button type="button" class="btn-link" onclick="openTierModal(${Number(data.id)},'emp')">Informar nº de funcionários para confirmar</button>`;
+  else if(semTier)acao=` <button type="button" class="btn-link" onclick="openTierModal(${Number(data.id)})">Classificar agora</button>`;
+  r.className='result-tier-reason'+(sup||semTier?' rev':'');
+  r.innerHTML=`${cliente}${sup?'<span class="tier-flag sup">Porte suposto</span>':''}<span>${esc(motivo)}</span>${acao}`;
+  r.style.display=(motivo||cliente||acao)?'':'none';
+}
+
+let _tierLead=null;
+async function openTierModal(leadId,foco){
+  const modal=document.getElementById('tier-modal');
+  const body=document.getElementById('tier-modal-body');
+  if(!modal||!body)return;
+  body.innerHTML='<div class="muted-box">Carregando…</div>';
+  modal.classList.add('open');
+  let lead=(currentLeadData&&currentLeadData.id===leadId&&currentLeadData.tier!==undefined)?currentLeadData:null;
+  if(!lead){
+    try{
+      const resp=await authFetch(`/api/leads/${leadId}`);
+      if(!resp.ok)throw new Error('falhou');
+      lead=await resp.json();
+    }catch(e){
+      if(e.message==='not_authenticated')return;
+      body.innerHTML='<div class="muted-box">Não foi possível carregar o tier deste lead.</div>';
+      return;
+    }
+  }
+  _tierLead=lead;
+  body.innerHTML=tierModalHtml(lead);
+  if(foco==='emp')document.getElementById('tier-emp')?.focus();
+}
+function closeTierModal(){document.getElementById('tier-modal')?.classList.remove('open');}
+
+function _empDetTxt(e){
+  if(!e)return '';
+  const n=v=>Number(v).toLocaleString('pt-BR');
+  let t='';
+  if(e.exact)t=n(e.exact);
+  else if(e.min&&e.max)t=`${n(e.min)}–${n(e.max)}`;
+  else if(e.min)t=`${n(e.min)}+`;
+  else if(e.max)t=`até ${n(e.max)}`;
+  return t;
+}
+
+function tierModalHtml(l){
+  const det=l.tier_details||{};
+  const m=TIER_META[l.tier]||TIER_NONE;
+  const manual=l.tier_manual!=null;
+  const sup=l.tier!=null&&_tierSuposto(l);
+  const titulo=l.tier!=null?`Por que Tier ${l.tier}?`:'Este lead ainda não foi classificado';
+  const motivo=l.tier_reason||(l.tier==null?'Clique em Reclassificar para a régua calcular o tier com os dados atuais da ficha.':'');
+
+  const caminho=(det.path||[]).map((p,i)=>`
+    <li class="tp-step">
+      <span class="tp-num" aria-hidden="true">${i+1}</span>
+      <div class="tp-body">
+        <span class="tp-q">${esc(p.pergunta)}</span>
+        <span class="tp-a">${esc(p.resposta)}</span>
+        ${p.detalhe?`<small class="tp-d">${esc(p.detalhe)}</small>`:''}
+      </div>
+    </li>`).join('');
+
+  const es=det.email_service;
+  const emp=det.employees;
+  const empTxt=_empDetTxt(emp);
+  const fatos=`
+    <div class="tm-facts">
+      <div class="tm-fact"><span class="tm-fact-lbl">E-mail da empresa</span>
+        <span class="tm-fact-val">${es&&(es.rotulo||es.familia)?esc(es.rotulo||es.familia):'Não identificado'}</span>
+        ${es&&es.evidencia?`<small>${esc(es.evidencia)}</small>`:''}</div>
+      <div class="tm-fact"><span class="tm-fact-lbl">Funcionários usados</span>
+        <span class="tm-fact-val">${empTxt?esc(empTxt):'Desconhecido'}</span>
+        ${emp&&emp.fonte?`<small>Fonte: ${esc(emp.fonte)}</small>`:''}</div>
+    </div>`;
+
+  const seg=[1,2,3,4].map(t=>`<button type="button" class="tier-seg-btn${l.tier_manual===t?' active':''}" aria-pressed="${l.tier_manual===t}"
+      onclick="setTierManual(${t})" title="${esc(TIER_META[t].full+' — '+TIER_META[t].nome)}"><span class="tier-dot t${t}" aria-hidden="true"></span>T${t}</button>`).join('');
+  const autoTxt=l.tier_auto!=null?`T${l.tier_auto}`:'sem tier';
+  const empVal=emp&&emp.exact?emp.exact:'';
+  const semPorte=!empTxt;
+  // Porte suposto: informar os funcionários é A ação desta tela, então vem
+  // no topo, antes da explicação. Nos outros casos fica em "Ajustar".
+  const empRow=`<div class="tm-row${sup?' tm-cta':''}">
+        <label class="tm-row-lbl" for="tier-emp">${sup?'Quantos funcionários a empresa tem?':(semPorte?'Informe o nº de funcionários':'Corrigir nº de funcionários')}</label>
+        ${sup?`<small class="tm-cta-sub">O tier ${esc(m.lbl)} foi suposto pelo provedor de e-mail porque não achamos o porte. Informe o número para confirmar ou corrigir.</small>`:''}
+        <div class="tm-inline">
+          <input type="number" id="tier-emp" class="cell-inp" min="1" step="1" inputmode="numeric" placeholder="Ex.: 120" value="${esc(empVal)}"
+                 onkeydown="if(event.key==='Enter')salvarFuncionarios()"/>
+          <button type="button" class="set-btn primary" onclick="salvarFuncionarios()">Salvar e reclassificar</button>
+        </div>
+      </div>`;
+
+  return `<div class="tm" id="tier-box">
+    <div class="tm-hdr">
+      <span class="tier-big ${m.cls}">${esc(m.lbl)}${sup?'<small>?</small>':''}</span>
+      <div class="tm-hdr-txt">
+        <h3 class="tm-title" id="tier-modal-title">${esc(titulo)}</h3>
+        <div class="tm-sub">${esc(m.full)} · ${esc(m.nome)}${sup&&!manual?' · <b>porte suposto</b>':''}${manual?` · <b>definido por você</b> (a régua daria ${esc(autoTxt)})`:''}</div>
+      </div>
+    </div>
+    ${sup?empRow:''}
+    ${motivo?`<p class="tm-reason">${esc(motivo)}</p>`:''}
+    ${caminho?`<div class="tm-sec-lbl">Como a régua decidiu</div><ol class="tier-path">${caminho}</ol>`:''}
+    ${fatos}
+    ${det.version?`<div class="tm-ver">Régua ${esc(det.version)}</div>`:''}
+
+    <div class="tm-ctl" id="tier-ctl">
+      <div class="tm-sec-lbl">Ajustar</div>
+      ${sup?'':empRow}
+
+      <div class="tm-row">
+        <span class="tm-row-lbl">Definir o tier na mão</span>
+        <div class="tm-inline">
+          <div class="seg tier-seg" role="group" aria-label="Tier manual">${seg}</div>
+          <button type="button" class="set-btn ghost" onclick="setTierManual(null)" ${manual?'':'disabled'} title="Descarta a escolha manual e usa o tier calculado">Voltar ao automático</button>
+        </div>
+      </div>
+
+      <div class="tm-row tm-row-split">
+        <label class="tm-check">
+          <input type="checkbox" id="tier-cliente" ${l.relationship==='CUSTOMER'?'checked':''} onchange="toggleCliente(this)"/>
+          <span><b>Já é cliente</b><small>Vira Tier 4 e sai da prospecção.</small></span>
+        </label>
+        <button type="button" class="set-btn ghost" onclick="reclassificarTier()" title="Roda a régua de novo com os dados atuais da ficha">Reclassificar</button>
+      </div>
+      <p class="set-feedback" id="tier-fb" role="status" aria-live="polite"></p>
+    </div>
+  </div>`;
+}
+
+async function _tierReq(url,opts,okMsg){
+  const lead=_tierLead;if(!lead)return;
+  const ctl=document.getElementById('tier-box');
+  const fb=document.getElementById('tier-fb');
+  if(fb){fb.className='set-feedback ok';fb.textContent='Salvando…';}
+  _setBusy(ctl,true);
+  try{
+    const resp=await authFetch(url,opts);
+    const json=await _jsonOrNull(resp);
+    if(!resp.ok){
+      _setBusy(ctl,false);
+      if(fb){fb.className='set-feedback err';fb.textContent=resp.status===404
+        ?'Esta ação ainda não está disponível no servidor.'
+        :_detailMsg(json,'Não foi possível salvar.');}
+      return;
+    }
+    applyLeadUpdate(json);
+    const fb2=document.getElementById('tier-fb');
+    if(fb2){fb2.className='set-feedback ok';fb2.textContent=okMsg;}
+    _toast(okMsg);
+  }catch(e){
+    _setBusy(ctl,false);
+    if(e.message!=='not_authenticated'&&fb){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}
+  }
+}
+function setTierManual(t){
+  if(!_tierLead)return;
+  _tierReq(`/api/leads/${_tierLead.id}/tier`,{method:'PATCH',body:JSON.stringify({tier:t})},
+    t==null?'Tier voltou para o cálculo automático.':`Tier ${t} definido por você.`);
+}
+function reclassificarTier(){
+  if(!_tierLead)return;
+  _tierReq(`/api/leads/${_tierLead.id}/reclassificar`,{method:'POST'},'Tier recalculado com os dados atuais.');
+}
+function salvarFuncionarios(){
+  if(!_tierLead)return;
+  const inp=document.getElementById('tier-emp');
+  const v=parseInt(inp&&inp.value,10);
+  if(!(v>0)){
+    const fb=document.getElementById('tier-fb');
+    if(fb){fb.className='set-feedback err';fb.textContent='Informe um número inteiro maior que zero.';}
+    _toast('Informe um número inteiro de funcionários, maior que zero.');
+    inp?.focus();return;
+  }
+  _tierReq(`/api/leads/${_tierLead.id}`,{method:'PATCH',body:JSON.stringify({employees:v})},
+    `Funcionários atualizados para ${v.toLocaleString('pt-BR')} e tier recalculado.`);
+}
+function toggleCliente(cb){
+  if(!_tierLead)return;
+  _tierReq(`/api/leads/${_tierLead.id}`,{method:'PATCH',body:JSON.stringify({relationship:cb.checked?'CUSTOMER':'LEAD'})},
+    cb.checked?'Marcado como cliente: o lead saiu da prospecção.':'Desmarcado como cliente: o lead voltou para a prospecção.');
+}
+
+/* Um LeadOut novo chegou (tier, cadência ou relacionamento mudou): atualiza
+   tudo o que mostra este lead, sem recarregar a ficha inteira. */
+const _LEAD_LIST_FIELDS=['tier','tier_auto','tier_manual','tier_reason','relationship','cadence','cadence_attempt','first_contact_at','stage','score','priority','employee_count'];
+function applyLeadUpdate(lead){
+  if(!lead||lead.id==null)return;
+  if(currentLeadData&&currentLeadData.id===lead.id){
+    currentLeadData={...currentLeadData,...lead};
+    renderTierHeader(currentLeadData);
+    const sb=document.getElementById('result-score-badge');
+    if(sb&&lead.score!==undefined)sb.innerHTML=scoreBadgeHtml(currentLeadData,lead.id);
+  }
+  const i=_histLeads.findIndex(x=>x.id===lead.id);
+  if(i>=0)_LEAD_LIST_FIELDS.forEach(k=>{if(lead[k]!==undefined)_histLeads[i][k]=lead[k];});
+  if(location.hash==='#history')renderHistory(document.getElementById('history-filter')?.value||'');
+  const modal=document.getElementById('tier-modal');
+  if(_tierLead&&_tierLead.id===lead.id){
+    _tierLead={..._tierLead,...lead};
+    if(modal&&modal.classList.contains('open'))document.getElementById('tier-modal-body').innerHTML=tierModalHtml(_tierLead);
+  }
+}
+
+/* ── Histórico: filtro por tier ── */
+let _histTier='all';      // 'all' | 1..4 | 'rev'
+let _histNaoExec=false;   // só leads que ainda não entraram na cadência
+
+function _histTierPassa(l){
+  if(_histTier==='rev'){if(!_tierSuposto(l))return false;}
+  else if(_histTier!=='all'&&l.tier!==_histTier)return false;
+  if(_histNaoExec&&l.cadence!=null)return false;
+  return true;
+}
+function histTierChipsHtml(){
+  if(!_histLeads.some(l=>l.tier!==undefined))return '';
+  const opts=[['all','Todos'],[1,'T1'],[2,'T2'],[3,'T3'],[4,'T4'],['rev','Revisar']];
+  const conta=v=>v==='all'?_histLeads.length:(v==='rev'?_histLeads.filter(_tierSuposto).length:_histLeads.filter(l=>l.tier===v).length);
+  const chips=opts.map(([v,lbl])=>{
+    const on=_histTier===v;
+    const arg=typeof v==='number'?v:`'${v}'`;
+    const dot=typeof v==='number'?`<span class="tier-dot t${v}" aria-hidden="true"></span>`:(v==='rev'?'<span class="tier-dot rev" aria-hidden="true"></span>':'');
+    return `<button type="button" class="tf-chip${on?' on':''}" aria-pressed="${on}" onclick="setHistTier(${arg})">${dot}${lbl}<span class="tf-n">${conta(v)}</span></button>`;
+  }).join('');
+  const naoExec=_histLeads.filter(l=>l.cadence==null).length;
+  return `<span class="tf-lbl">Tier</span>${chips}
+    <label class="tf-toggle" title="Leads que ainda não receberam nenhuma tentativa da cadência">
+      <input type="checkbox" ${_histNaoExec?'checked':''} onchange="setHistNaoExec(this.checked)"/>
+      Só não executados <span class="tf-n">${naoExec}</span>
+    </label>`;
+}
+function setHistTier(v){_histTier=v;renderHistory(document.getElementById('history-filter')?.value||'');}
+function setHistNaoExec(on){_histNaoExec=!!on;renderHistory(document.getElementById('history-filter')?.value||'');}
+function limparFiltroTier(){_histTier='all';_histNaoExec=false;renderHistory(document.getElementById('history-filter')?.value||'');}
+function goHistoryTier(t){_histTier=t;_histNaoExec=false;nav('history');}
+
+/* ── Classificar fichas antigas (POST /api/tiers/reclassificar) ──
+   Leads analisados antes da régua existir ficam com tier null até isto rodar.
+   O aviso só aparece enquanto o resumo acusa fichas sem tier. */
+function _classifCalloutHtml(semTier){
+  const n=Number(semTier||0);
+  if(!(n>0))return '';
+  return `<div class="classif-callout">
+    <span><b>${n} ficha(s) sem tier.</b> Leads analisados antes da classificação automática ainda não têm tier: classifique todos de uma vez.</span>
+    <button type="button" class="set-btn primary" onclick="reclassificarTodos(this)">Classificar fichas existentes</button>
+  </div>`;
+}
+async function reclassificarTodos(btn){
+  const rotulo='Classificar fichas existentes';
+  if(btn){btn.disabled=true;btn.textContent='Classificando…';}
+  try{
+    const resp=await authFetch('/api/tiers/reclassificar',{method:'POST'});
+    const json=await _jsonOrNull(resp);
+    if(!resp.ok){
+      if(btn){btn.disabled=false;btn.textContent=rotulo;}
+      _toast(_detailMsg(json,'Não foi possível classificar as fichas.'));
+      return;
+    }
+    _toast((json&&json.message)||`${Number(json&&json.reclassificados||0)} ficha(s) classificada(s).`);
+    if(document.getElementById('dash-tiers'))loadDashTiers();
+    if(document.getElementById('agl'))_agCarregarDisponiveis();
+    if(_histLeads.length)loadHistory();
+  }catch(e){
+    if(btn){btn.disabled=false;btn.textContent=rotulo;}
+    if(e.message!=='not_authenticated')_toast('Erro de conexão.');
+  }
+}
+
+/* ── Dashboard: leads por tier ── */
+async function loadDashTiers(){
+  const box=document.getElementById('dash-tiers');
+  if(!box)return;
+  try{
+    const resp=await authFetch('/api/tiers/resumo');
+    if(!resp.ok){box.innerHTML='';return;}
+    box.innerHTML=dashTiersHtml(await resp.json());
+  }catch(_){box.innerHTML='';}
+}
+function dashTiersHtml(r){
+  const pt=(r&&r.por_tier)||{},ne=(r&&r.nao_executados)||{};
+  const tile=t=>`<button type="button" class="tier-kpi" onclick="goHistoryTier(${t})" title="Ver os leads Tier ${t} no histórico">
+      <span class="tier-kpi-top"><span class="tier-badge t${t}">T${t}</span><span class="tier-kpi-val">${Number(pt[t]||0)}</span></span>
+      <span class="tier-kpi-lbl">${esc(TIER_META[t].nome)}</span>
+      <span class="tier-kpi-sub">${t<4?`${Number(ne[t]||0)} não executado(s)`:'Fora da prospecção'}</span>
+    </button>`;
+  const rev=Number((r&&r.revisar)||0);
+  const naoExecTotal=[1,2,3].reduce((s,t)=>s+Number(ne[t]||0),0);
+  return `<div class="panel panel-pad dash-tiers">
+    ${_classifCalloutHtml(pt.sem_tier)}
+    <div class="block-head">
+      <div>
+        <div class="dash-sec-title">Leads por tier</div>
+        <div class="dash-sec-sub">${naoExecTotal?`<b>${naoExecTotal}</b> lead(s) de T1 a T3 ainda sem nenhum contato.`:'Todos os leads de T1 a T3 já estão em cadência.'} Clique num tier para ver a lista.</div>
+      </div>
+      <button type="button" class="set-btn ${Number(pt.sem_tier||0)>0?'ghost':'primary'}" onclick="nav('agenda')">Agendar lote de 1º contato</button>
+    </div>
+    <div class="tier-kpis">
+      ${[1,2,3,4].map(tile).join('')}
+      <button type="button" class="tier-kpi" onclick="goHistoryTier('rev')" title="Tier suposto pelo e-mail porque o porte é desconhecido: informe os funcionários para confirmar">
+        <span class="tier-kpi-top"><span class="tier-badge rev">Revisar</span><span class="tier-kpi-val">${rev}</span></span>
+        <span class="tier-kpi-lbl">Porte suposto</span>
+        <span class="tier-kpi-sub">Informe os funcionários</span>
+      </button>
+    </div>
+  </div>`;
+}
+
+/* ══════ PRÓXIMO PASSO (cadência do lead) ══════ */
+const CAD_STEPS=[['agendado','Agendado'],['tentativas','Tentativas'],['qualificacao','Qualificação'],['proposta','Proposta']];
+const CAD_HEADLINE={
+  agendado:'1º contato agendado. Quando chegar o dia, ligue e registre o que aconteceu.',
+  qualificacao:'Reunião de qualificação marcada. Depois da conversa, registre o resultado.',
+  proposta:'Lead qualificado com demanda: monte e envie a proposta comercial.',
+  aquecimento:'Em aquecimento: e-mails quinzenais e WhatsApp até o lead esquentar.',
+  encerrado:'Cadência encerrada para este lead.',
+};
+const DONE_STEPS=new Set(['aquec_email_1','aquec_email_2','aquec_email_3','aquec_whatsapp','contato_alternativo']);
+const CALL_STEPS=new Set(['primeiro_contato','tentativa_2','tentativa_3']);
+let _cad=null;        // {leadId, data}
+let _cadPend=null;    // índice da ação que está esperando a data
+
+async function loadCadencia(){
+  const box=document.getElementById('np-section');
+  if(!box||!currentLeadId)return;
+  const id=currentLeadId;
+  try{
+    const resp=await authFetch(`/api/leads/${id}/cadencia`);
+    if(id!==currentLeadId)return;   // o usuário já abriu outra ficha
+    if(!resp.ok){_cadIndisponivel(resp.status);return;}
+    _cad={leadId:id,data:await resp.json()};
+    _cadPend=null;
+    renderCadencia();
+  }catch(e){if(e.message!=='not_authenticated')_cadIndisponivel(0);}
+}
+function _cadIndisponivel(status){
+  const box=document.getElementById('np-section');
+  if(!box)return;
+  box.innerHTML=`<div class="np-head"><div class="dec-title">Próximo passo</div></div>
+    <div class="np-empty">${status===404
+      ?'A cadência automática ainda não está disponível neste servidor.'
+      :'Não foi possível carregar a cadência agora.'}
+      Enquanto isso, registre a ligação no formulário avulso mais abaixo.</div>`;
+  const leg=document.getElementById('call-legacy');
+  if(leg)leg.open=true;
+}
+
+function cadStepperHtml(c){
+  const cad=c.cadence;
+  const idx=CAD_STEPS.findIndex(s=>s[0]===cad);
+  const enc=cad==='encerrado';
+  const aq=cad==='aquecimento';
+  const tent=Math.max(1,Math.min(3,Number(c.cadence_attempt)||1));
+  const itens=CAD_STEPS.map(([k,lbl],i)=>{
+    const st=enc?'done':(idx<0?(aq&&i<=1?'done':''):(i<idx?'done':(i===idx?'cur':'')));
+    const nome=k==='tentativas'&&(cad==='tentativas')?`${lbl} (${tent}/3)`:lbl;
+    return `<li class="cad-step ${st}"${st==='cur'?' aria-current="step"':''}><span class="cad-dot" aria-hidden="true"></span><span class="cad-lbl">${esc(nome)}</span></li>`;
+  }).join('');
+  return `<div class="cad-wrap">
+    <ol class="cad-steps" aria-label="Etapas da cadência">${itens}</ol>
+    <span class="cad-side${aq?' cur':''}" title="Lead frio: e-mails quinzenais e WhatsApp">${aq?'Em aquecimento':'Aquecimento'}</span>
+  </div>`;
+}
+
+function _proxHtml(a){
+  const titulo=STEP_LABELS[a.step]||ACT_LABELS[a.type]||'Tarefa';
+  const late=a.due_at&&new Date(a.due_at).getTime()<Date.now();
+  const feito=DONE_STEPS.has(a.step)
+    ?`<button type="button" class="np-mini" onclick="cadConcluirTarefa(${Number(a.id)},this)" title="Marcar esta etapa como feita">Feito</button>`:'';
+  return `<div class="np-task${late?' late':''}">
+    <div class="np-task-txt"><b>${esc(titulo)}</b>
+      <span class="np-task-when">${late?'Atrasada · ':''}${esc(_fmtQuando(a.due_at))}</span>
+      ${a.notes?`<small>${esc(a.notes)}</small>`:''}</div>
+    ${feito}
+  </div>`;
+}
+
+function renderCadencia(){
+  const box=document.getElementById('np-section');
+  if(!box||!_cad||_cad.leadId!==currentLeadId)return;
+  const c=_cad.data||{};
+  const cad=c.cadence;
+  const tent=Math.max(1,Math.min(3,Number(c.cadence_attempt)||1));
+  const headline=cad==null
+    ?'Este lead ainda não entrou na cadência de contato.'
+    :(cad==='tentativas'?`Tentativa ${tent} de 3: ligue e registre o que aconteceu.`:(CAD_HEADLINE[cad]||''));
+  const prox=(c.proximas||[]);
+  const tarefas=prox.length
+    ?prox.slice(0,3).map(_proxHtml).join('')+(prox.length>3?`<div class="np-more">+${prox.length-3} tarefa(s) depois destas</div>`:'')
+    :'<div class="np-empty np-empty-sm">Nenhuma tarefa aberta nesta cadência.</div>';
+  const acoes=c.acoes||[];
+  const botoes=acoes.map((a,i)=>{
+    const estilo=['primary','ghost','danger'].includes(a.estilo)?a.estilo:'ghost';
+    return `<button type="button" class="np-btn ${estilo}" onclick="cadAcao(${i})">${esc(a.label)}</button>`;
+  }).join('');
+  box.innerHTML=`
+    <div class="np-head">
+      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>Próximo passo</div>
+      <p class="np-state">${esc(headline)}</p>
+    </div>
+    ${cad!=null?cadStepperHtml(c):''}
+    <div class="np-grid">
+      <div class="np-col">
+        <div class="np-lbl">${prox.length?'Tarefas abertas':'Agenda deste lead'}</div>
+        ${tarefas}
+      </div>
+      <div class="np-col" id="np-acoes">
+        <div class="np-lbl">${cad==null?'Começar':'O que aconteceu?'}</div>
+        ${acoes.length?`
+          <div class="np-actions">${botoes}</div>
+          <div class="np-date" id="np-date" hidden>
+            <label for="np-when" id="np-date-lbl">Quando?</label>
+            <div class="np-date-row">
+              <input type="datetime-local" id="np-when" class="cell-inp"/>
+              <button type="button" class="np-btn primary" onclick="cadConfirmarData()">Confirmar</button>
+              <button type="button" class="np-btn ghost" onclick="cadCancelarData()">Cancelar</button>
+            </div>
+          </div>
+          <input id="np-notas" class="cell-inp np-notas" maxlength="500" placeholder="Anotação para a timeline (opcional)" aria-label="Anotação sobre este contato"/>`
+          :'<div class="np-empty np-empty-sm">Nenhuma ação disponível agora.</div>'}
+      </div>
+    </div>`;
+}
+
+function cadAcao(i){
+  const a=_cad&&_cad.data&&(_cad.data.acoes||[])[i];
+  if(!a)return;
+  if(a.pede_data){
+    _cadPend=i;
+    const row=document.getElementById('np-date');
+    const lbl=document.getElementById('np-date-lbl');
+    const inp=document.getElementById('np-when');
+    if(lbl)lbl.textContent=`Quando? — ${a.label}`;
+    if(inp&&!inp.value)inp.value=_dtLocalPadrao();
+    if(row){row.hidden=false;inp?.focus();}
+    return;
+  }
+  if(a.estilo==='danger'&&!confirm(`${a.label}?\n\nEsta ação muda a cadência deste lead.`))return;
+  cadEnviar(a.resultado,null);
+}
+function cadConfirmarData(){
+  const a=_cad&&_cad.data&&(_cad.data.acoes||[])[_cadPend];
+  const inp=document.getElementById('np-when');
+  if(!a||!inp)return;
+  if(!inp.value){inp.focus();return;}
+  const d=new Date(inp.value);
+  if(isNaN(d)){inp.focus();return;}
+  cadEnviar(a.resultado,d.toISOString());
+}
+function cadCancelarData(){
+  _cadPend=null;
+  const row=document.getElementById('np-date');
+  if(row)row.hidden=true;
+}
+
+async function cadEnviar(resultado,reuniaoEm){
+  if(!currentLeadId)return;
+  const id=currentLeadId;
+  const box=document.getElementById('np-acoes');
+  const notas=(document.getElementById('np-notas')?.value||'').trim();
+  const body={resultado};
+  if(notas)body.notas=notas;
+  if(reuniaoEm)body.reuniao_em=reuniaoEm;
+  _setBusy(box,true);
+  try{
+    const resp=await authFetch(`/api/leads/${id}/cadencia`,{method:'POST',body:JSON.stringify(body)});
+    const json=await _jsonOrNull(resp);
+    if(!resp.ok){
+      _setBusy(box,false);
+      _toast(_detailMsg(json,'Não foi possível registrar.'));
+      return;
+    }
+    _toast(json&&json.message);
+    if(json&&json.lead)applyLeadUpdate(json.lead);
+    if(id!==currentLeadId)return;
+    _cadPend=null;
+    if(json&&json.cadencia){_cad={leadId:id,data:json.cadencia};renderCadencia();}
+    else loadCadencia();
+    loadTimeline();loadTodayFollowupsCount();
+  }catch(e){
+    _setBusy(box,false);
+    if(e.message!=='not_authenticated')_toast('Erro de conexão. Nada foi registrado.');
+  }
+}
+
+async function cadConcluirTarefa(activityId,btn){
+  if(btn)btn.disabled=true;
+  try{
+    const resp=await authFetch(`/api/activities/${activityId}`,{method:'PATCH',body:JSON.stringify({completed:true})});
+    if(!resp.ok){if(btn)btn.disabled=false;_toast('Não foi possível concluir a tarefa.');return;}
+    _toast('Etapa concluída.');
+    loadCadencia();loadTimeline();loadTodayFollowupsCount();
+  }catch(e){if(btn)btn.disabled=false;if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+}
+
+/* ══════ CONTATOS DO DECISOR (cadastro manual) ══════ */
+let _mc=[];
+let _mcEdit=null;   // null | 'new' | id do contato em edição
+
+async function loadManualContacts(){
+  const box=document.getElementById('mc-list');
+  if(!box||!currentLeadId)return;
+  const id=currentLeadId;
+  try{
+    const resp=await authFetch(`/api/leads/${id}/decisores`);
+    if(id!==currentLeadId)return;
+    if(!resp.ok){
+      box.innerHTML=`<div class="np-empty">${resp.status===404
+        ?'O cadastro de contatos ainda não está disponível neste servidor.'
+        :'Não foi possível carregar os contatos.'}</div>`;
+      document.getElementById('mc-add')?.setAttribute('hidden','');
+      return;
+    }
+    const lista=await resp.json();
+    _mc=Array.isArray(lista)?lista:[];
+    document.getElementById('mc-add')?.removeAttribute('hidden');
+    renderManualContacts();
+  }catch(e){
+    if(e.message!=='not_authenticated')box.innerHTML='<div class="np-empty">Erro de conexão ao carregar os contatos.</div>';
+  }
+}
+
+const _MC_FONTE={manual:'',lusha:'Lusha',free:'Busca pública',linkedin:'LinkedIn'};
+function _mcCardHtml(c){
+  const id=Number(c.id);
+  const pri=!!c.is_primary;
+  const tel=c.phone?_telHref(c.phone):'';
+  const wa=c.phone?_waHref(c.phone):'';
+  const li=_linkedinHref(c.linkedin_url);
+  const fonte=c.source&&c.source!=='manual'?(_MC_FONTE[c.source]||c.source):'';
+  const nome=c.name||'Sem nome';
+  const contatos=[
+    tel?`<a class="mc-act call" href="${esc(tel)}" aria-label="Ligar para ${esc(nome)}">${IC_PHONE} Ligar</a>`:'',
+    wa?`<a class="mc-act wa" href="${esc(wa)}" target="_blank" rel="noopener" aria-label="WhatsApp de ${esc(nome)}">${IC_CHAT} WhatsApp</a>`:'',
+    c.email?`<a class="mc-act" href="mailto:${esc(c.email)}" aria-label="E-mail para ${esc(nome)}">${IC_MAIL} E-mail</a>`:'',
+    li?`<a class="mc-act" href="${esc(li)}" target="_blank" rel="noopener" aria-label="LinkedIn de ${esc(nome)}">${IC_LI_SM} LinkedIn</a>`:'',
+  ].filter(Boolean).join('');
+  return `<div class="mc-card${pri?' primary':''}">
+    <button type="button" class="mc-star${pri?' on':''}" aria-pressed="${pri}" onclick="mcPrincipal(${id})"
+      title="${pri?'Contato principal — clique para desmarcar':'Tornar este o contato principal (usado pela Agenda)'}"
+      aria-label="${pri?'Desmarcar como contato principal':'Marcar como contato principal'}">${IC_STAR}</button>
+    <div class="mc-info">
+      <div class="mc-name">${esc(nome)}${pri?'<span class="mc-tag pri">Principal</span>':''}${fonte?`<span class="mc-tag">${esc(fonte)}</span>`:''}</div>
+      ${c.title?`<div class="mc-title">${esc(c.title)}</div>`:''}
+      <div class="mc-sub">${[c.phone,c.email].filter(Boolean).map(esc).join(' · ')||'<span class="muted">Sem telefone nem e-mail — edite para completar.</span>'}</div>
+      ${contatos?`<div class="mc-acts">${contatos}</div>`:''}
+    </div>
+    <div class="mc-manage">
+      <button type="button" class="mc-mbtn" onclick="mcEditar(${id})">Editar</button>
+      <button type="button" class="mc-mbtn danger" onclick="mcExcluir(${id})">Excluir</button>
+    </div>
+  </div>`;
+}
+
+function _mcFormHtml(c){
+  const novo=!c;
+  const v=k=>esc((c&&c[k])||'');
+  const alvo=novo?'null':Number(c.id);
+  return `<form class="mc-form" onsubmit="mcSalvar(event,${alvo})" novalidate>
+    <div class="mc-form-title">${novo?'Novo contato':'Editar contato'}</div>
+    <div class="mc-form-grid">
+      <label class="mc-field"><span>Nome <b aria-hidden="true">*</b></span><input name="name" class="cell-inp" required maxlength="160" autocomplete="name" value="${v('name')}"/></label>
+      <label class="mc-field"><span>Cargo</span><input name="title" class="cell-inp" maxlength="160" autocomplete="organization-title" value="${v('title')}" placeholder="Ex.: Gerente de TI"/></label>
+      <label class="mc-field"><span>Telefone</span><input name="phone" type="tel" inputmode="tel" class="cell-inp" maxlength="40" autocomplete="tel" value="${v('phone')}" placeholder="(11) 98888-7777"/></label>
+      <label class="mc-field"><span>E-mail</span><input name="email" type="email" inputmode="email" class="cell-inp" maxlength="200" autocomplete="email" value="${v('email')}" placeholder="nome@empresa.com.br"/></label>
+      <label class="mc-field mc-field-wide"><span>LinkedIn</span><input name="linkedin_url" type="url" inputmode="url" class="cell-inp" maxlength="300" value="${v('linkedin_url')}" placeholder="linkedin.com/in/…"/></label>
+    </div>
+    <label class="tm-check mc-check"><input type="checkbox" name="is_primary" ${c&&c.is_primary?'checked':(novo&&!_mc.some(x=>x.is_primary)?'checked':'')}/>
+      <span><b>Contato principal</b><small>É para ele que a Agenda monta a ligação, o WhatsApp e o e-mail.</small></span></label>
+    <p class="mc-err" role="alert"></p>
+    <div class="mc-form-acts">
+      <button type="submit" class="set-btn primary">Salvar contato</button>
+      <button type="button" class="set-btn ghost" onclick="mcCancelar()">Cancelar</button>
+    </div>
+  </form>`;
+}
+
+function renderManualContacts(){
+  const box=document.getElementById('mc-list');
+  if(!box)return;
+  const ordem=[..._mc].sort((a,b)=>(b.is_primary?1:0)-(a.is_primary?1:0));
+  const partes=[];
+  if(_mcEdit==='new')partes.push(_mcFormHtml(null));
+  ordem.forEach(c=>partes.push(_mcEdit===c.id?_mcFormHtml(c):_mcCardHtml(c)));
+  if(!partes.length){
+    box.innerHTML=`<div class="mc-empty">Nenhum contato cadastrado ainda. Conhece alguém na empresa?
+      <button type="button" class="btn-link" onclick="mcNovo()">Adicionar o primeiro contato</button></div>`;
+    return;
+  }
+  box.innerHTML=partes.join('');
+  const form=box.querySelector('.mc-form');
+  if(form){form.querySelector('input[name=name]')?.focus();}
+}
+function mcNovo(){_mcEdit='new';renderManualContacts();}
+function mcEditar(id){_mcEdit=id;renderManualContacts();}
+function mcCancelar(){_mcEdit=null;renderManualContacts();}
+
+async function mcSalvar(ev,id){
+  ev.preventDefault();
+  const f=ev.target;
+  const err=f.querySelector('.mc-err');
+  const val=n=>(f.elements[n]?.value||'').trim();
+  const name=val('name');
+  if(!name){err.textContent='Informe o nome do contato.';f.elements.name.focus();return;}
+  const campos={name,title:val('title'),phone:val('phone'),email:val('email'),linkedin_url:val('linkedin_url')};
+  const body={is_primary:!!f.elements.is_primary?.checked};
+  // Novo: só manda o que foi preenchido. Edição: "" apaga o campo no servidor.
+  Object.entries(campos).forEach(([k,v])=>{if(id!=null||v)body[k]=v;});
+  err.textContent='';
+  _setBusy(f,true);
+  try{
+    const url=id==null?`/api/leads/${currentLeadId}/decisores`:`/api/decisores/${id}`;
+    const resp=await authFetch(url,{method:id==null?'POST':'PATCH',body:JSON.stringify(body)});
+    const json=await _jsonOrNull(resp);
+    if(!resp.ok){
+      _setBusy(f,false);
+      err.textContent=resp.status===404?'Este cadastro ainda não está disponível no servidor.':_detailMsg(json,'Não foi possível salvar o contato.');
+      return;
+    }
+    _mcEdit=null;
+    _toast(id==null?'Contato adicionado.':'Contato atualizado.');
+    loadManualContacts();
+  }catch(e){
+    _setBusy(f,false);
+    if(e.message!=='not_authenticated')err.textContent='Erro de conexão. O contato não foi salvo.';
+  }
+}
+async function mcPrincipal(id){
+  const c=_mc.find(x=>x.id===id);if(!c)return;
+  try{
+    const resp=await authFetch(`/api/decisores/${id}`,{method:'PATCH',body:JSON.stringify({is_primary:!c.is_primary})});
+    if(!resp.ok){_toast(_detailMsg(await _jsonOrNull(resp),'Não foi possível alterar o contato principal.'));return;}
+    _toast(c.is_primary?'Contato principal desmarcado.':`${c.name||'Contato'} agora é o contato principal.`);
+    loadManualContacts();
+  }catch(e){if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+}
+async function mcExcluir(id){
+  const c=_mc.find(x=>x.id===id);if(!c)return;
+  if(!confirm(`Excluir o contato ${c.name||''}?\n\nEsta ação não pode ser desfeita.`))return;
+  try{
+    const resp=await authFetch(`/api/decisores/${id}`,{method:'DELETE'});
+    if(!(resp.ok||resp.status===204)){_toast(_detailMsg(await _jsonOrNull(resp),'Não foi possível excluir.'));return;}
+    _toast('Contato excluído.');
+    if(_mcEdit===id)_mcEdit=null;
+    loadManualContacts();
+  }catch(e){if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+}
+
+/* ══════ VIEW: AGENDA ══════ */
+let _agDia=null;
+let _agItens={};   // activity.id → item (para os botões de resultado)
+
+function setAgendaDia(v){
+  _agDia=v||_hojeIso();
+  const inp=document.getElementById('agenda-dia');
+  if(inp)inp.value=_agDia;
+  loadAgenda();
+}
+
+async function loadAgenda(){
+  const body=document.getElementById('agenda-body');
+  if(!body)return;
+  if(!_agDia)_agDia=_hojeIso();
+  const inp=document.getElementById('agenda-dia');
+  if(inp)inp.value=_agDia;
+  // O esqueleto é montado uma vez só: o formulário do lote guarda o que o
+  // vendedor digitou quando ele troca de dia ou volta para esta tela.
+  if(!document.getElementById('ag-wrap')){
+    body.innerHTML=`<div id="ag-wrap">
+      <div id="ag-kpis"></div>
+      <div class="ag-cols">
+        <div class="ag-main" id="ag-main"></div>
+        <aside class="ag-aside">${_agLoteCardHtml()}${_agClientesCardHtml()}</aside>
+      </div>
+    </div>`;
+    const dia=document.getElementById('agl-dia');
+    if(dia)dia.value=_isoDia(_proxDiaUtil());
+  }
+  const main=document.getElementById('ag-main');
+  main.innerHTML='<div class="panel"><div class="muted-box">Carregando a agenda…</div></div>';
+  _agCarregarDisponiveis();
+  try{
+    const resp=await authFetch(`/api/agenda?dia=${encodeURIComponent(_agDia)}`);
+    if(!resp.ok){
+      document.getElementById('ag-kpis').innerHTML='';
+      main.innerHTML=`<div class="panel"><div class="muted-box">${resp.status===404
+        ?'A agenda ainda não está disponível neste servidor.<br/>Enquanto isso, as tarefas abertas estão em Follow-ups.'
+        :'Não foi possível carregar a agenda.'}
+        <a class="empty-cta" href="#followups">Abrir Follow-ups</a></div></div>`;
+      return;
+    }
+    renderAgenda(await resp.json());
+  }catch(e){
+    if(e.message!=='not_authenticated')main.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
+  }
+}
+
+function renderAgenda(d){
+  const res=(d&&d.resumo)||{};
+  const atr=(d&&d.atrasadas)||[];
+  const hoje=(d&&d.hoje)||[];
+  const ehHoje=(d&&d.dia||_agDia)===_hojeIso();
+  _agItens={};
+  [...atr,...hoje].forEach(it=>{if(it&&it.activity)_agItens[it.activity.id]=it;});
+  const pt=res.por_tier||{};
+  const tiers=Object.keys(pt).sort().map(k=>{
+    const m=TIER_META[k];
+    return `<span class="ag-tier-n"><span class="tier-badge ${m?m.cls:'none'}">${m?m.lbl:'Sem tier'}</span><b>${Number(pt[k]||0)}</b></span>`;
+  }).join('')||'<span class="muted">—</span>';
+  const nAtr=Number(res.atrasadas!=null?res.atrasadas:atr.length);
+  const nHoje=Number(res.hoje!=null?res.hoje:hoje.length);
+  document.getElementById('ag-kpis').innerHTML=`<div class="kpi-grid ag-kpis">
+    ${_kpi(nAtr,'Atrasadas','Ficaram de dias anteriores: comece por elas',nAtr>0)}
+    ${_kpi(nHoje,ehHoje?'Para hoje':'Neste dia','Etapas da cadência agendadas')}
+    <div class="kpi"><span class="kpi-lbl">Por tier</span><div class="ag-tier-row">${tiers}</div><span class="kpi-desc">Tarefas deste dia por tier do lead</span></div>
+  </div>`;
+
+  const main=document.getElementById('ag-main');
+  if(!atr.length&&!hoje.length){
+    main.innerHTML=`<div class="panel"><div class="muted-box">
+      ${ehHoje?'Nada para hoje: agenda em dia.':'Nada agendado para este dia.'}<br/>
+      Agende um lote de 1º contato ao lado ou analise novas empresas.
+      <div class="ag-empty-acts">
+        <a class="empty-cta" href="#" onclick="document.getElementById('agl-total')?.focus();return false">Agendar lote de 1º contato</a>
+        <a class="empty-cta ghost" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a>
+      </div>
+    </div></div>`;
+    return;
+  }
+  const secao=(titulo,lista,late,classe)=>lista.length?`<section class="ag-sec">
+      <div class="ag-sec-head"><h3>${titulo}</h3><span class="fu-tag ${classe}">${lista.length}</span></div>
+      ${lista.map(it=>agItemHtml(it,late)).join('')}
+    </section>`:'';
+  main.innerHTML=secao('Atrasadas',atr,true,'late')+secao(ehHoje?'Hoje':'Neste dia',hoje,false,'today');
+}
+
+function agItemHtml(it,late){
+  const a=it.activity||{},l=it.lead||{},c=it.contato,ac=it.acao||{};
+  const aid=Number(a.id),lid=Number(l.id);
+  const step=a.step;
+  const stepLbl=STEP_LABELS[step]||ACT_LABELS[a.type]||'Tarefa';
+  const nome=l.company_name||l.domain||'—';
+  const tel=_safeHref(ac.tel_url,['tel:']);
+  const wa=_safeHref(ac.whatsapp_url,['https://']);
+  const mail=_safeHref(ac.mailto_url,['mailto:']);
+  const tentativa=CALL_STEPS.has(step)&&l.cadence_attempt?`<span class="ag-attempt">Tentativa ${Number(l.cadence_attempt)}/3</span>`:'';
+  const contato=c
+    ?`<div class="ag-contact">${IC_USER_INLINE}<span><b>${esc(c.name||'Contato')}</b>${c.title?` · ${esc(c.title)}`:''}</span></div>`
+    :`<div class="ag-contact muted">Sem contato principal. <a class="btn-link" href="#lead-${lid}">Cadastre na ficha</a></div>`;
+  const comm=[
+    tel?`<a class="ag-act call" href="${esc(tel)}">${IC_PHONE} Ligar</a>`:'',
+    wa?`<a class="ag-act wa" href="${esc(wa)}" target="_blank" rel="noopener">${IC_CHAT} WhatsApp</a>`:'',
+    mail?`<a class="ag-act mail" href="${esc(mail)}">${IC_MAIL} E-mail</a>`:'',
+    `<a class="ag-act ghost" href="#lead-${lid}">Abrir ficha</a>`,
+  ].filter(Boolean).join('');
+  let res;
+  if(CALL_STEPS.has(step)){
+    res=`<div class="ag-res"><span class="ag-res-lbl">Como foi?</span>
+        <button type="button" class="ag-rbtn" onclick="agResultado(${aid},'sem_contato')">Sem contato</button>
+        <button type="button" class="ag-rbtn" onclick="agResultado(${aid},'telefone_errado')">Telefone errado</button>
+        <button type="button" class="ag-rbtn ok" onclick="agReuniao(${aid})">Reunião marcada</button>
+      </div>
+      <div class="ag-date" id="ag-date-${aid}" hidden>
+        <label for="ag-when-${aid}">Data e hora da reunião</label>
+        <div class="np-date-row">
+          <input type="datetime-local" id="ag-when-${aid}" class="cell-inp"/>
+          <button type="button" class="ag-rbtn ok" onclick="agReuniaoOk(${aid})">Confirmar</button>
+          <button type="button" class="ag-rbtn" onclick="document.getElementById('ag-date-${aid}').hidden=true">Cancelar</button>
+        </div>
+      </div>`;
+  }else if(step==='reuniao_qualificacao'||step==='proposta'){
+    res=`<div class="ag-res"><a class="ag-rbtn ok" href="#lead-${lid}">Registrar o resultado na ficha</a></div>`;
+  }else{
+    res=`<div class="ag-res"><button type="button" class="ag-rbtn ok" onclick="agFeito(${aid})">Feito</button></div>`;
+  }
+  return `<article class="ag-item${late?' late':''}" id="ag-item-${aid}">
+    <div class="ag-top">
+      <div class="ag-co"><a class="ag-name" href="#lead-${lid}">${esc(nome)}</a>${tierBadgeHtml(l)}</div>
+      <span class="ag-when${late?' late':''}">${late?'Atrasada · ':''}${esc(_fmtQuando(a.due_at))}</span>
+    </div>
+    <div class="ag-step"><span class="ag-step-chip">${esc(stepLbl)}</span>${tentativa}</div>
+    ${ac.titulo?`<div class="ag-title">${esc(ac.titulo)}</div>`:''}
+    ${ac.dica?`<div class="ag-dica">${esc(ac.dica)}</div>`:''}
+    ${contato}
+    <div class="ag-comm">${comm}</div>
+    ${res}
+  </article>`;
+}
+const IC_USER_INLINE='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+
+function _agSaiu(aid){
+  const el=document.getElementById('ag-item-'+aid);
+  if(el)el.classList.add('gone');
+  setTimeout(loadAgenda,260);
+  loadTodayFollowupsCount();
+}
+async function agResultado(aid,resultado,reuniaoEm){
+  const it=_agItens[aid];if(!it||!it.lead)return;
+  const card=document.getElementById('ag-item-'+aid);
+  const body={resultado};
+  if(it.contato&&it.contato.id!=null)body.contato_id=it.contato.id;
+  if(reuniaoEm)body.reuniao_em=reuniaoEm;
+  _setBusy(card,true);
+  try{
+    const resp=await authFetch(`/api/leads/${Number(it.lead.id)}/cadencia`,{method:'POST',body:JSON.stringify(body)});
+    const json=await _jsonOrNull(resp);
+    if(!resp.ok){_setBusy(card,false);_toast(_detailMsg(json,'Não foi possível registrar.'));return;}
+    _toast(json&&json.message||'Registrado.');
+    _agSaiu(aid);
+  }catch(e){_setBusy(card,false);if(e.message!=='not_authenticated')_toast('Erro de conexão. Nada foi registrado.');}
+}
+function agReuniao(aid){
+  const row=document.getElementById('ag-date-'+aid);
+  const inp=document.getElementById('ag-when-'+aid);
+  if(!row||!inp)return;
+  if(!inp.value)inp.value=_dtLocalPadrao();
+  row.hidden=false;inp.focus();
+}
+function agReuniaoOk(aid){
+  const inp=document.getElementById('ag-when-'+aid);
+  if(!inp||!inp.value){inp?.focus();return;}
+  const d=new Date(inp.value);
+  if(isNaN(d)){inp.focus();return;}
+  agResultado(aid,'reuniao_marcada',d.toISOString());
+}
+async function agFeito(aid){
+  const card=document.getElementById('ag-item-'+aid);
+  _setBusy(card,true);
+  try{
+    const resp=await authFetch(`/api/activities/${aid}`,{method:'PATCH',body:JSON.stringify({completed:true})});
+    if(!resp.ok){_setBusy(card,false);_toast('Não foi possível concluir a tarefa.');return;}
+    _toast('Tarefa concluída.');
+    _agSaiu(aid);
+  }catch(e){_setBusy(card,false);if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+}
+
+/* ── Lote de 1º contato (40/5/5) ── */
+const _AGL_MIX={1:40,2:5,3:5};
+let _aglPreviewOk=false;
+
+function _agLoteCardHtml(){
+  const mix=[1,2,3].map(t=>`<label class="agl-mix-f">
+      <span class="tier-badge t${t}">T${t}</span>
+      <input type="number" id="agl-mix-${t}" class="cell-inp" min="0" max="500" step="1" inputmode="numeric" value="${_AGL_MIX[t]}" oninput="aglMixMudou()" aria-label="Quantidade de leads Tier ${t}"/>
+      <small id="agl-disp-${t}">— disponíveis</small>
+    </label>`).join('');
+  return `<section class="panel panel-pad ag-card" id="agl">
+    <h3 class="ag-card-title">Agendar lote de 1º contato</h3>
+    <div id="agl-classif"></div>
+    <p class="ag-card-sub">Escolhe leads ainda não trabalhados (do T1 para baixo, pela nota) e cria a tarefa de 1º contato às 09:00 do dia. Faltou lead num tier? Completamos com o próximo.</p>
+    <div class="agl-row">
+      <label class="mc-field"><span>Dia do contato</span><input type="date" id="agl-dia" class="cell-inp" oninput="aglInvalidar()"/></label>
+      <label class="mc-field"><span>Total de leads</span><input type="number" id="agl-total" class="cell-inp" min="1" max="500" step="1" inputmode="numeric" value="50" oninput="aglInvalidar()"/></label>
+    </div>
+    <div class="agl-mix-lbl">Quantos de cada tier</div>
+    <div class="agl-mix">${mix}</div>
+    <div class="agl-btns">
+      <button type="button" class="set-btn ghost" id="agl-prev" onclick="aglEnviar(true)">Pré-visualizar</button>
+      <button type="button" class="set-btn primary" id="agl-ok" onclick="aglEnviar(false)" hidden>Confirmar agendamento</button>
+    </div>
+    <p class="set-feedback" id="agl-fb" role="status" aria-live="polite"></p>
+    <div id="agl-res"></div>
+  </section>`;
+}
+function aglMixMudou(){
+  const soma=[1,2,3].reduce((s,t)=>s+(parseInt(document.getElementById('agl-mix-'+t)?.value,10)||0),0);
+  const tot=document.getElementById('agl-total');
+  if(tot&&soma>0)tot.value=soma;
+  aglInvalidar();
+}
+function aglInvalidar(){
+  _aglPreviewOk=false;
+  const ok=document.getElementById('agl-ok');if(ok)ok.hidden=true;
+  const r=document.getElementById('agl-res');if(r)r.innerHTML='';
+  const fb=document.getElementById('agl-fb');if(fb){fb.className='set-feedback';fb.textContent='';}
+}
+function _aglDisponiveis(disp){
+  if(!disp)return;
+  [1,2,3].forEach(t=>{
+    const el=document.getElementById('agl-disp-'+t);
+    if(el&&disp[t]!=null)el.textContent=`${Number(disp[t])} disponíveis`;
+  });
+}
+async function _agCarregarDisponiveis(){
+  try{
+    const resp=await authFetch('/api/tiers/resumo');
+    if(!resp.ok)return;
+    const r=await resp.json();
+    _aglDisponiveis(r&&r.nao_executados);
+    const slot=document.getElementById('agl-classif');
+    if(slot)slot.innerHTML=_classifCalloutHtml(r&&r.por_tier&&r.por_tier.sem_tier);
+  }catch(_){}
+}
+async function aglEnviar(preview){
+  const fb=document.getElementById('agl-fb');
+  const card=document.getElementById('agl');
+  const dia=document.getElementById('agl-dia')?.value;
+  const total=parseInt(document.getElementById('agl-total')?.value,10);
+  const mix={};[1,2,3].forEach(t=>{mix[t]=Math.max(0,parseInt(document.getElementById('agl-mix-'+t)?.value,10)||0);});
+  if(!dia){fb.className='set-feedback err';fb.textContent='Escolha o dia do contato.';document.getElementById('agl-dia')?.focus();return;}
+  if(!(total>0)){fb.className='set-feedback err';fb.textContent='O total precisa ser maior que zero.';document.getElementById('agl-total')?.focus();return;}
+  if(!preview&&!_aglPreviewOk)return;
+  fb.className='set-feedback ok';fb.textContent=preview?'Montando a prévia…':'Agendando…';
+  _setBusy(card,true);
+  try{
+    const resp=await authFetch('/api/agenda/lote',{method:'POST',body:JSON.stringify({dia,total,mix,preview})});
+    const json=await _jsonOrNull(resp);
+    _setBusy(card,false);
+    if(!resp.ok){
+      fb.className='set-feedback err';
+      fb.textContent=resp.status===404?'O agendamento em lote ainda não está disponível no servidor.':_detailMsg(json,'Não foi possível agendar.');
+      return;
+    }
+    _aglDisponiveis(json.disponiveis);
+    fb.className='set-feedback ok';fb.textContent=json.message||'';
+    if(preview){
+      const sel=json.selecionados||[];
+      _aglPreviewOk=sel.length>0;
+      document.getElementById('agl-ok').hidden=!_aglPreviewOk;
+      document.getElementById('agl-res').innerHTML=_aglPreviaHtml(json);
+    }else{
+      _toast(json.message||'Lote agendado.');
+      _aglPreviewOk=false;
+      document.getElementById('agl-ok').hidden=true;
+      document.getElementById('agl-res').innerHTML='';
+      if(json.dia===_agDia||dia===_agDia)loadAgenda();
+      else _agCarregarDisponiveis();
+      loadTodayFollowupsCount();
+    }
+  }catch(e){
+    _setBusy(card,false);
+    if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}
+  }
+}
+function _aglPreviaHtml(j){
+  const sel=j.selecionados||[];
+  const pt=j.por_tier||{};
+  if(!sel.length)return `<div class="np-empty">Nenhum lead disponível para agendar.
+    <button type="button" class="btn-link" onclick="nav('lote')">Analisar uma lista de domínios</button></div>`;
+  const chips=Object.keys(pt).sort().map(k=>`<span class="ag-tier-n"><span class="tier-badge t${esc(k)}">T${esc(k)}</span><b>${Number(pt[k]||0)}</b></span>`).join('');
+  const lista=sel.map(s=>`<li>
+      <a class="agl-li-name" href="#lead-${Number(s.lead_id)}">${esc(s.company_name||s.domain||'—')}</a>
+      <span class="agl-li-meta">${tierBadgeHtml({tier:s.tier==null?null:s.tier})}${s.score!=null?`<span class="agl-score">nota ${Number(s.score)}</span>`:''}</span>
+    </li>`).join('');
+  return `<div class="agl-prev">
+    <div class="agl-prev-head"><b>${sel.length} lead(s) na prévia</b><span class="ag-tier-row">${chips}</span></div>
+    <ol class="agl-list">${lista}</ol>
+    <p class="agl-hint">Confira e clique em <b>Confirmar agendamento</b>. Nada foi criado ainda.</p>
+  </div>`;
+}
+
+/* ── Base de clientes do time (secundário: fica recolhido) ── */
+function _agClientesCardHtml(){
+  return `<details class="panel ag-card ag-cli" id="ag-cli" ontoggle="if(this.open)loadClientes()">
+    <summary>
+      <span class="ag-cli-sum"><b>Base de clientes do time</b><small>Clientes Skymail ou de revenda viram Tier 4 e saem da prospecção.</small></span>
+      <span class="ag-cli-n" id="cli-n"></span>
+    </summary>
+    <div class="ag-cli-body">
+      <label class="mc-field"><span>Domínios, um por linha</span>
+        <textarea id="cli-txt" class="lote-textarea cli-txt" spellcheck="false" placeholder="empresa.com.br&#10;outra.com"></textarea></label>
+      <div class="agl-row">
+        <label class="mc-field"><span>Tipo</span>
+          <select id="cli-kind" class="cell-inp"><option value="skymail">Cliente Skymail</option><option value="revenda">Revenda</option></select></label>
+        <button type="button" class="set-btn primary cli-add" onclick="addClientes(this)">Adicionar à base</button>
+      </div>
+      <p class="set-feedback" id="cli-fb" role="status" aria-live="polite"></p>
+      <div id="cli-list" class="cli-list"></div>
+    </div>
+  </details>`;
+}
+const _CLI_KIND={skymail:'Skymail',revenda:'Revenda'};
+async function loadClientes(){
+  const box=document.getElementById('cli-list');
+  if(!box)return;
+  box.innerHTML='<div class="np-empty np-empty-sm">Carregando…</div>';
+  try{
+    const resp=await authFetch('/api/clientes');
+    if(!resp.ok){box.innerHTML=`<div class="np-empty np-empty-sm">${resp.status===404?'A base de clientes ainda não está disponível no servidor.':'Não foi possível carregar a base.'}</div>`;return;}
+    const r=await resp.json();
+    const itens=(r&&r.itens)||[];
+    const n=document.getElementById('cli-n');
+    if(n)n.textContent=r&&r.total!=null?`${Number(r.total)}`:'';
+    if(!itens.length){box.innerHTML=`<div class="np-empty np-empty-sm">Nenhum domínio na base${r&&r.team?` do time ${esc(r.team)}`:''} ainda.</div>`;return;}
+    box.innerHTML=`${r.team?`<div class="cli-team">Time ${esc(r.team)} · ${Number(r.total||itens.length)} domínio(s)</div>`:''}
+      ${itens.map(i=>`<div class="cli-row">
+        <span class="cli-dom">${esc(i.domain)}</span>
+        <span class="cli-kind">${esc(_CLI_KIND[i.kind]||i.kind||'')}</span>
+        <button type="button" class="mc-mbtn danger" data-dom="${esc(i.domain)}" onclick="delCliente(this.dataset.dom)" aria-label="Remover ${esc(i.domain)} da base">Remover</button>
+      </div>`).join('')}`;
+  }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="np-empty np-empty-sm">Erro de conexão.</div>';}
+}
+async function addClientes(btn){
+  const txt=document.getElementById('cli-txt');
+  const fb=document.getElementById('cli-fb');
+  const texto=(txt?.value||'').trim();
+  if(!texto){fb.className='set-feedback err';fb.textContent='Cole pelo menos um domínio.';txt?.focus();return;}
+  const kind=document.getElementById('cli-kind')?.value||'skymail';
+  btn.disabled=true;fb.className='set-feedback ok';fb.textContent='Adicionando…';
+  try{
+    const resp=await authFetch('/api/clientes',{method:'POST',body:JSON.stringify({texto,kind})});
+    const json=await _jsonOrNull(resp);
+    btn.disabled=false;
+    if(!resp.ok){fb.className='set-feedback err';fb.textContent=_detailMsg(json,'Não foi possível adicionar.');return;}
+    fb.className='set-feedback ok';fb.textContent=json.message||'Base atualizada.';
+    txt.value='';
+    loadClientes();_agCarregarDisponiveis();
+  }catch(e){btn.disabled=false;if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}}
+}
+async function delCliente(domain){
+  if(!domain||!confirm(`Remover ${domain} da base de clientes?\n\nOs leads deste domínio podem voltar para a prospecção.`))return;
+  try{
+    const resp=await authFetch(`/api/clientes/${encodeURIComponent(domain)}`,{method:'DELETE'});
+    if(!(resp.ok||resp.status===204)){_toast(_detailMsg(await _jsonOrNull(resp),'Não foi possível remover.'));return;}
+    _toast(`${domain} removido da base.`);
+    loadClientes();
+  }catch(e){if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
 }
 
 /* ══════ HELPERS ══════ */
