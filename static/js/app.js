@@ -1273,7 +1273,17 @@ const _CV_FILTROS=[
   {id:'aguardando',rotulo:'Aguardando você',teste:c=>c.aguardando_voce},
   {id:'ia',rotulo:'IA ativa',teste:c=>c.ai_status==='AI_ACTIVE'},
   {id:'abertas',rotulo:'Janela aberta',teste:c=>c.janela_aberta},
+  // A Coexistência traz o WhatsApp inteiro do celular: clientes, fornecedores,
+  // conhecidos. Separar é o que impede a prospecção de se perder no meio.
+  {id:'leads',rotulo:'Leads',teste:c=>c.lead_id!=null},
+  {id:'contatos',rotulo:'Outros contatos',teste:c=>c.lead_id==null},
 ];
+
+/* Como chamar a conversa: a empresa do lead; sem lead, o nome da agenda do
+   celular; sem nome, o próprio número — nunca "Empresa" para quem não é uma. */
+function nomeDaConversa(c){
+  return c.company_name||c.contato||c.phone_e164||'Contato';
+}
 
 function filtrosConversas(){
   return _CV_FILTROS.map(f=>{
@@ -1394,7 +1404,7 @@ function painelVazio(){
 }
 
 function cardConversa(c){
-  const nome=c.company_name||'Empresa';
+  const nome=nomeDaConversa(c);
   const ativo=_conversaAberta===c.id?' aberta':'';
   const pendente=c.aguardando_voce?' pendente':'';
   // A prévia repete o tique quando a última mensagem foi nossa: é como se sabe,
@@ -1513,7 +1523,7 @@ function bolhasDeMensagens(mensagens,opts){
   let dia='',autorAnterior='';
   return mensagens.map(m=>{
     const lado=m.direction==='in'?'in':'out';
-    const autor=m.direction==='in'?'Lead':(opts.teste?'IA':(m.sent_by==='ai'?'IA':'Você'));
+    const autor=m.direction==='in'?(opts.quemEscreve||'Lead'):(opts.teste?'IA':(m.sent_by==='ai'?'IA':'Você'));
     const quando=opts.teste?new Date((m.created_at||0)*1000):new Date(m.created_at);
     const diaMsg=isNaN(quando)?'':quando.toDateString();
     let sep='';
@@ -1569,12 +1579,16 @@ function renderPainelConversa(det){
   const rascunho=document.getElementById('cv-texto')?.value||'';
   const colado=estaNoFim('cv-msgs');
   const emojisAbertos=!!document.getElementById('cv-emojis')?.classList.contains('aberta');
+  const buscandoVinculo=document.activeElement?.id==='cv-vinculo-q';
 
   if(det.teste)return _renderPainelTeste(painel,rascunho,colado,emojisAbertos);
 
   const c=det.card;
   const mensagens=det.messages||[];
-  const nome=c.company_name||'Empresa';
+  const nome=nomeDaConversa(c);
+  const sub=c.lead_id==null
+    ?(c.company_name||!c.contato?'Contato fora da base de leads':'Fora da base de leads')
+    :(c.contato||'Contato não identificado');
 
   // A janela de 24h é regra da Meta: fora dela, o campo de resposta aparece
   // desabilitado explicando o porquê — em vez de sumir ou dar erro no envio.
@@ -1611,13 +1625,16 @@ function renderPainelConversa(det){
         ${avatarHtml(nome,c.selo.tom,true)}
         <div class="cv-head-txt">
           <div class="cv-head-nome">${esc(nome)}</div>
-          <div class="cv-head-sub">${esc(c.contato||'Contato não identificado')} · <span class="mono">${esc(c.phone_e164)}</span></div>
+          <div class="cv-head-sub">${esc(sub)} · <span class="mono">${esc(c.phone_e164)}</span></div>
         </div>
         <span class="cv-selo grande ${esc(c.selo.tom)}">${esc(c.selo.rotulo)}</span>
       </div>
       <div class="cv-explica">${esc(c.selo.explicacao)}${c.handoff_reason?` <span class="cv-motivo">${esc(c.handoff_reason)}</span>`:''}</div>
       <div class="cv-acoes">${botoesConversa(c)}</div>
-      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(mensagens,{vazio:'Nenhuma mensagem trocada ainda.<br/>O convite foi enviado — a conversa começa quando o lead responder.'})}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
+      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(mensagens,{
+        // Sem lead, "Lead" seria rotular de prospect um fornecedor ou cliente.
+        quemEscreve:c.lead_id==null?(c.contato||'Contato'):'Lead',
+        vazio:c.lead_id==null?'Nenhuma mensagem ainda.':'Nenhuma mensagem trocada ainda.<br/>O convite foi enviado — a conversa começa quando o lead responder.'})}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
       ${caixa}
     </div>
     <aside class="cv-panel-aside cv-ficha">${fichaHtml(c,det)}</aside>`;
@@ -1634,6 +1651,10 @@ function renderPainelConversa(det){
     document.getElementById('cv-emoji-btn')?.classList.add('on');
   }
   if(colado)irParaOFim('cv-msgs');
+  if(buscandoVinculo){
+    const q=document.getElementById('cv-vinculo-q');
+    if(q){q.focus();q.setSelectionRange(q.value.length,q.value.length);}
+  }
 }
 
 /* Ficha + funil + agendamentos + atalhos — o que se sabe deste lead sem sair
@@ -1645,6 +1666,7 @@ function fichaHtml(c,det){
       ${tel?`<a class="cv-btn" href="https://wa.me/${tel}" target="_blank" rel="noopener">Abrir WhatsApp</a>`:''}
       <button type="button" class="cv-btn" onclick="copiarTelefone(this,'${esc(c.phone_e164||'')}')">Copiar número</button>
     </div>
+    ${c.lead_id==null?vinculoHtml(c):''}
     ${funilHtml(c.stage)}
     ${janelaHtml(c)}
     ${fichaCamposHtml(det.ficha)}
@@ -1794,11 +1816,85 @@ function _horaCurta(iso){
    emergência que só aparece em certos estados não serve para nada. */
 function botoesConversa(c){
   const b=(acao,rotulo,titulo,cls)=>`<button type="button" class="cv-btn ${cls||''}" onclick="acaoConversa(${c.id},'${acao}')" title="${titulo}">${rotulo}</button>`;
+  if(c.lead_id==null){
+    // Sem lead não há automação: nem "assumir" (já é sua) nem "devolver para
+    // a IA" (o portão recusaria). Vincular a um lead fica na coluna da ficha.
+    return c.ai_status!=='STOPPED'?b('encerrar','Encerrar','Fecha a conversa: nada mais é enviado'):'';
+  }
   const botoes=[b('assumir','Assumir agora','A automação cala na hora e quem responde passa a ser você','destaque')];
   if(c.ai_status==='AI_ACTIVE')botoes.push(b('pausar','Pausar IA','Ninguém responde até você retomar ou assumir'));
   else if(c.ai_status!=='STOPPED')botoes.push(b('retomar','Devolver para a IA','A automação volta a responder, dentro das regras'));
   if(c.ai_status!=='STOPPED')botoes.push(b('encerrar','Encerrar','Fecha a conversa: nada mais é enviado'));
   return botoes.join('');
+}
+
+/* ══════ VÍNCULO: conversa sem lead → lead ══════
+   Contato que veio do celular (Coexistência) e que é, na verdade, um lead.
+   Os candidatos com o mesmo telefone aparecem sem precisar digitar nada — são
+   quase certamente a mesma pessoa. A busca e o resultado ficam guardados aqui
+   porque o painel é remontado a cada 15 s pelo polling. */
+let _vinculo={conversa:null,q:'',itens:null,carregando:false};
+let _vinculoTimer=null;
+
+function vinculoHtml(c){
+  if(_vinculo.conversa!==c.id){
+    _vinculo={conversa:c.id,q:'',itens:null,carregando:false};
+    buscarLeadsParaVincular(c.id,'');
+  }
+  const itens=_vinculo.itens;
+  const lista=_vinculo.carregando&&!itens
+    ?'<div class="cv-vinculo-nada">Procurando…</div>'
+    :(itens&&itens.length
+      ?itens.map(l=>`<button type="button" class="cv-vinculo-item" onclick="vincularLead(${c.id},${Number(l.id)})"
+            title="Ligar esta conversa a ${esc(l.company_name||l.domain||'este lead')}">
+          <span>${esc(l.company_name||l.domain||'Lead #'+l.id)}</span>
+          ${l.mesmo_telefone?'<span class="cv-vinculo-tag">mesmo telefone</span>':''}
+        </button>`).join('')
+      :`<div class="cv-vinculo-nada">${_vinculo.q?'Nenhum lead com esse nome.':'Nenhum lead com este telefone. Busque pelo nome da empresa.'}</div>`);
+  return `<div class="cv-ficha-sec cv-vinculo">
+      <div class="cv-ficha-sec-tit">Vincular a um lead</div>
+      <p class="cv-vinculo-desc">Esta conversa veio do seu WhatsApp e não é de nenhum lead.
+        Se for, vincule — a automação continua desligada até você devolvê-la para a IA.</p>
+      <input id="cv-vinculo-q" class="cv-vinculo-q" placeholder="Buscar empresa ou domínio"
+             autocomplete="off" value="${esc(_vinculo.q)}"
+             oninput="digitarBuscaVinculo(${c.id},this.value)" aria-label="Buscar lead para vincular"/>
+      <div class="cv-vinculo-lista" id="cv-vinculo-lista">${lista}</div>
+    </div>`;
+}
+
+function digitarBuscaVinculo(id,valor){
+  _vinculo.q=valor||'';
+  clearTimeout(_vinculoTimer);
+  _vinculoTimer=setTimeout(()=>buscarLeadsParaVincular(id,_vinculo.q),300);
+}
+
+async function buscarLeadsParaVincular(id,q){
+  _vinculo.carregando=true;
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}/leads-sugeridos?q=${encodeURIComponent(q||'')}`);
+    if(_vinculo.conversa!==id||_vinculo.q!==(q||''))return;   // resposta velha
+    _vinculo.itens=resp.ok?await resp.json():[];
+  }catch(_){_vinculo.itens=[];}
+  finally{_vinculo.carregando=false;}
+  const caixa=document.getElementById('cv-vinculo-lista');
+  const c=_conversas.find(x=>x.id===id);
+  if(caixa&&c){
+    // Só a lista: redesenhar o bloco tiraria o foco do campo de busca.
+    const tmp=document.createElement('div');
+    tmp.innerHTML=vinculoHtml(c);
+    const nova=tmp.querySelector('#cv-vinculo-lista');
+    if(nova)caixa.innerHTML=nova.innerHTML;
+  }
+}
+
+async function vincularLead(id,leadId){
+  try{
+    const resp=await authFetch(`/api/wa/conversations/${id}/lead`,{method:'PATCH',body:JSON.stringify({lead_id:leadId})});
+    if(!resp.ok){alert((await resp.json()).detail||'Não foi possível vincular.');return;}
+    _vinculo={conversa:null,q:'',itens:null,carregando:false};
+    await loadConversas();
+    abrirConversa(id,true);
+  }catch(_){alert('Erro de conexão.');}
 }
 
 async function acaoConversa(id,acao){
@@ -3199,12 +3295,14 @@ async function loadSettings(){
   const body=document.getElementById('settings-body');
   body.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   try{
-    const[meR,connR,waR,lushaR]=await Promise.all([
+    const[meR,connR,waR,lushaR,esR]=await Promise.all([
       authFetch('/api/me'),
       authFetch('/api/crm/connections'),
       authFetch('/api/wa/connection'),
       authFetch('/api/me/lusha'),
+      authFetch('/api/wa/connection/embedded/config').catch(()=>null),
     ]);
+    _esConfig=esR&&esR.ok?await esR.json():null;
     const me=meR.ok?await meR.json():_profile;
     const conns=connR.ok?await connR.json():[];
     const wa=waR.ok?await waR.json():null;
@@ -3297,12 +3395,21 @@ function _cardWhatsApp(wa){
     ?`<p class="set-feedback err">Falta: ${(wa.faltando||[]).map(esc).join(', ')}.</p>`:'';
   const erro=wa.erro?`<p class="set-feedback err">${esc(wa.erro)}</p>`:'';
 
+  // Credenciais à mão ficam recolhidas quando o popup da Meta está disponível:
+  // é o caminho de quem já tem um app próprio na Meta, não o de todo mundo.
+  const manualAberto=!(_esConfig&&_esConfig.disponivel)||wa.onboarding==='manual';
+
   return`
+    ${_blocoMeta(wa)}
     <div class="panel panel-pad">
-      ${_setHead(IC_WA,'Conexão com o Meta Business','Conecte o número da sua conta para conversar com os leads por ele. As credenciais vêm do <strong>Meta Business</strong> (Apps → WhatsApp → Configuração da API) e ficam cifradas aqui — depois de salvas não voltam para esta tela.')}
+      ${_setHead(IC_WA,'Conexão com o Meta Business','O número pelo qual as conversas saem. Os segredos ficam cifrados aqui — depois de salvos não voltam para esta tela.')}
       ${estado}
       ${erro}
       <div class="set-form">
+        <details class="set-details"${manualAberto?' open':''}>
+        <summary>Configuração manual (avançado)</summary>
+        <p class="set-desc">Para quem já tem um app próprio na Meta: as credenciais vêm de
+          <strong>Meta Business</strong> → Apps → WhatsApp → Configuração da API.</p>
         ${_setSub('Credenciais')}
           <div class="set-field">
             <label for="wa-pnid">ID do número (Phone Number ID)</label>
@@ -3321,6 +3428,7 @@ function _cardWhatsApp(wa){
             <input id="wa-verify" class="set-input" type="password" placeholder="${wa.tem_verify_token?'••••••••••••':'Uma frase que você inventa e repete na Meta'}" autocomplete="off" spellcheck="false"/>
           </div>
         </div>
+        </details>
         ${_setSub('Mensagem de abertura')}
           <div class="set-field">
             <label for="wa-template">Template aprovado na Meta</label>
@@ -3560,6 +3668,138 @@ async function disconnectWhatsApp(){
   }catch(e){
     if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
   }
+}
+
+/* ══════ WHATSAPP: conectar pelo popup da Meta (Embedded Signup) ══════
+   O popup devolve duas coisas por caminhos diferentes e sem ordem garantida:
+   o `code` (no callback do FB.login) e os ids da conta (numa mensagem postada
+   para a janela). O servidor precisa dos dois, e o `code` expira em 30 s —
+   por isso cada um, ao chegar, tenta enviar, e só o segundo consegue. */
+let _esConfig=null;
+let _sdkMeta=null;
+
+function _carregarSdkMeta(cfg){
+  if(window.FB)return Promise.resolve();
+  if(_sdkMeta)return _sdkMeta;
+  _sdkMeta=new Promise((ok,falha)=>{
+    window.fbAsyncInit=()=>{
+      FB.init({appId:cfg.app_id,autoLogAppEvents:true,xfbml:false,version:cfg.graph_version});
+      ok();
+    };
+    const s=document.createElement('script');
+    s.src='https://connect.facebook.net/pt_BR/sdk.js';
+    s.async=true;s.defer=true;s.crossOrigin='anonymous';
+    s.onerror=()=>{_sdkMeta=null;falha(new Error('sdk'));};
+    document.head.appendChild(s);
+  });
+  return _sdkMeta;
+}
+
+const _HIST_ROTULO={
+  solicitado:'Histórico pedido à Meta — os primeiros lotes costumam chegar em minutos.',
+  importando:'Importando o histórico do celular',
+  concluido:'Histórico importado.',
+  recusado:'O compartilhamento do histórico não foi autorizado no celular. As conversas novas chegam normalmente.',
+  falhou:'A Meta não aceitou o pedido de histórico. As conversas novas chegam normalmente.',
+};
+
+function _blocoMeta(wa){
+  const cfg=_esConfig;
+  if(!cfg)return '';
+  const coex=wa&&wa.onboarding==='coexistencia';
+  const ruim=wa&&['recusado','falhou'].includes(wa.historico_status);
+  const pct=wa&&wa.historico_status==='importando'&&wa.historico_progresso!=null
+    ?` — ${Number(wa.historico_progresso)}%`:'';
+  const hist=coex&&wa.historico_status
+    ?`<p class="set-feedback ${ruim?'err':'ok'}">${esc(_HIST_ROTULO[wa.historico_status]||wa.historico_status)}${pct}</p>`
+    :'';
+  const falta=cfg.disponivel?'':`<p class="set-feedback err">O servidor ainda não está pronto para o
+      popup da Meta. Falta configurar: ${(cfg.faltando||[]).map(v=>`<code>${esc(v)}</code>`).join(' ')}.</p>`;
+  return`
+    <div class="panel panel-pad">
+      ${_setHead(IC_WA,'Conectar com a Meta (recomendado)','Use o WhatsApp Business que você já tem no celular. Você entra com o Facebook, escolhe a empresa e lê um <strong>QR code</strong> com o app WhatsApp Business. O número continua funcionando no celular, e as conversas — inclusive até 6 meses de histórico — aparecem aqui.')}
+      ${coex?`<div class="muted-box">Conectado em modo Coexistência: o que você responder pelo celular também aparece aqui, e a automação para de responder naquela conversa.</div>`:''}
+      ${hist}
+      ${falta}
+      <div class="set-actions">
+        <button class="set-btn primary" onclick="conectarPelaMeta()" ${cfg.disponivel?'':'disabled'}>
+          ${wa&&wa.conectado?'Reconectar com a Meta':'Conectar com a Meta'}</button>
+      </div>
+      <p id="wa-meta-feedback" class="set-feedback"></p>
+    </div>`;
+}
+
+function _metaFeedback(msg,ok){
+  const el=document.getElementById('wa-meta-feedback');
+  if(!el)return;
+  el.textContent=msg;
+  el.className='set-feedback '+(ok?'ok':'err');
+}
+
+async function conectarPelaMeta(){
+  const cfg=_esConfig;
+  if(!cfg||!cfg.disponivel){_metaFeedback('O servidor ainda não está configurado para o popup da Meta.',false);return;}
+  try{await _carregarSdkMeta(cfg);}
+  catch(_){_metaFeedback('Não foi possível carregar o login da Meta. Verifique se algum bloqueador está impedindo connect.facebook.net.',false);return;}
+
+  let codigo=null,sessao=null,enviado=false;
+  const sair=()=>window.removeEventListener('message',ouvir);
+  const enviar=async()=>{
+    if(enviado||!codigo||!sessao)return;
+    enviado=true;sair();
+    _metaFeedback('Conectando e conferindo com a Meta…',true);
+    try{
+      const resp=await authFetch('/api/wa/connection/embedded',{method:'POST',body:JSON.stringify({
+        code:codigo,waba_id:sessao.waba_id,phone_number_id:sessao.phone_number_id||null,evento:sessao.evento||null})});
+      const json=await resp.json();
+      if(!resp.ok){_metaFeedback(json.detail||'Não foi possível conectar.',false);return;}
+      const avisos=(json.avisos||[]).join(' ');
+      _metaFeedback(avisos?`Conectado, com ressalvas: ${avisos}`:'WhatsApp conectado. As conversas começam a chegar em instantes.',!avisos);
+      setTimeout(loadSettings,avisos?6000:1500);
+    }catch(e){
+      if(e.message!=='not_authenticated')_metaFeedback('Erro de conexão.',false);
+    }
+  };
+  const ouvir=(ev)=>{
+    if(!String(ev.origin||'').endsWith('facebook.com'))return;
+    let d;
+    try{d=typeof ev.data==='string'?JSON.parse(ev.data):ev.data;}catch(_){return;}
+    if(!d||d.type!=='WA_EMBEDDED_SIGNUP')return;
+    if(d.event==='CANCEL'){
+      sair();
+      const info=d.data||{};
+      _metaFeedback(info.error_message
+        ?`A Meta informou um erro: ${info.error_message}`
+        :`Conexão cancelada${info.current_step?` (parou em ${info.current_step})`:''}.`,false);
+      return;
+    }
+    if(d.data&&d.data.waba_id){
+      sessao={waba_id:d.data.waba_id,phone_number_id:d.data.phone_number_id,evento:d.event};
+      enviar();
+    }
+  };
+  window.addEventListener('message',ouvir);
+  _metaFeedback('Siga os passos na janela da Meta…',true);
+
+  FB.login((resp)=>{
+    if(!resp||!resp.authResponse||!resp.authResponse.code){
+      sair();
+      if(!enviado)_metaFeedback('Conexão cancelada.',false);
+      return;
+    }
+    codigo=resp.authResponse.code;
+    enviar();
+    // O `code` vence em 30 s. Se os ids da conta não chegaram até lá, não
+    // adianta esperar: melhor dizer agora do que falhar em silêncio.
+    setTimeout(()=>{
+      if(!enviado){sair();_metaFeedback('A Meta não informou qual conta foi conectada. Tente de novo.',false);}
+    },20000);
+  },{
+    config_id:cfg.config_id,
+    response_type:'code',
+    override_default_response_type:true,
+    extras:{setup:{},featureType:cfg.feature_type,sessionInfoVersion:'3'},
+  });
 }
 
 /* ══════ LUSHA: enriquecimento pago (BYOA) ══════ */

@@ -331,7 +331,7 @@ class ConversationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    lead_id: int
+    lead_id: Optional[int] = None
     decision_maker_id: Optional[int] = None
     phone_e164: str
     channel: str
@@ -365,9 +365,11 @@ class ConversationSeal(BaseModel):
 class ConversationCard(BaseModel):
     """Uma conversa na lista, com o que o card precisa mostrar."""
     id: int
-    lead_id: int
+    #: Nulo nas conversas de quem não é lead (Coexistência): clientes,
+    #: fornecedores, conhecidos. A tela as separa e oferece vincular a um lead.
+    lead_id: Optional[int] = None
     company_name: Optional[str] = None
-    contato: Optional[str] = None       # nome do decisor, quando há
+    contato: Optional[str] = None       # nome do decisor, ou da agenda quando não há lead
     phone_e164: str
     ai_status: str
     selo: ConversationSeal
@@ -412,6 +414,21 @@ class ConversationDetail(BaseModel):
     # direito não precisar de uma segunda chamada a /api/leads/{id}.
     ficha: Optional[dict[str, str]] = None
     agendamentos: List[AgendamentoOut] = []
+
+
+class ConversationLeadLink(BaseModel):
+    """Vincula uma conversa sem lead (Coexistência) a um lead do usuário."""
+    lead_id: int
+
+
+class LeadSugestao(BaseModel):
+    """Um lead candidato a vínculo, como a busca do painel da conversa mostra."""
+    id: int
+    company_name: Optional[str] = None
+    domain: Optional[str] = None
+    #: True quando o telefone do lead (ou de um decisor) é o desta conversa —
+    #: a tela põe esses primeiro, porque é quase certamente a mesma pessoa.
+    mesmo_telefone: bool = False
 
 
 class ConversationAction(BaseModel):

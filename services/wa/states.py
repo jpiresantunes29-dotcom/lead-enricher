@@ -82,6 +82,20 @@ def start(db: Session, lead: Lead, phone_e164: str, user_id: str,
         .first()
     )
     if conversa is None:
+        # O número já conversa com este usuário sem lead (veio do celular, na
+        # Coexistência)? A conversa é essa — o convite a adota em vez de abrir
+        # uma segunda com a mesma pessoa, o que dividiria o histórico em dois.
+        conversa = (
+            db.query(Conversation)
+            .filter(Conversation.user_id == user_id,
+                    Conversation.phone_e164 == phone_e164,
+                    Conversation.lead_id.is_(None))
+            .first()
+        )
+        if conversa is not None:
+            conversa.lead_id = lead.id
+            conversa.decision_maker_id = decision_maker_id
+    if conversa is None:
         conversa = Conversation(
             lead_id=lead.id,
             decision_maker_id=decision_maker_id,

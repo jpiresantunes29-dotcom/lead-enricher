@@ -297,7 +297,15 @@ AI_STATUSES = (AI_ACTIVE, AI_PAUSED, HUMAN_HANDOFF, STOPPED)
 
 
 class Conversation(Base):
-    """Uma conversa de WhatsApp com um lead."""
+    """
+    Uma conversa de WhatsApp — com um lead ou com qualquer contato do número.
+
+    `lead_id` é opcional desde a Coexistência (services/wa/coexistencia.py): o
+    WhatsApp Business conectado traz o histórico e as mensagens de clientes,
+    fornecedores e conhecidos, que não são prospects. Essas conversas existem
+    sem lead, são só humanas (o portão recusa a automação sem lead) e podem ser
+    vinculadas a um lead depois.
+    """
     __tablename__ = "conversations"
     __table_args__ = (
         # A tela de conversas lista sempre "as minhas, mais recentes primeiro".
@@ -305,7 +313,10 @@ class Conversation(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True)
-    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False, index=True)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True, index=True)
+    #: Nome do contato como está na agenda do WhatsApp Business (sincronizada
+    #: na Coexistência). É o que a lista mostra quando não há lead.
+    contact_name = Column(String(255), nullable=True)
     decision_maker_id = Column(Integer, ForeignKey("decision_makers.id"), nullable=True)
     user_id = Column(String(36), nullable=False, index=True)
     phone_e164 = Column(String(20), nullable=False, index=True)
@@ -820,6 +831,19 @@ class CRMConnection(Base):
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+#: Valores de `WhatsAppConnection.onboarding`.
+ONBOARDING_MANUAL = "manual"
+ONBOARDING_CADASTRO = "cadastro"
+ONBOARDING_COEXISTENCIA = "coexistencia"
+
+#: Valores de `WhatsAppConnection.historico_status`.
+HISTORICO_SOLICITADO = "solicitado"   # pedimos à Meta; nenhum lote chegou ainda
+HISTORICO_IMPORTANDO = "importando"
+HISTORICO_CONCLUIDO = "concluido"
+HISTORICO_RECUSADO = "recusado"       # o dono não autorizou compartilhar no celular
+HISTORICO_FALHOU = "falhou"           # a Meta não aceitou o pedido de sincronização
+
+
 class WhatsAppConnection(Base):
     """
     O WhatsApp Business de um usuário. Uma conta, um número.
@@ -857,13 +881,40 @@ class WhatsAppConnection(Base):
     #: "gravado mas nunca testado" — a tela diz isso em vez de fingir que está
     #: pronto, porque descobrir token inválido no primeiro convite é caro.
     verified_at = Column(DateTime(timezone=True), nullable=True)
+    #: Como o número chegou aqui: `manual` (credenciais coladas na tela),
+    #: `cadastro` (Embedded Signup com número novo) ou `coexistencia` (o
+    #: WhatsApp Business do celular, que continua funcionando lá).
+    onboarding = Column(String(20), nullable=False, default=ONBOARDING_MANUAL)
+    #: Importação do histórico da Coexistência. A Meta entrega em lotes por
+    #: webhook, sem aviso de fim — `historico_progresso` (0-100) é o que ela
+    #: informa em cada lote, e é o que a tela mostra enquanto chega.
+    historico_status = Column(String(20), nullable=True)
+    historico_progresso = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class WaContact(Base):
+    """
+    A agenda do WhatsApp Business, como a Coexistência a sincroniza.
+
+    Tabela própria, e não uma coluna da conversa, porque a agenda chega antes
+    das conversas e inclui gente com quem nunca se falou: o nome precisa estar
+    guardado em algum lugar quando a primeira mensagem dessa pessoa chegar.
+    """
+    __tablename__ = "wa_contacts"
+    __table_args__ = (UniqueConstraint("user_id", "phone_e164", name="uq_wa_contact_user_phone"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(String(36), nullable=False, index=True)
+    phone_e164 = Column(String(20), nullable=False)
+    name = Column(String(255), nullable=True)
     updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 #: Revisão mais recente em alembic/versions. Precisa acompanhar a última
 #: migração criada — o teste tests/test_migracoes.py falha se divergir.
-ALEMBIC_HEAD = "e81f4c2a9b6d"
+ALEMBIC_HEAD = "f3a91c7d2e58"
 
 
 def _stamp_alembic_head() -> None:
