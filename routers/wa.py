@@ -13,7 +13,6 @@ a Meta cobra por mensagem. Passa pelo portão, é disparado por gente e nunca
 por laço ou cron.
 """
 import logging
-import re
 from collections import Counter
 from datetime import timedelta
 from typing import Optional
@@ -33,43 +32,18 @@ from models.database import (
 )
 from models.schemas import (
     AgendamentoOut, AuditEntryOut, ConversationAction, ConversationCard,
-    ConversationDetail, ConversationOut, ConversationSeal, WaMessageOut,
+    ConversationDetail, ConversationLeadLink, ConversationOut, ConversationSeal,
+    LeadSugestao, WaMessageOut,
     WaMetrics, WaReplyRequest, WaStartRequest, WaStartResponse,
 )
 from services.people import optout
-from services.phone_normalizer import normalize_input
-from services.wa import client, credenciais, gate, orchestrator, states, webhook
+from services.wa import client, coexistencia, credenciais, gate, orchestrator, states, webhook
+from services.wa.formato import corpo_da_mensagem as _corpo_da_mensagem
+from services.wa.formato import e164 as _e164
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wa", tags=["whatsapp"])
-
-_SO_DIGITOS = re.compile(r"\D")
-
-
-def _e164(bruto: Optional[str]) -> Optional[str]:
-    """
-    Número no formato que a Meta usa e que o banco guarda.
-
-    A Meta manda `5511988887777`, sem o `+`; o usuário digita
-    `(11) 98888-7777`. Os dois precisam virar a mesma string, senão a mensagem
-    que chega não encontra a conversa que existe.
-    """
-    if not bruto or not bruto.strip():
-        return None
-    bruto = bruto.strip()
-
-    # Sem `+`, um número só de dígitos é ambíguo: `5511988887777` é o formato
-    # da Meta (com país), mas `11988887777` é o que se digita no Brasil.
-    # Tenta primeiro como internacional e cai para a região padrão.
-    if not bruto.startswith("+"):
-        digitos = _SO_DIGITOS.sub("", bruto)
-        dados = normalize_input("+" + digitos) if digitos else None
-        if dados:
-            return dados["e164"]
-
-    dados = normalize_input(bruto)
-    return dados["e164"] if dados else None
 
 
 # ── Recebimento ──────────────────────────────────────────────────────────────
@@ -209,9 +183,18 @@ def _processar(db: Session, dados: dict, dono: Optional[str] = None) -> list:
     for entrada in dados.get("entry") or []:
         for mudanca in entrada.get("changes") or []:
             valor = mudanca.get("value") or {}
+            campo = mudanca.get("field")
+            if campo in coexistencia.CAMPOS:
+                # Histórico, ecos do celular e agenda: gravam, mas nunca
+                # acordam a IA — nenhum deles é o lead esperando resposta.
+                coexistencia.processar(db, campo, valor, dono)
+                continue
             for msg in valor.get("messages") or []:
                 conversa = _guardar_recebida(db, msg, dono)
-                if conversa is not None:
+                # Só conversa com lead ganha turno: sem lead o portão recusa
+                # de qualquer jeito, e chamá-lo só produziria um handoff
+                # repetido na auditoria a cada mensagem do contato.
+                if conversa is not None and conversa.lead_id is not None:
                     tocadas[conversa.id] = conversa
             for status in valor.get("statuses") or []:
                 _atualizar_status(db, status)
@@ -241,21 +224,6 @@ def _avisar_qualidade(valor: dict) -> None:
         logger.warning("Aviso da Meta sobre a conta do WhatsApp: %s", evento or "sem evento")
 
 
-def _corpo_da_mensagem(msg: dict) -> Optional[str]:
-    """Texto quando há; senão, uma descrição do que veio (áudio, imagem…)."""
-    tipo = msg.get("type")
-    if tipo == "text":
-        return (msg.get("text") or {}).get("body")
-    if tipo == "button":
-        return (msg.get("button") or {}).get("text")
-    if tipo == "interactive":
-        interativo = msg.get("interactive") or {}
-        for chave in ("button_reply", "list_reply"):
-            if chave in interativo:
-                return (interativo[chave] or {}).get("title")
-    return f"[{tipo or 'desconhecido'}]"
-
-
 def _guardar_recebida(db: Session, msg: dict,
                       dono: Optional[str] = None) -> Optional[Conversation]:
     """Grava a mensagem. Devolve a conversa quando ela é nova; senão, None."""
@@ -277,11 +245,16 @@ def _guardar_recebida(db: Session, msg: dict,
         consulta = consulta.filter(Conversation.user_id == dono)
     conversa = consulta.order_by(Conversation.updated_at.desc()).first()
     if conversa is None:
-        # Alguém escreveu para o número sem ter sido convidado por nós. Não há
-        # lead a que associar, e inventar um seria criar ficha de quem não
-        # pediu. Fica no log para quem for investigar.
-        logger.info("Mensagem de número sem conversa aberta; ignorada.")
-        return None
+        if not dono:
+            # Número do ambiente, sem conta: não há em que caixa de entrada
+            # pôr a conversa. Fica no log para quem for investigar.
+            logger.info("Mensagem de número sem conversa aberta; ignorada.")
+            return None
+        # Alguém escreveu para o número da conta sem ter sido convidado pela
+        # cadência — um cliente, um fornecedor, um conhecido. Vira conversa
+        # sem lead: aparece na tela, só humana. Inventar um lead seria criar
+        # ficha de quem não pediu; ignorar seria perder a mensagem.
+        conversa = coexistencia.conversa_do_contato(db, dono, telefone)
 
     corpo = _corpo_da_mensagem(msg)
     db.add(WaMessage(
@@ -415,6 +388,14 @@ def iniciar_conversa(
         db.query(Conversation)
         .filter(Conversation.lead_id == lead.id, Conversation.phone_e164 == telefone)
         .first()
+    ) or (
+        # A conversa sem lead com este número (Coexistência), que o convite vai
+        # adotar em `states.start`. Entra no portão porque a janela dela vale:
+        # se o contato escreveu há pouco, convite pago seria desperdício.
+        db.query(Conversation)
+        .filter(Conversation.user_id == user_id, Conversation.phone_e164 == telefone,
+                Conversation.lead_id.is_(None))
+        .first()
     )
     decisao = gate.can_start(db, lead, telefone, conversa)
     if not decisao.allowed:
@@ -476,6 +457,14 @@ def _selo(conversa: Conversation, aguardando: bool) -> ConversationSeal:
                 tom="aguardando", rotulo="Aguardando você",
                 explicacao="O lead escreveu e ainda não teve resposta.",
             )
+        if conversa.lead_id is None:
+            # "Você assumiu" diria que houve automação antes. Não houve: é um
+            # contato do WhatsApp que não é lead.
+            return ConversationSeal(
+                tom="contato", rotulo="Contato",
+                explicacao="Fora da base de leads: só você responde. "
+                           "Vincule a um lead para a automação poder atuar.",
+            )
         return ConversationSeal(
             tom="assumida", rotulo="Você assumiu",
             explicacao="A automação está calada; quem responde é você.",
@@ -492,15 +481,18 @@ def _selo(conversa: Conversation, aguardando: bool) -> ConversationSeal:
 
 
 def _card(db: Session, conversa: Conversation) -> ConversationCard:
-    lead = db.query(Lead).filter(Lead.id == conversa.lead_id).first()
-    contato = None
+    lead = (db.query(Lead).filter(Lead.id == conversa.lead_id).first()
+            if conversa.lead_id is not None else None)
+    # O nome da agenda do celular é o padrão; o decisor, quando há, é mais
+    # preciso e vence.
+    contato = conversa.contact_name
     if conversa.decision_maker_id:
         decisor = (
             db.query(DecisionMaker)
             .filter(DecisionMaker.id == conversa.decision_maker_id)
             .first()
         )
-        contato = decisor.name if decisor else None
+        contato = (decisor.name if decisor else None) or contato
 
     aguardando = gate.aguardando_voce(conversa)
     return ConversationCard(
@@ -594,16 +586,131 @@ def ver_conversa(
     mensagens = (
         db.query(WaMessage)
         .filter(WaMessage.conversation_id == conversa.id)
-        .order_by(WaMessage.id.asc())
+        # Pela hora em que aconteceu, não pela ordem de gravação: o histórico
+        # da Coexistência chega em lotes depois das mensagens novas, e pelo id
+        # uma mensagem de março apareceria abaixo de uma de hoje.
+        .order_by(WaMessage.created_at.asc(), WaMessage.id.asc())
         .all()
     )
-    lead = db.query(Lead).filter(Lead.id == conversa.lead_id).first()
+    lead = (db.query(Lead).filter(Lead.id == conversa.lead_id).first()
+            if conversa.lead_id is not None else None)
     return ConversationDetail(
         card=_card(db, conversa),
         messages=[WaMessageOut.model_validate(m) for m in mensagens],
         ficha=_ficha(lead),
-        agendamentos=_agendamentos(db, conversa.lead_id),
+        agendamentos=_agendamentos(db, conversa.lead_id) if lead else [],
     )
+
+
+@router.get("/conversations/{conversa_id}/leads-sugeridos",
+            response_model=list[LeadSugestao])
+def leads_sugeridos(
+    conversa_id: int,
+    q: str = Query("", max_length=100),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Leads candidatos a vínculo com uma conversa sem lead.
+
+    Primeiro os que têm este telefone (no lead ou num decisor) — esses são
+    quase certamente a mesma pessoa —, depois os que batem com a busca por
+    nome ou domínio.
+    """
+    user_id = current_user.get("sub")
+    conversa = _minha_conversa(db, conversa_id, user_id)
+
+    mesmo_telefone = set()
+    for lead_id, telefone in (
+        db.query(Lead.id, Lead.phone)
+        .filter(Lead.user_id == user_id, Lead.phone.isnot(None))
+        .all()
+    ):
+        if _e164(telefone) == conversa.phone_e164:
+            mesmo_telefone.add(lead_id)
+    for lead_id, telefone in (
+        db.query(DecisionMaker.lead_id, DecisionMaker.phone)
+        .join(Lead, Lead.id == DecisionMaker.lead_id)
+        .filter(Lead.user_id == user_id, DecisionMaker.phone.isnot(None))
+        .all()
+    ):
+        if _e164(telefone) == conversa.phone_e164:
+            mesmo_telefone.add(lead_id)
+
+    candidatos = {}
+    if mesmo_telefone:
+        for lead in db.query(Lead).filter(Lead.id.in_(mesmo_telefone)).all():
+            candidatos[lead.id] = lead
+    termo = q.strip()
+    if termo:
+        padrao = f"%{termo}%"
+        for lead in (
+            db.query(Lead)
+            .filter(Lead.user_id == user_id,
+                    (Lead.company_name.ilike(padrao)) | (Lead.domain.ilike(padrao)))
+            .order_by(Lead.id.desc())
+            .limit(10)
+            .all()
+        ):
+            candidatos.setdefault(lead.id, lead)
+
+    sugestoes = [
+        LeadSugestao(id=lead.id, company_name=lead.company_name, domain=lead.domain,
+                     mesmo_telefone=lead.id in mesmo_telefone)
+        for lead in candidatos.values()
+    ]
+    sugestoes.sort(key=lambda s: (not s.mesmo_telefone, (s.company_name or s.domain or "").lower()))
+    return sugestoes[:12]
+
+
+@router.patch("/conversations/{conversa_id}/lead", response_model=ConversationCard)
+def vincular_lead(
+    conversa_id: int,
+    body: ConversationLeadLink,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Vincula uma conversa sem lead a um lead do usuário.
+
+    A conversa continua humana: vincular diz *de quem* é a conversa, não que a
+    automação pode falar. Retomar a IA é um segundo clique, consciente —
+    um contato que veio do celular pode estar no meio de uma negociação.
+    """
+    user_id = current_user.get("sub")
+    conversa = _minha_conversa(db, conversa_id, user_id)
+    if conversa.lead_id is not None:
+        raise HTTPException(status_code=409, detail="Esta conversa já pertence a um lead.")
+
+    lead = db.query(Lead).filter(Lead.id == body.lead_id, Lead.user_id == user_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead não encontrado.")
+
+    outra = (
+        db.query(Conversation.id)
+        .filter(Conversation.lead_id == lead.id,
+                Conversation.phone_e164 == conversa.phone_e164)
+        .first()
+    )
+    if outra is not None:
+        # Duas conversas do mesmo lead com o mesmo número fariam o webhook
+        # escolher uma delas por data — e a outra pararia de receber.
+        raise HTTPException(
+            status_code=409,
+            detail="Este lead já tem uma conversa com este número.",
+        )
+
+    conversa.lead_id = lead.id
+    if conversa.handoff_reason == coexistencia.MOTIVO_SEM_LEAD:
+        conversa.handoff_reason = "Vinculada a um lead. Retome a IA quando quiser."
+    # `relacionamento`, não `assumida`: a métrica de handoff conta `assumida`,
+    # e dizer de quem é a conversa não é a automação passando a vez.
+    states.registrar(db, AUDIT_RELACIONAMENTO, states.ATOR_HUMANO, conversa=conversa,
+                     detalhe=f"Vínculo: conversa do WhatsApp ligada a "
+                             f"{lead.company_name or lead.domain}.")
+    db.commit()
+    db.refresh(conversa)
+    return _card(db, conversa)
 
 
 #: Verbo da tela → transição. A tela não escreve `ai_status`: se pudesse,
@@ -636,6 +743,13 @@ def controlar_conversa(
             detail=f"Ação inválida. Use: {', '.join(_ACOES)}.",
         )
     conversa = _minha_conversa(db, conversa_id, current_user.get("sub"))
+    if body.acao == "retomar" and conversa.lead_id is None:
+        # Retomar poria AI_ACTIVE numa conversa que o portão recusa sempre: a
+        # tela diria "IA ativa" e nada sairia. Melhor recusar com o motivo.
+        raise HTTPException(
+            status_code=409,
+            detail="Vincule esta conversa a um lead antes de ligar a automação.",
+        )
     transicao, motivo_padrao = _ACOES[body.acao]
 
     if motivo_padrao is None:
@@ -755,7 +869,11 @@ def metricas(
 
     conversas = (
         db.query(Conversation)
-        .filter(Conversation.user_id == user_id, Conversation.created_at >= desde)
+        # Só conversas com lead: as métricas medem a prospecção. Contato
+        # importado do celular não recebeu convite, e contá-lo derrubaria a
+        # taxa de resposta sem ninguém ter mudado nada na cadência.
+        .filter(Conversation.user_id == user_id, Conversation.created_at >= desde,
+                Conversation.lead_id.isnot(None))
         .all()
     )
     ids = [c.id for c in conversas]

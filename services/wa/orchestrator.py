@@ -126,7 +126,9 @@ def _historico(db: Session, conversa: Conversation) -> list:
     mensagens = (
         db.query(WaMessage)
         .filter(WaMessage.conversation_id == conversa.id)
-        .order_by(WaMessage.id.asc())
+        # Pela hora, não pelo id: o histórico da Coexistência é gravado depois
+        # das mensagens novas, e a IA leria a conversa fora de ordem.
+        .order_by(WaMessage.created_at.asc(), WaMessage.id.asc())
         .all()
     )
     return [{"direction": m.direction, "body": m.body} for m in mensagens]
@@ -138,11 +140,15 @@ def _ultima_e_do_lead(db: Session, conversa: Conversation) -> bool:
 
     Protege contra o turno rodar duas vezes pela mesma mensagem (uma pelo
     webhook, outra pelo cron de retomada) e responder duas vezes.
+
+    "Última" pela hora: pelo id, um lote de histórico gravado agora faria uma
+    mensagem antiga do contato parecer a mais recente — e a IA responderia a
+    algo dito meses atrás.
     """
     ultima = (
         db.query(WaMessage)
         .filter(WaMessage.conversation_id == conversa.id)
-        .order_by(WaMessage.id.desc())
+        .order_by(WaMessage.created_at.desc(), WaMessage.id.desc())
         .first()
     )
     return ultima is not None and ultima.direction == "in"
@@ -306,7 +312,10 @@ def conversas_pendentes(db: Session, limite: int = 50) -> list:
     candidatas = (
         db.query(Conversation)
         .filter(Conversation.ai_status == AI_ACTIVE,
-                Conversation.last_inbound_at.isnot(None))
+                Conversation.last_inbound_at.isnot(None),
+                # Sem lead o portão recusa sempre; buscá-las só gastaria a
+                # rodada com conversas que nunca vão ter turno.
+                Conversation.lead_id.isnot(None))
         .order_by(Conversation.updated_at.asc())
         .limit(limite * 4)
         .all()

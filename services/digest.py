@@ -30,9 +30,13 @@ def _resumo_do_usuario(db: Session, user_id: str, desde) -> dict:
         .count()
     )
 
+    # Só conversas com lead: o resumo conta prospecção. O histórico importado
+    # do celular (Coexistência) traria centenas de "conversas iniciadas" no
+    # dia em que o WhatsApp foi conectado.
     conversas_iniciadas = (
         db.query(Conversation)
-        .filter(Conversation.user_id == user_id, Conversation.created_at >= desde)
+        .filter(Conversation.user_id == user_id, Conversation.created_at >= desde,
+                Conversation.lead_id.isnot(None))
         .count()
     )
 
@@ -41,6 +45,7 @@ def _resumo_do_usuario(db: Session, user_id: str, desde) -> dict:
         .join(Conversation, WaMessage.conversation_id == Conversation.id)
         .filter(
             Conversation.user_id == user_id,
+            Conversation.lead_id.isnot(None),
             WaMessage.direction == "in",
             WaMessage.created_at >= desde,
         )

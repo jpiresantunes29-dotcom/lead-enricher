@@ -12,6 +12,7 @@ caminho e seção (`services/activity_rules.py`, `services/ai_insights.py`,
 | [AUDITORIA_ORGANIZACAO_2026-09.md](AUDITORIA_ORGANIZACAO_2026-09.md) | **Vigente** | Check-up de arquivos de documentação: organização, duplicações, desatualização |
 | [PLANO_WHATSAPP_E_DYNAMICS.md](PLANO_WHATSAPP_E_DYNAMICS.md) | **Vigente** | Planejamento técnico do agente de WhatsApp: decisões, fases, arquitetura (atualizado com nota sobre mudanças 2026-09-05) |
 | [DOCUMENTACAO_IA_COMPLETA.md](DOCUMENTACAO_IA_COMPLETA.md) | **Vigente** | Manual de referência da IA: setup, troubleshooting, variáveis, exemplos (atualizado: horários removidos, 24h vs 72h corrigido) |
+| [WHATSAPP_COEXISTENCIA.md](WHATSAPP_COEXISTENCIA.md) | **Vigente** | Conectar o WhatsApp Business do celular pelo popup da Meta: configuração única no app da Meta, o que é importado e o que muda nas conversas |
 | [PRODUCAO.md](PRODUCAO.md) | **Vigente** | Passo a passo da virada para produção: banco, crons, WhatsApp, IA |
 | [CONTACT_INTELLIGENCE.md](CONTACT_INTELLIGENCE.md) | **Vigente** | Banco de contatos próprio, padrão de e-mail por domínio e extensão |
 | [LUSHA_PROSPECTING_IMPLEMENTACAO.md](LUSHA_PROSPECTING_IMPLEMENTACAO.md) | **Vigente** | Integração Lusha (BYOA): listar contatos de uma empresa e revelar sob clique. Traz o custo por ação e o que ainda não foi verificado contra a API real |
