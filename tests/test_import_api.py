@@ -277,7 +277,7 @@ def test_edita_coluna_do_sistema_normalizando(client):
 def test_coluna_calculada_nao_e_editavel(client):
     _import(client)
     resp = client.patch("/api/sheet/cell",
-                        json={"lead_id": _first_lead_id(client), "column": "Prioridade", "value": "Alta"})
+                        json={"lead_id": _first_lead_id(client), "column": "Situação", "value": "enriched"})
     assert resp.status_code == 422
 
 
@@ -329,7 +329,7 @@ def test_export_traz_colunas_originais_e_do_sistema(client):
     ws = load_workbook(io.BytesIO(resp.content)).active
     header = [c.value for c in ws[1]]
     assert header[:5] == ["🏢 Empresa", "🔗 LinkedIn", "🏆 TIER", "✅ Status", "📩 Email"]
-    assert "Domínio" in header and "Prioridade" in header
+    assert "Domínio" in header and "Situação" in header and "Prioridade" not in header
     assert ws.max_row == 3          # cabeçalho + 2 linhas
     assert ws.cell(row=2, column=3).value == "TIER 1"
 

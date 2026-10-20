@@ -11,7 +11,6 @@ from models.schemas import (
 )
 from services.activity_rules import PIPELINE_STAGES
 from services.cadence import CADENCES
-from services.lead_scorer import apply_score, PRIORITIES
 from services.tier_classifier import apply_tier
 from services.phone_normalizer import normalize_input
 from middleware.auth import get_current_user
@@ -50,10 +49,9 @@ def list_leads(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     stage: Optional[str] = Query(None),
-    priority: Optional[str] = Query(None),
     tier: Optional[int] = Query(None, ge=1, le=4),
     cadence: Optional[str] = Query(None),
-    sort: str = Query("recent", pattern="^(recent|score|tier)$"),
+    sort: str = Query("recent", pattern="^(recent|tier)$"),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -72,13 +70,6 @@ def list_leads(
         if stage not in PIPELINE_STAGES:
             raise HTTPException(status_code=422, detail="Estágio inválido.")
         q = q.filter(Lead.stage == stage)
-    if priority:
-        if priority not in PRIORITIES:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Prioridade inválida. Use: {', '.join(PRIORITIES)}.",
-            )
-        q = q.filter(Lead.priority == priority)
     if tier:
         q = q.filter(Lead.tier == tier)
     if cadence:
@@ -90,44 +81,13 @@ def list_leads(
             raise HTTPException(status_code=422, detail="Cadência inválida.")
 
     if sort == "tier":
-        # Tier 1 primeiro; dentro do tier, quem tem mais chance de atender.
-        q = q.order_by(Lead.tier.asc().nullslast(), Lead.score.desc().nullslast(),
-                       Lead.created_at.desc())
-    elif sort == "score":
-        # `nullslast`: ficha ainda não pontuada vai para o fim em vez de
-        # encabeçar a lista, que é o que um NULL faz por padrão em Postgres
-        # na ordem decrescente. Empate cai no mais recente.
-        q = q.order_by(Lead.score.desc().nullslast(), Lead.created_at.desc())
+        # Tier 1 primeiro; dentro do tier, o mais recente.
+        q = q.order_by(Lead.tier.asc().nullslast(), Lead.created_at.desc())
     else:
         q = q.order_by(Lead.created_at.desc())
 
     offset = (page - 1) * per_page
     return q.offset(offset).limit(per_page).all()
-
-
-@router.post("/leads/{lead_id}/rescore", response_model=LeadOut)
-def rescore_lead(
-    lead_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    Recalcula a nota da ficha sob demanda.
-
-    Existe porque a nota é gravada, não calculada na leitura — e dado gravado
-    envelhece. Três situações deixam a nota atrás da realidade e nenhuma delas
-    passa pelos dois pontos que repontuam sozinhos (coleta e busca de
-    decisores): telefone corrigido à mão, contato revelado na Lusha, e ficha
-    pontuada por uma régua anterior à vigente.
-
-    É idempotente e não vai à rede: só relê o que já está no banco.
-    """
-    lead = _get_user_lead(db, lead_id, current_user.get("sub"))
-    apply_score(lead, decision_makers=list(lead.decision_makers))
-    _retier(db, lead, current_user)
-    db.commit()
-    db.refresh(lead)
-    return lead
 
 
 @router.get("/leads/{lead_id}", response_model=LeadOut)
@@ -185,7 +145,6 @@ def update_lead(
                                 detail=f"Relação inválida. Use: {', '.join(permitidos)}.")
         lead.relationship = body.relationship
     if campos & {"employees", "relationship"}:
-        apply_score(lead, decision_makers=list(lead.decision_makers))
         _retier(db, lead, current_user)
     db.commit()
     db.refresh(lead)
@@ -326,8 +285,6 @@ def create_decisor(
     # O primeiro contato da ficha vira principal sem ninguém precisar marcar.
     if not ja_tem_principal and "is_primary" not in body.model_fields_set:
         decisor.is_primary = True
-    db.refresh(lead)
-    apply_score(lead, decision_makers=list(lead.decision_makers))
     db.commit()
     db.refresh(decisor)
     return decisor
@@ -348,7 +305,6 @@ def update_decisor(
     if not body.model_fields_set:
         raise HTTPException(status_code=422, detail="Nada para atualizar.")
     _aplicar_contato(db, decisor, body)
-    apply_score(decisor.lead, decision_makers=list(decisor.lead.decision_makers))
     db.commit()
     db.refresh(decisor)
     return decisor
@@ -361,11 +317,7 @@ def delete_decisor(
     current_user: dict = Depends(get_current_user),
 ):
     decisor = _get_user_decisor(db, decisor_id, current_user.get("sub"))
-    lead = decisor.lead
     db.delete(decisor)
-    db.flush()
-    db.refresh(lead)
-    apply_score(lead, decision_makers=list(lead.decision_makers))
     db.commit()
 
 

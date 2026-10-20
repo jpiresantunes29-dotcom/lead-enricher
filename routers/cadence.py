@@ -143,7 +143,7 @@ def agenda(
             "activity": ActivityOut.model_validate(act).model_dump(mode="json"),
             "lead": {
                 "id": lead.id, "domain": lead.domain, "company_name": lead.company_name,
-                "tier": lead.tier, "score": lead.score, "cadence": lead.cadence,
+                "tier": lead.tier, "cadence": lead.cadence,
                 "cadence_attempt": lead.cadence_attempt or 0, "phone": lead.phone,
             },
             "contato": {
@@ -197,7 +197,7 @@ def agendar_lote(
     disponiveis = {str(t): len(candidatos.get(t, [])) for t in (1, 2, 3)}
     selecionados = [
         {"lead_id": lead.id, "domain": lead.domain, "company_name": lead.company_name,
-         "tier": lead.tier, "score": lead.score}
+         "tier": lead.tier}
         for lead in lote
     ]
 

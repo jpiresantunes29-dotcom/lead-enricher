@@ -273,8 +273,8 @@ function shEdit(r, c, initial) {
   const col = cols[c];
   const row = _sh.rows[r];
   if (!col || !row) return;
-  // Prioridade/Situação são calculados — o servidor recusa, avisamos antes
-  if (col.field && ['priority', 'status'].includes(col.field)) {
+  // Situação é calculada — o servidor recusa, avisamos antes
+  if (col.field && ['status'].includes(col.field)) {
     shToast(`"${col.label}" é calculada pelo enriquecimento e não pode ser editada.`);
     return;
   }

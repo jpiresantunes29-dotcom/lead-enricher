@@ -95,10 +95,6 @@ class LeadOut(BaseModel):
     status: str
     site_block_reason: Optional[str] = None
     stage: Optional[str] = "novo"
-    score: Optional[int] = None
-    priority: Optional[str] = None
-    score_breakdown: Optional[Dict[str, Any]] = None
-    score_version: Optional[str] = None
     tier: Optional[int] = None
     tier_auto: Optional[int] = None
     tier_manual: Optional[int] = None
@@ -128,9 +124,6 @@ class LeadListOut(LeadOut):
     """
     dns_report: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
     mx_records: Optional[List[Any]] = Field(default=None, exclude=True)
-    #: O detalhamento só é lido no popover de UMA ficha. Numa lista de cem ele
-    #: seria centenas de KB que nenhuma coluna usa — mesmo motivo do dns_report.
-    score_breakdown: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
     #: O caminho do fluxograma só é lido no modal "por que Tier X?".
     tier_details: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
 

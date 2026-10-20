@@ -9,7 +9,7 @@
   <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=29" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=30" />
 </head>
 <body class="app-body">
 
@@ -454,16 +454,6 @@
   </div>
 </div>
 
-<!-- DETALHAMENTO DA NOTA ("por que 47 pontos?") -->
-<div class="modal-overlay" id="score-modal" onclick="closeIfBackdrop(event,'score-modal')">
-  <div class="modal lead-summary-modal">
-    <button class="modal-close" onclick="closeScoreModal()" aria-label="Fechar">
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-    </button>
-    <div id="score-modal-body"></div>
-  </div>
-</div>
-
 <!-- POR QUE TIER X? (caminho da decisão + ajustes manuais) -->
 <div class="modal-overlay" id="tier-modal" onclick="closeIfBackdrop(event,'tier-modal')">
   <div class="modal lead-summary-modal tier-modal" role="dialog" aria-modal="true" aria-labelledby="tier-modal-title">
@@ -511,9 +501,9 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=32"></script>
+<script src="/static/js/app.js?v=33"></script>
 {# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
    com edição célula a célula e teclado próprio. #}
-<script src="/static/js/sheet.js?v=23"></script>
+<script src="/static/js/sheet.js?v=24"></script>
 </body>
 </html>

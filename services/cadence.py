@@ -361,7 +361,7 @@ def montar_lote(candidatos: Dict[int, List[Lead]], total: int,
 
 
 def candidatos_do_lote(db: Session, user_id: str) -> Dict[int, List[Lead]]:
-    """Base não executada, tier 1–3, prospectável, melhor nota primeiro."""
+    """Base não executada, tier 1–3, prospectável, a mais antiga primeiro."""
     from models.database import HIDDEN_LEAD_STATUSES, RELATIONSHIP_LEAD
 
     leads = (
@@ -374,7 +374,7 @@ def candidatos_do_lote(db: Session, user_id: str) -> Dict[int, List[Lead]]:
             Lead.status.notin_(HIDDEN_LEAD_STATUSES),
             Lead.stage.notin_(("ganho", "perdido")),
         )
-        .order_by(Lead.tier.asc(), Lead.score.desc().nullslast(), Lead.created_at.asc())
+        .order_by(Lead.tier.asc(), Lead.created_at.asc())
         .all()
     )
     por_tier: Dict[int, List[Lead]] = {1: [], 2: [], 3: []}

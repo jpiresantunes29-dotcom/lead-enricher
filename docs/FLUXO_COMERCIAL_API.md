@@ -36,7 +36,7 @@ cadence_attempt: int        tentativa atual (1..3)
 first_contact_at: datetime|null
 ```
 
-- `GET /api/leads?tier=1&cadence=nao_executado&sort=tier` — filtros novos. `sort` aceita `recent|score|tier`. `cadence` aceita os valores acima ou `nao_executado`.
+- `GET /api/leads?tier=1&cadence=nao_executado&sort=tier` — filtros novos. `sort` aceita `recent|tier`. `cadence` aceita os valores acima ou `nao_executado`.
 - `PATCH /api/leads/{id}/tier` `{tier: 1..4 | null}` → `LeadOut`. `null` volta para o automático.
 - `POST /api/leads/{id}/reclassificar` → `LeadOut`.
 - `PATCH /api/leads/{id}` agora aceita também `{employees: int, relationship: "LEAD"|"CUSTOMER"|"DO_NOT_CONTACT"}` (além de `phone`). Reclassifica o tier na hora.
@@ -55,9 +55,9 @@ O "time" é o domínio do e-mail do usuário (vendedores @empresa.com.br compart
 ## 2. Agendamento do 1º contato (lote 40/5/5)
 
 - `POST /api/agenda/lote` `{dia: "2026-10-21", total: 50, mix: {"1":40,"2":5,"3":5}, preview: true|false}`
-  - Seleciona leads **não executados** (`cadence=null`), `relationship=LEAD`, tier 1–3, ordenados por tier e depois score. Faltou lead num tier → completa com o próximo tier disponível.
+  - Seleciona leads **não executados** (`cadence=null`), `relationship=LEAD`, tier 1–3, ordenados por tier e depois pelo mais antigo. Faltou lead num tier → completa com o próximo tier disponível.
   - `preview: true` só mostra; `false` cria uma tarefa "1º contato" (`step=primeiro_contato`) às 09:00 do dia, marca `cadence=agendado` e documenta.
-  - Resposta: `{success, message, dia, por_tier: {"1":n,"2":n,"3":n}, disponiveis: {"1":n,"2":n,"3":n}, selecionados: [{lead_id, domain, company_name, tier, score}], criadas: n}`
+  - Resposta: `{success, message, dia, por_tier: {"1":n,"2":n,"3":n}, disponiveis: {"1":n,"2":n,"3":n}, selecionados: [{lead_id, domain, company_name, tier}], criadas: n}`
 
 ## 3. Agenda do dia (lembretes)
 
@@ -66,7 +66,7 @@ O "time" é o domínio do e-mail do usuário (vendedores @empresa.com.br compart
 {dia, resumo: {atrasadas: n, hoje: n, por_tier: {"1":n,...}},
  atrasadas: [Item], hoje: [Item]}
 Item = {activity: ActivityOut,
-        lead: {id, domain, company_name, tier, score, cadence, cadence_attempt, phone},
+        lead: {id, domain, company_name, tier, cadence, cadence_attempt, phone},
         contato: {id, name, title, phone, email, linkedin_url} | null,
         acao: {titulo, dica, tel_url|null, whatsapp_url|null, mailto_url|null}}
 ```

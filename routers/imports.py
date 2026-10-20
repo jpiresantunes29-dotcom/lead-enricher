@@ -218,8 +218,6 @@ def commit_import(
             import_batch_id=batch.id,
             sheet_row=row.get("row_number"),
         )
-        # Sem score aqui de propósito: o scoring depende de sinais que só a
-        # coleta traz (DNS/MX, LinkedIn verificado, decisores).
         db.add(lead)
         created += 1
 

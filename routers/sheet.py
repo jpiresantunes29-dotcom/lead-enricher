@@ -52,13 +52,12 @@ SYSTEM_COLUMNS: List[Dict[str, str]] = [
     {"label": "Telefone", "field": "phone", "kind": "text"},
     {"label": "Provedor de e-mail", "field": "mx_provider", "kind": "text"},
     {"label": "Hospedagem", "field": "hosting_provider", "kind": "text"},
-    {"label": "Prioridade", "field": "priority", "kind": "text"},
     {"label": "Estágio", "field": "stage", "kind": "text"},
     {"label": "Situação", "field": "status", "kind": "text"},
 ]
 
 SYSTEM_BY_LABEL = {c["label"]: c for c in SYSTEM_COLUMNS}
-# Campos editáveis à mão no grid (score/prioridade/situação são calculados)
+# Campos editáveis à mão no grid (situação é calculada)
 EDITABLE_FIELDS = {
     "domain", "company_name", "website", "linkedin_url", "sector", "location",
     "employee_count", "corporate_email", "phone", "mx_provider", "stage",

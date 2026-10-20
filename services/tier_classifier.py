@@ -1,8 +1,7 @@
 """
 Tier comercial de um lead — o fluxograma "Captura e Priorização" em código.
 
-A nota de `lead_scorer` responde "consigo falar com quem decide?". O tier
-responde outra pergunta, anterior: "esta empresa é alvo para mim?". É ele que
+O tier responde "esta empresa é alvo para mim?". É ele que
 decide em que lote de agendamento a empresa entra (40 Tier 1, 5 Tier 2, 5
 Tier 3) e se ela entra em algum.
 
@@ -18,7 +17,7 @@ O fluxo, na ordem em que as perguntas são feitas:
 Tier 1 é o melhor alvo: empresa de porte médio com e-mail fora dos dois
 grandes — é quem mais tem a ganhar trocando de provedor.
 
-Mesmas três decisões de projeto de `lead_scorer`:
+Três decisões de projeto:
 
 1. **Função pura.** `classify_tier()` não toca banco nem rede. Os dois fatos
    que dependem de banco (cliente? outro dono?) chegam como argumento — quem
