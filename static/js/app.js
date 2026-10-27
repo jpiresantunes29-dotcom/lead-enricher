@@ -1160,7 +1160,7 @@ function renderResult(data){
   const smap={enriched:['Pronto','enriched'],partial:['Incompleto','partial'],failed:['Sem dados','failed']};
   const[sl,sc]=smap[data.status]||['—','partial'];
   const init=(data.company_name||data.domain||'?').trim()[0].toUpperCase();
-  const fav=data.domain?`https://www.google.com/s2/favicons?domain=${data.domain}&sz=64`:'';
+  const fav=logoUrl(data.domain);
   const IC={
     globe:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
     li:`<svg viewBox="0 0 24 24" fill="currentColor"><path d="M20.45 20.45h-3.55v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.13 1.45-2.13 2.94v5.67h-3.55V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.45v6.29zM5.34 7.43A2.06 2.06 0 1 1 5.34 3.3a2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45z"/></svg>`,
@@ -1199,7 +1199,7 @@ function renderResult(data){
   root.innerHTML=`<div class="result-card">
     <div class="result-hdr">
       <div class="result-co">
-        <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
+        <div class="result-fav">${fav?`<img src="${fav}" onload="logoCarregou(this)" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
         <div class="result-co-txt"><div class="result-name">${esc(data.company_name||data.domain||'Empresa')}</div><div class="result-domain">${esc(data.domain||'')}</div></div>
       </div>
       <div class="result-hdr-right"><span id="result-tier-badge"></span><span class="status-pill ${sc}">${sl}</span></div>
@@ -3619,7 +3619,7 @@ function renderLeadSummary(l){
   const smap={enriched:['Pronto','enriched'],partial:['Incompleto','partial'],failed:['Sem dados','failed']};
   const[sl,sc]=smap[l.status]||['—','partial'];
   const init=(l.company_name||l.domain||'?').trim()[0].toUpperCase();
-  const fav=l.domain?`https://www.google.com/s2/favicons?domain=${l.domain}&sz=64`:'';
+  const fav=logoUrl(l.domain);
   const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:['OK','verified'],probable:['~','probable'],unverified:['?','unverified'],high:['OK','verified'],medium:['~','probable'],low:['?','unverified']};const[lb,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${lb}</span>`;};
   let emp='';
   if(l.employee_count){if(typeof l.employee_count==='object'){const e=l.employee_count;if(e.exact)emp=e.exact.toLocaleString('pt-BR');else if(e.min&&e.max)emp=`${e.min.toLocaleString('pt-BR')}–${e.max.toLocaleString('pt-BR')} (faixa)`;else if(e.min)emp=`${e.min.toLocaleString('pt-BR')}+ (faixa)`;else if(e.band)emp=e.band;else emp=e.raw||'';}else emp=l.employee_count;}
@@ -3641,7 +3641,7 @@ function renderLeadSummary(l){
   return `
     <div class="ls-hdr">
       <div class="ls-co">
-        <div class="result-fav">${fav?`<img src="${fav}" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
+        <div class="result-fav">${fav?`<img src="${fav}" onload="logoCarregou(this)" onerror="this.style.display='none'" alt=""/>`:''}${init}</div>
         <div><div class="result-name">${esc(l.company_name||l.domain||'Empresa')}</div><div class="result-domain">${esc(l.domain||'')}</div></div>
       </div>
       <span class="status-pill ${sc}">${sl}</span>
@@ -5695,12 +5695,22 @@ function hideResults(){
   const block=document.getElementById('recent-block');
   if(block&&document.getElementById('recent-grid')?.children.length)block.style.display='block';
 }
-/* Logo da empresa pelo favicon do domínio — a mesma fonte que a ficha já
-   usa. Se a imagem não carregar, fica a inicial: nunca um ícone quebrado. */
+/* Logo da empresa: o maior ícone que o site publica (até 256px), pelo
+   serviço de favicons do Google. É a mesma fonte para listas e ficha. */
+function logoUrl(domain){
+  const d=String(domain||'').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0];
+  return d?`https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=256`:'';
+}
+/* Site que só publica ícone de 16–32px fica borrado se for esticado: nesse
+   caso ele aparece no tamanho real, centralizado. */
+function logoCarregou(img){
+  if(img.naturalWidth&&img.naturalWidth<48)img.classList.add('nativo');
+}
+/* Se a imagem não carregar, fica a inicial por baixo: nunca um ícone quebrado. */
 function logoHtml(domain,nome,tam){
   const ini=esc(((nome||domain||'?').trim()[0]||'?').toUpperCase());
-  const d=String(domain||'').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0];
-  const img=d?`<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64" alt="" loading="lazy" onerror="this.remove()">`:'';
+  const src=logoUrl(domain);
+  const img=src?`<img src="${src}" alt="" loading="lazy" decoding="async" onload="logoCarregou(this)" onerror="this.remove()">`:'';
   return `<span class="co-logo${tam?' '+tam:''}" aria-hidden="true"><span>${ini}</span>${img}</span>`;
 }
 function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}

@@ -406,6 +406,7 @@ body{
 .co-logo.sm img{inset:2px;width:calc(100% - 4px);height:calc(100% - 4px)}
 .co-logo.lg{width:36px;height:36px;border-radius:9px;font-size:14px}
 .co-logo.lg img{inset:5px;width:calc(100% - 10px);height:calc(100% - 10px)}
+.co-logo img{image-rendering:auto}
 .recent-txt{min-width:0;flex:1;display:flex;flex-direction:column;gap:1px}
 .recent-name{font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .recent-meta{font-size:12.5px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -445,7 +446,12 @@ body{
   font-size:18px;font-weight:700;color:var(--text-3);overflow:hidden;
   position:relative;box-shadow:inset 0 0 0 1px var(--border);
 }
-.result-fav img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:9px;padding:0;margin:0;display:block}
+.result-fav img{position:absolute;inset:4px;width:calc(100% - 8px);height:calc(100% - 8px);object-fit:contain;border-radius:6px;padding:0;margin:0;display:block;background:var(--bg-2)}
+/* Ícone pequeno de origem: no tamanho real, sem esticar (ver logoCarregou). */
+.result-fav img.nativo,.co-logo img.nativo{
+  inset:50% auto auto 50%;width:16px;height:16px;transform:translate(-50%,-50%);
+  box-shadow:0 0 0 20px var(--bg-2);
+}
 .result-name{font-family:var(--font-head);font-size:22px;font-weight:600;letter-spacing:-.02em;margin-bottom:1px}
 .result-domain{font-size:12.5px;color:var(--text-3)}
 .result-hdr-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
