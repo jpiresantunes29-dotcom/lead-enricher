@@ -23,6 +23,7 @@ from middleware.auth import (
 from routers import enrichment, leads, auth, export, activities, dashboard, integrations, crm_config
 from routers import batch, extension, internal, privacy
 from routers import imports, sheet
+from routers import chat as chat_router
 from routers import cadence as cadence_router
 from routers import wa as wa_router
 from routers import wa_connection as wa_connection_router
@@ -238,6 +239,7 @@ app.include_router(activities.router)
 app.include_router(cadence_router.router)
 app.include_router(dashboard.router)
 app.include_router(integrations.router)
+app.include_router(chat_router.router)
 app.include_router(crm_config.router)
 app.include_router(batch.router)
 app.include_router(extension.router)

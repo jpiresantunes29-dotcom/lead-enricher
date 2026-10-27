@@ -1,5 +1,5 @@
 from datetime import date, datetime, UTC
-from typing import Optional, List, Any, Dict
+from typing import Optional, List, Any, Dict, Literal
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from services.phone_normalizer import normalize_input
@@ -251,6 +251,20 @@ class ActivityResponse(BaseModel):
 
 class StageUpdate(BaseModel):
     stage: str
+
+
+class ChatTurn(BaseModel):
+    """Uma troca anterior da conversa, guardada na aba do navegador."""
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=8000)
+
+
+class ChatRequest(BaseModel):
+    """Pergunta ao chat de IA (services/crm_chat.py)."""
+    pergunta: str = Field(min_length=1, max_length=2000)
+    historico: List[ChatTurn] = Field(default_factory=list, max_length=40)
+    #: Ids dos leads citados com @. Os de outra conta são ignorados no serviço.
+    mencionados: List[int] = Field(default_factory=list, max_length=10)
 
 
 class LeadUpdate(BaseModel):
