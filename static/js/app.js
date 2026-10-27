@@ -156,13 +156,77 @@ function updateNavUser(){
     return;
   }
   preauth.style.display='none';
-  if(postauth)postauth.style.display='flex';
+  if(postauth)postauth.style.display='block';
 
-  const mail=_profile.email||'—';
-  const set=(id,txt)=>{const el=document.getElementById(id);if(el)el.textContent=txt;};
-  set('sb-avatar',(mail[0]||'•').toUpperCase());
-  set('sb-user-mail',mail);
+  const mail=_profile.email||'';
+  _pintarConta(_nomeDoEmail(mail),mail);
+  // O nome de verdade vem do provedor (Google, Microsoft…), na sessão do
+  // Supabase. Sem ele, fica o nome tirado do e-mail.
+  _sb.auth.getSession().then(({data})=>{
+    const meta=data&&data.session&&data.session.user&&data.session.user.user_metadata||{};
+    const nome=(meta.full_name||meta.name||'').trim();
+    if(nome&&_profile)_pintarConta(nome,mail);
+  }).catch(()=>{});
 }
+
+/* "joao.silva@empresa.com" → "Joao Silva": melhor que mostrar o e-mail duas vezes. */
+function _nomeDoEmail(mail){
+  const local=(mail||'').split('@')[0]||'';
+  const partes=local.split(/[._-]+/).filter(Boolean);
+  if(!partes.length)return mail||'Sua conta';
+  return partes.slice(0,2).map(p=>p[0].toUpperCase()+p.slice(1)).join(' ');
+}
+
+function _pintarConta(nome,mail){
+  const set=(id,txt)=>{const el=document.getElementById(id);if(el)el.textContent=txt;};
+  const ini=_avIniciais(nome||mail||'?');
+  set('sb-avatar',ini);set('sb-menu-avatar',ini);
+  set('sb-user-name',nome);set('sb-menu-name',nome);
+  set('sb-user-mail',mail);set('sb-menu-mail',mail);
+  const btn=document.getElementById('sb-acct');
+  if(btn)btn.title=`${nome} · ${mail}`;
+}
+
+/* ══════ MENU DA CONTA ══════
+   Abre acima do botão (ao lado, no trilho estreito; abaixo, no celular).
+   Fecha com Esc, clique fora ou ao escolher um item; setas navegam. */
+function toggleAcctMenu(forcar){
+  const menu=document.getElementById('sb-menu');
+  const btn=document.getElementById('sb-acct');
+  if(!menu||!btn)return;
+  const abrir=forcar!=null?forcar:menu.hidden;
+  menu.hidden=!abrir;
+  btn.setAttribute('aria-expanded',abrir?'true':'false');
+  if(abrir)menu.querySelector('.sb-menu-item')?.focus();
+}
+function closeAcctMenu(devolverFoco){
+  const menu=document.getElementById('sb-menu');
+  if(!menu||menu.hidden)return;
+  toggleAcctMenu(false);
+  if(devolverFoco)document.getElementById('sb-acct')?.focus();
+}
+function acctIr(secao){
+  closeAcctMenu();
+  _setTab=secao;
+  if(location.hash==='#settings')loadSettings();
+  else nav('settings');
+}
+document.addEventListener('click',e=>{
+  const user=document.querySelector('.sb-user');
+  if(user&&!user.contains(e.target))closeAcctMenu();
+});
+document.addEventListener('keydown',e=>{
+  const menu=document.getElementById('sb-menu');
+  if(!menu||menu.hidden)return;
+  if(e.key==='Escape'){e.preventDefault();closeAcctMenu(true);return;}
+  if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+    e.preventDefault();
+    const itens=[...menu.querySelectorAll('.sb-menu-item')];
+    const i=itens.indexOf(document.activeElement);
+    const n=(i+(e.key==='ArrowDown'?1:-1)+itens.length)%itens.length;
+    itens[n].focus();
+  }
+});
 
 function openAuthModal(){document.getElementById('auth-modal').classList.add('open');checarProvedores();}
 function closeAuthModal(){document.getElementById('auth-modal').classList.remove('open');}
@@ -460,14 +524,19 @@ async function loadRecent(){
     grid.innerHTML=leads.slice(0,6).map(l=>{
       const name=l.company_name||l.domain||'—';
       const when=l.created_at?new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):'';
-      const stage=STAGE_LABELS[l.stage||'novo']||'';
+      const stage=l.stage||'novo';
       return `<button class="recent-card" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${esc(name)}">
-        <span class="recent-ava">${esc((name.trim()[0]||'?').toUpperCase())}</span>
+        <span class="recent-ava" aria-hidden="true">${esc((name.trim()[0]||'?').toUpperCase())}</span>
         <span class="recent-txt">
           <span class="recent-name">${esc(name)}</span>
-          <span class="recent-meta">${esc(stage)}${when?' · '+when:''}</span>
+          <span class="recent-meta">${esc(l.domain||'')}</span>
         </span>
-        ${tierBadgeHtml(l)}
+        <span class="recent-side">
+          <span class="stage-chip" data-stage="${esc(stage)}">${esc(STAGE_LABELS[stage]||stage)}</span>
+          ${tierBadgeHtml(l)}
+          <span class="recent-date">${esc(when)}</span>
+          <svg class="recent-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+        </span>
       </button>`;
     }).join('');
     // Só aparece quando não há uma ficha aberta ocupando a tela
