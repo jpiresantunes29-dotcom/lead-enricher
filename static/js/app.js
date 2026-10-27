@@ -362,7 +362,7 @@ const VIEW_META={
   },
   chat:{
     title:'Chat',
-    sub:'Pergunte sobre o seu pipeline. Use @ para citar um lead. A IA só lê: nada aqui altera seus dados.',
+    sub:'Pergunte sobre o seu pipeline e cite leads com @. A IA pode sugerir mudanças, mas só você as aplica, uma por uma.',
   },
   history:{
     title:'Histórico de leads',
@@ -1282,11 +1282,81 @@ function _chatRender(){
     </div>`;
     return;
   }
-  log.innerHTML=_chat.hist.map(m=>m.role==='user'
+  log.innerHTML=_chat.hist.map((m,mi)=>m.role==='user'
     ? `<div class="chat-msg user"><div class="chat-bubble">${esc(m.content)}</div></div>`
-    : `<div class="chat-msg ai${m.fora?' erro':''}"><div class="chat-ai-lbl">${IC_SPARK} IA</div><div class="chat-md">${_chatMd(m.content)}</div>${_chatLeadsHtml(m.leads)}${m.aviso?`<div class="chat-aviso">${esc(m.aviso)}</div>`:''}</div>`
+    : `<div class="chat-msg ai${m.fora?' erro':''}"><div class="chat-ai-lbl">${IC_SPARK} IA</div><div class="chat-md">${_chatMd(m.content)}</div>${_chatPropostasHtml(m,mi)}${_chatLeadsHtml(m.leads)}${m.aviso?`<div class="chat-aviso">${esc(m.aviso)}</div>`:''}</div>`
   ).join('')+(_chat.enviando?'<div class="chat-msg ai"><div class="chat-ai-lbl">'+IC_SPARK+' IA</div><div class="chat-typing"><span class="ldot"></span><span class="ldot"></span><span class="ldot"></span></div></div>':'');
   log.lastElementChild?.scrollIntoView({block:'end',behavior:'smooth'});
+}
+
+/* Propostas da IA (Fase 5b): um cartão por mudança, aplicada só com o clique.
+   O clique chama a mesma rota que o resto da tela usa — o servidor confere
+   dono e estágio como sempre — e deixa uma nota no lead dizendo de onde veio. */
+const CHAT_ACAO_LBL={mover_estagio:'Mover estágio',criar_tarefa:'Criar tarefa',adicionar_nota:'Adicionar nota'};
+
+function _chatPropostasHtml(m,mi){
+  if(!m.propostas||!m.propostas.length)return '';
+  return `<div class="chat-props">${m.propostas.map((p,pi)=>{
+    const detalhe=p.acao==='adicionar_nota'?`<div class="chat-prop-txt">${esc(p.texto)}</div>`:'';
+    const estado={
+      pendente:`<button type="button" class="chat-prop-btn ok" onclick="chatAplicar(${mi},${pi})">Aplicar</button><button type="button" class="chat-prop-btn" onclick="chatDescartar(${mi},${pi})">Descartar</button>`,
+      aplicando:'<span class="chat-prop-st">Aplicando…</span>',
+      aplicada:'<span class="chat-prop-st ok">✓ Aplicada</span>',
+      descartada:'<span class="chat-prop-st">Descartada</span>',
+      erro:`<span class="chat-prop-st err">${esc(p.erro||'Não foi possível aplicar.')}</span><button type="button" class="chat-prop-btn" onclick="chatAplicar(${mi},${pi})">Tentar de novo</button>`,
+    }[p.estado]||'';
+    return `<div class="chat-prop ${esc(p.estado)}">
+      <div class="chat-prop-main">
+        <div class="chat-prop-tipo">${esc(CHAT_ACAO_LBL[p.acao]||p.acao)}</div>
+        <div class="chat-prop-resumo">${esc(p.resumo)} <a class="chat-ref" href="#lead-${Number(p.lead_id)}" title="Abrir a ficha">↗</a></div>
+        ${detalhe}
+        ${p.motivo?`<div class="chat-prop-motivo">${esc(p.motivo)}</div>`:''}
+      </div>
+      <div class="chat-prop-acts">${estado}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function chatDescartar(mi,pi){
+  const p=_chat.hist[mi]?.propostas?.[pi];
+  if(!p||p.estado!=='pendente')return;
+  p.estado='descartada';
+  _chatRender();
+}
+
+async function chatAplicar(mi,pi){
+  const p=_chat.hist[mi]?.propostas?.[pi];
+  if(!p||(p.estado!=='pendente'&&p.estado!=='erro'))return;
+  p.estado='aplicando';p.erro='';
+  _chatRender();
+  const id=Number(p.lead_id);
+  const atividade=corpo=>authFetch(`/api/leads/${id}/activities`,{method:'POST',body:JSON.stringify(corpo)});
+  try{
+    let resp,registro;
+    if(p.acao==='mover_estagio'){
+      resp=await authFetch(`/api/leads/${id}/stage`,{method:'PATCH',body:JSON.stringify({stage:p.estagio})});
+      registro=`Aplicado pelo chat de IA: estágio de ${STAGE_LABELS[p.estagio_atual]||p.estagio_atual} para ${STAGE_LABELS[p.estagio]||p.estagio}.`;
+    }else if(p.acao==='criar_tarefa'){
+      resp=await atividade({type:'task',notes:p.titulo,due_at:p.due_at});
+      registro=`Aplicado pelo chat de IA: tarefa "${p.titulo}" para ${new Date(p.due_at).toLocaleDateString('pt-BR')}.`;
+    }else{
+      // A própria nota já é o registro: sai com a origem no começo.
+      resp=await atividade({type:'note',notes:`Nota sugerida pelo chat de IA: ${p.texto}`});
+    }
+    if(!resp.ok){
+      const j=await resp.json().catch(()=>({}));
+      p.estado='erro';p.erro=typeof j.detail==='string'?j.detail:'Não foi possível aplicar.';
+    }else{
+      p.estado='aplicada';
+      // A mudança já valeu; se a nota de origem falhar, ela não é desfeita.
+      if(registro)await atividade({type:'note',notes:registro+(p.motivo?` Motivo: ${p.motivo}`:'')}).catch(()=>{});
+      loadTodayFollowupsCount();
+    }
+  }catch(e){
+    p.estado=e.message==='not_authenticated'?'pendente':'erro';
+    if(p.estado==='erro')p.erro='Erro de conexão.';
+  }
+  _chatRender();
 }
 
 function _chatLeadsHtml(leads){
@@ -1407,7 +1477,8 @@ async function chatEnviar(){
     if(resp.ok){
       const aviso=j.total_leads>j.leads_no_contexto
         ?`A IA viu os ${j.leads_no_contexto} leads mais recentes de ${j.total_leads}. Cite com @ os que não estiverem entre eles.`:'';
-      msg={role:'assistant',content:j.resposta||'',leads:j.leads||[],aviso};
+      msg={role:'assistant',content:j.resposta||'',leads:j.leads||[],aviso,
+        propostas:(j.propostas||[]).map(p=>({...p,estado:'pendente'}))};
     }else{
       const motivo=resp.status===503?'A IA não está configurada neste servidor (falta a GROQ_API_KEY).'
         :resp.status===429?'Muitas perguntas seguidas. Espere um minuto e tente de novo.'

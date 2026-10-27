@@ -5,6 +5,8 @@ dashboard da 21st como referência visual).
 Só lê. A IA não consulta o banco: quem decide o que ela vê é este módulo, com
 consultas comuns e sempre filtradas pelo dono da conta. Ela recebe um retrato
 compacto da conta e o detalhe dos leads citados com @, e responde sobre isso.
+Desde a Fase 5b ela também pode *propor* três mudanças (ver `extrair_propostas`),
+que voltam validadas para a tela e só acontecem com o clique do vendedor.
 
 O que nunca sai daqui para o provedor de IA:
 
@@ -17,6 +19,7 @@ O que nunca sai daqui para o provedor de IA:
 
 Mesmo provedor do resumo da ficha (Groq, `GROQ_API_KEY`), chamado sem SDK.
 """
+import json
 import logging
 import os
 import re
@@ -211,6 +214,7 @@ def montar_contexto(db: Session, user_id: str, mencionados: List[int]) -> Dict[s
 
     citaveis = {l.id: (l.company_name or l.domain or f"Lead {l.id}") for l in recentes}
     citaveis.update({l.id: (l.company_name or l.domain or f"Lead {l.id}") for l in detalhados})
+    estagios = {l.id: (l.stage or "novo") for l in [*recentes, *detalhados]}
 
     blocos = [
         "## Resumo da conta",
@@ -224,6 +228,7 @@ def montar_contexto(db: Session, user_id: str, mencionados: List[int]) -> Dict[s
     return {
         "texto": "\n\n".join(blocos),
         "citaveis": citaveis,
+        "estagios": estagios,
         "total": total,
         "no_contexto": len(recentes),
     }
@@ -239,8 +244,113 @@ Regras:
 Quando isso afetar a resposta, avise.
 - Ao mencionar um lead, escreva o marcador [[lead:ID]] logo depois do nome, com o id da tabela.
 - Seja direto. Use tabela em markdown quando listar mais de três leads.
-- Você não executa ações e não altera nada: só analisa e sugere.
-- Hoje é {hoje}."""
+- Você não executa nada. Pode PROPOR mudanças, que o vendedor aprova uma a uma.
+- Hoje é {hoje}.
+
+Propostas (opcional, só quando o vendedor pedir ou quando houver uma ação óbvia):
+- Existem APENAS três ações:
+  - "mover_estagio": campos lead_id, estagio (um de: {estagios}), motivo
+  - "criar_tarefa": campos lead_id, titulo (curto), prazo (AAAA-MM-DD, de hoje até 90 dias), motivo
+  - "adicionar_nota": campos lead_id, texto, motivo
+- No máximo {max_propostas} propostas, só para leads da tabela.
+- Nunca proponha excluir, enviar mensagem, ligar, revelar contato ou mudar tier.
+- Ponha as propostas no FIM da resposta, num bloco assim, com JSON válido:
+```propostas
+[{{"acao": "mover_estagio", "lead_id": 12, "estagio": "contatado", "motivo": "..."}}]
+```"""
+
+# ── Propostas de mudança (Fase 5b) ───────────────────────────────────────────
+#
+# A IA só sugere. Cada proposta passa por esta validação, vira um cartão na
+# tela e só acontece quando o vendedor clica em "Aplicar" — e o clique chama a
+# mesma rota que a tela já usa (PATCH /stage, POST /activities), com as mesmas
+# checagens de dono. Este módulo nunca grava nada.
+
+ACOES = ("mover_estagio", "criar_tarefa", "adicionar_nota")
+MAX_PROPOSTAS = 5
+PRAZO_MAXIMO_DIAS = 90
+#: Hora do dia em que a tarefa proposta vence, no fuso da agenda.
+HORA_DA_TAREFA = time(9, 0)
+
+_RE_BLOCO = re.compile(r"```propostas\s*(.*?)```", re.DOTALL)
+
+
+def _texto_curto(valor: Any, limite: int) -> str:
+    return " ".join(str(valor or "").split())[:limite]
+
+
+def _validar(p: Any, ctx: Dict[str, Any], hoje) -> Optional[Dict[str, Any]]:
+    """Uma proposta crua → a versão limpa que vai para a tela, ou None."""
+    if not isinstance(p, dict) or p.get("acao") not in ACOES:
+        return None
+    try:
+        lead_id = int(p.get("lead_id"))
+    except (TypeError, ValueError):
+        return None
+    # Só lead que a IA viu — e que, por isso, é do dono e não está fora do contexto.
+    if lead_id not in ctx["citaveis"]:
+        return None
+    base = {
+        "acao": p["acao"],
+        "lead_id": lead_id,
+        "lead_nome": ctx["citaveis"][lead_id],
+        "motivo": _texto_curto(p.get("motivo"), 200),
+    }
+
+    if p["acao"] == "mover_estagio":
+        estagio = p.get("estagio")
+        atual = ctx["estagios"].get(lead_id)
+        if estagio not in _ESTAGIOS or estagio == atual:
+            return None
+        return {**base, "estagio": estagio, "estagio_atual": atual,
+                "resumo": f"Mover {base['lead_nome']} de {_ESTAGIOS.get(atual, atual)} para {_ESTAGIOS[estagio]}"}
+
+    if p["acao"] == "criar_tarefa":
+        titulo = _texto_curto(p.get("titulo"), 200)
+        try:
+            prazo = datetime.strptime(str(p.get("prazo")), "%Y-%m-%d").date()
+        except ValueError:
+            return None
+        if not titulo or prazo < hoje or (prazo - hoje).days > PRAZO_MAXIMO_DIAS:
+            return None
+        due_at = datetime.combine(prazo, HORA_DA_TAREFA, tzinfo=TZ)
+        return {**base, "titulo": titulo, "prazo": prazo.isoformat(), "due_at": due_at.isoformat(),
+                "resumo": f"Criar tarefa para {base['lead_nome']} em {prazo.strftime('%d/%m')}: {titulo}"}
+
+    texto = str(p.get("texto") or "").strip()[:1000]
+    if not texto:
+        return None
+    return {**base, "texto": texto, "resumo": f"Adicionar nota em {base['lead_nome']}"}
+
+
+def extrair_propostas(texto: str, ctx: Dict[str, Any]):
+    """
+    Separa o bloco de propostas da resposta e devolve (texto_sem_bloco, propostas).
+
+    JSON quebrado não derruba a resposta: o texto vai sem o bloco e sem
+    propostas. Duplicatas e excedentes são descartados.
+    """
+    blocos = _RE_BLOCO.findall(texto)
+    limpo = _RE_BLOCO.sub("", texto).strip()
+    hoje = utcnow().astimezone(TZ).date()
+    propostas, vistas = [], set()
+    for bloco in blocos:
+        try:
+            cruas = json.loads(bloco)
+        except ValueError:
+            continue
+        for p in cruas if isinstance(cruas, list) else [cruas]:
+            ok = _validar(p, ctx, hoje)
+            if not ok:
+                continue
+            chave = (ok["acao"], ok["lead_id"], ok.get("estagio"), ok.get("titulo"), ok.get("texto"))
+            if chave in vistas:
+                continue
+            vistas.add(chave)
+            propostas.append(ok)
+            if len(propostas) >= MAX_PROPOSTAS:
+                return limpo, propostas
+    return limpo, propostas
 
 
 def _chamar_groq(mensagens: List[Dict[str, str]]) -> Optional[str]:
@@ -283,7 +393,9 @@ def responder(
     hoje = utcnow().astimezone(TZ).strftime("%d/%m/%Y")
     mensagens = [{
         "role": "system",
-        "content": _INSTRUCOES.format(hoje=hoje) + "\n\nDADOS:\n" + ctx["texto"],
+        "content": _INSTRUCOES.format(
+            hoje=hoje, estagios=", ".join(_ESTAGIOS), max_propostas=MAX_PROPOSTAS,
+        ) + "\n\nDADOS:\n" + ctx["texto"],
     }]
     for turno in historico[-MAX_HISTORICO:]:
         papel = turno.get("role")
@@ -294,6 +406,7 @@ def responder(
     texto = _chamar_groq(mensagens)
     if not texto:
         return None
+    texto, propostas = extrair_propostas(texto, ctx)
 
     # Só vira link o lead que a IA podia citar; um id inventado perde o marcador.
     citados: List[int] = []
@@ -310,6 +423,7 @@ def responder(
     return {
         "resposta": texto,
         "leads": [{"id": i, "nome": ctx["citaveis"][i]} for i in citados],
+        "propostas": propostas,
         "total_leads": ctx["total"],
         "leads_no_contexto": ctx["no_contexto"],
     }

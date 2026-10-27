@@ -167,6 +167,118 @@ def test_historico_volta_para_a_ia_so_com_papeis_validos(client, monkeypatch):
     assert resp.status_code == 422
 
 
+# ── Propostas (Fase 5b) ──────────────────────────────────────────────────────
+
+def _bloco(*propostas):
+    import json
+    return "Sugestões abaixo.\n```propostas\n" + json.dumps(list(propostas)) + "\n```"
+
+
+def _hoje_local():
+    from services.cadence import TZ
+    return utcnow().astimezone(TZ).date()
+
+
+def test_propostas_validas_viram_cartoes_e_saem_do_texto(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
+    db = _Session()
+    lead = _lead(db, "Nubank", stage="novo")
+    lid = lead.id
+    db.close()
+    prazo = (_hoje_local() + timedelta(days=3)).isoformat()
+
+    resp, _ = _perguntar(client, resposta=_bloco(
+        {"acao": "mover_estagio", "lead_id": lid, "estagio": "contatado", "motivo": "Já houve ligação"},
+        {"acao": "criar_tarefa", "lead_id": lid, "titulo": "Ligar de novo", "prazo": prazo},
+        {"acao": "adicionar_nota", "lead_id": lid, "texto": "Pediu proposta em dezembro"},
+    ))
+    corpo = resp.json()
+    assert "```" not in corpo["resposta"]
+    assert corpo["resposta"] == "Sugestões abaixo."
+    acoes = [p["acao"] for p in corpo["propostas"]]
+    assert acoes == ["mover_estagio", "criar_tarefa", "adicionar_nota"]
+    mover, tarefa, nota = corpo["propostas"]
+    assert mover["estagio_atual"] == "novo" and mover["estagio"] == "contatado"
+    assert mover["lead_nome"] == "Nubank"
+    assert tarefa["prazo"] == prazo
+    assert tarefa["due_at"].startswith(prazo + "T09:00:00")   # 9h no fuso da agenda
+    assert nota["texto"] == "Pediu proposta em dezembro"
+
+
+def test_propostas_fora_das_regras_sao_descartadas(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
+    db = _Session()
+    lead = _lead(db, "Nubank", stage="contatado")
+    alheio = _lead(db, "Alheio", user_id="outra-conta")
+    lid, aid = lead.id, alheio.id
+    db.close()
+    hoje = _hoje_local()
+
+    resp, _ = _perguntar(client, resposta=_bloco(
+        {"acao": "excluir_lead", "lead_id": lid},                                   # ação fora da lista
+        {"acao": "mover_estagio", "lead_id": aid, "estagio": "ganho"},              # lead de outra conta
+        {"acao": "mover_estagio", "lead_id": 99999, "estagio": "ganho"},            # lead inexistente
+        {"acao": "mover_estagio", "lead_id": lid, "estagio": "fechado"},            # estágio inválido
+        {"acao": "mover_estagio", "lead_id": lid, "estagio": "contatado"},          # já está lá
+        {"acao": "criar_tarefa", "lead_id": lid, "titulo": "Ontem",
+         "prazo": (hoje - timedelta(days=1)).isoformat()},                          # prazo no passado
+        {"acao": "criar_tarefa", "lead_id": lid, "titulo": "Longe",
+         "prazo": (hoje + timedelta(days=91)).isoformat()},                         # passa de 90 dias
+        {"acao": "criar_tarefa", "lead_id": lid, "titulo": "", "prazo": hoje.isoformat()},  # sem título
+        {"acao": "adicionar_nota", "lead_id": lid, "texto": "   "},                 # nota vazia
+    ))
+    assert resp.status_code == 200
+    assert resp.json()["propostas"] == []
+
+
+def test_json_quebrado_nao_derruba_a_resposta(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
+    resp, _ = _perguntar(client, resposta="Resposta útil.\n```propostas\n[{\"acao\": \n```")
+    corpo = resp.json()
+    assert resp.status_code == 200
+    assert corpo["resposta"] == "Resposta útil."
+    assert corpo["propostas"] == []
+
+
+def test_propostas_tem_teto_e_sem_duplicatas(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
+    db = _Session()
+    lid = _lead(db, "Nubank").id
+    db.close()
+    notas = [{"acao": "adicionar_nota", "lead_id": lid, "texto": f"nota {i}"} for i in range(8)]
+    repetida = {"acao": "adicionar_nota", "lead_id": lid, "texto": "nota 0"}
+
+    resp, _ = _perguntar(client, resposta=_bloco(notas[0], repetida, *notas[1:]))
+    textos = [p["texto"] for p in resp.json()["propostas"]]
+    assert textos == ["nota 0", "nota 1", "nota 2", "nota 3", "nota 4"]
+
+
+def test_chat_com_propostas_nao_grava_nada(client, monkeypatch):
+    """Propor não é aplicar: o lead só muda quando a tela chama a rota de sempre."""
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
+    db = _Session()
+    lid = _lead(db, "Nubank", stage="novo").id
+    db.close()
+
+    _perguntar(client, resposta=_bloco(
+        {"acao": "mover_estagio", "lead_id": lid, "estagio": "ganho"},
+        {"acao": "adicionar_nota", "lead_id": lid, "texto": "teste"},
+    ))
+    db = _Session()
+    assert db.get(Lead, lid).stage == "novo"
+    assert db.query(Activity).filter(Activity.lead_id == lid).count() == 0
+    db.close()
+
+
+def test_instrucoes_dizem_as_tres_acoes(client, monkeypatch):
+    monkeypatch.setenv("GROQ_API_KEY", "sk-test")
+    _, enviadas = _perguntar(client)
+    ctx = _contexto(enviadas)
+    for acao in ("mover_estagio", "criar_tarefa", "adicionar_nota"):
+        assert acao in ctx
+    assert "Nunca proponha excluir" in ctx
+
+
 def test_conta_grande_avisa_quantos_leads_a_ia_viu(client, monkeypatch):
     monkeypatch.setenv("GROQ_API_KEY", "sk-test")
     from services import crm_chat
