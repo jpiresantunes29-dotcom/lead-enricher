@@ -26,7 +26,7 @@
   <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-600.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
-  <link rel="stylesheet" href="/static/landing/landing.css?v=6" />
+  <link rel="stylesheet" href="/static/landing/landing.css?v=7" />
 </head>
 <body>
 
@@ -54,25 +54,23 @@
 <section class="hero" id="hero" data-section="hero">
   <div class="hero-inner">
     <div class="hero-copy">
-      <p class="eyebrow" data-reveal>// inteligência comercial B2B</p>
+      <p class="eyebrow" data-reveal>// prospecção B2B</p>
       <h1 class="hero-title" data-reveal>
         Digite um domínio.<br />
         Conheça a empresa <em class="shimmer">inteira</em>.
       </h1>
       <p class="hero-sub" data-reveal>
-        Infraestrutura de e-mail, porte, setor, dados de CNPJ e decisores com
-        e-mail corporativo — em segundos, direto do domínio, sem planilha e sem
-        base de dados paga.
+        Porte, setor, e-mail, CNPJ e quem decide. Em segundos, de fontes públicas.
       </p>
       <form class="hero-form" action="/app" method="get" data-reveal>
         <input class="hero-input mono" name="domain" placeholder="suaempresa.com.br"
                autocomplete="off" spellcheck="false" aria-label="Domínio para analisar" />
         <button class="btn btn-brand btn-sm" data-magnetic type="submit">Analisar →</button>
       </form>
-      <p class="hero-note mono" data-reveal>acesso aberto · entre com Google, Microsoft, GitHub ou Apple · sem cartão</p>
+      <p class="hero-note mono" data-reveal>grátis · sem cartão · entre com Google, Microsoft, GitHub ou Apple</p>
       <div class="hero-badges" data-reveal>
-        <span class="hero-badge">Fontes públicas · opt-out LGPD sem cadastro</span>
-        <span class="hero-badge">Exportação XLSX/CSV e webhook assinado</span>
+        <span class="hero-badge">Fontes públicas · LGPD</span>
+        <span class="hero-badge">Excel, CSV e envio ao CRM</span>
       </div>
     </div>
 
@@ -122,7 +120,7 @@
 
 <!-- ── Ticker de sinais ── -->
 <section class="trust" data-section="trust">
-  <p class="trust-label mono" data-reveal>&gt; sinais coletados em cada domínio, sem API paga</p>
+  <p class="trust-label mono" data-reveal>&gt; o que lemos de cada domínio</p>
   <div class="marquee" data-reveal aria-hidden="true">
     <div class="marquee-track mono">
       <span>MX → Google Workspace</span><span>SPF ✓</span><span>DMARC p=reject</span>
@@ -142,8 +140,8 @@
   <div class="journey-stage" data-station="resolve">
     <div class="journey-copy">
       <p class="eyebrow mono" data-reveal>01 / RESOLVE</p>
-      <h2 data-reveal>Lemos a infraestrutura.</h2>
-      <p data-reveal>Provedor de e-mail, SPF, DMARC, hosting — direto do DNS, sem API paga.</p>
+      <h2 data-reveal>Lemos o DNS.</h2>
+      <p data-reveal>Provedor de e-mail, SPF, DMARC e hospedagem.</p>
     </div>
     <div class="journey-visual mono" data-reveal aria-hidden="true">
       <div class="jv-line">MX    10  aspmx.l.google.com</div>
@@ -157,7 +155,7 @@
     <div class="journey-copy">
       <p class="eyebrow mono" data-reveal>02 / PROFILE</p>
       <h2 data-reveal>Montamos o perfil.</h2>
-      <p data-reveal>Porte, setor, localização e LinkedIn verificado da empresa.</p>
+      <p data-reveal>Porte, setor, local e o LinkedIn oficial.</p>
     </div>
     <div class="journey-visual mono" data-reveal aria-hidden="true">
       <div class="jv-line">PORTE   <span class="jv-brand">51–200 funcionários</span></div>
@@ -169,11 +167,8 @@
   <div class="journey-stage" data-station="discover">
     <div class="journey-copy">
       <p class="eyebrow mono" data-reveal>03 / DISCOVER</p>
-      <h2 data-reveal>Encontramos quem decide.</h2>
-      <p data-reveal>
-        Decisores por cargo, com e-mail corporativo montado pelo padrão do
-        próprio domínio — e o quadro societário que a Receita publica.
-      </p>
+      <h2 data-reveal>Achamos quem decide.</h2>
+      <p data-reveal>Decisores por cargo, e-mail no padrão do domínio e sócios na Receita.</p>
     </div>
     <div class="journey-visual mono" data-reveal aria-hidden="true">
       <div class="jv-line">◉ CTO                <span class="jv-ok">e-mail · confiança 92</span></div>
@@ -186,10 +181,7 @@
     <div class="journey-copy">
       <p class="eyebrow mono" data-reveal>04 / TRABALHE</p>
       <h2 data-reveal>Vira trabalho, não relatório.</h2>
-      <p data-reveal>
-        O lead entra no pipeline, a ligação vira follow-up com data e a ficha
-        sai em Excel ou vai para o seu CRM por webhook assinado.
-      </p>
+      <p data-reveal>Pipeline, tarefas de retorno e envio ao seu CRM.</p>
     </div>
     <div class="journey-visual mono" data-reveal aria-hidden="true">
       <div class="jv-line">PIPELINE   <span class="jv-brand">novo → contatado → reunião</span></div>
@@ -203,37 +195,31 @@
 <!-- ── Bento de features ── -->
 <section class="bento" id="features" data-section="features">
   <p class="eyebrow mono" data-reveal>// recursos</p>
-  <h2 class="section-title" data-reveal>Cada coluna da sua planilha,<br />preenchida sozinha.</h2>
+  <h2 class="section-title" data-reveal>Sua planilha,<br />preenchida sozinha.</h2>
   <div class="bento-grid">
-    <article class="card card-lg" data-reveal data-spotlight><h3>Relatório DNS completo</h3><p>MX, NS, SPF, DMARC, DKIM, CAA, SOA, hosts com IP e ASN e o titular do domínio no RDAP — o raio-X técnico, sem sair da ficha.</p></article>
-    <article class="card card-lg" data-reveal data-spotlight><h3>Decisores por cargo</h3><p>Perfis públicos do LinkedIn filtrados por cargo, com e-mail corporativo montado pelo padrão do domínio e nota de confiança em cada endereço.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Dados de CNPJ</h3><p>Razão social, situação, porte, telefone e quadro societário direto das bases públicas da Receita.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Follow-up automático</h3><p>Não atendeu? Tarefa criada para daqui a 2 dias. Reunião marcada vira convite .ics.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Pipeline kanban</h3><p>Do novo lead à reunião agendada, com dashboard de taxas de contato e reunião.</p></article>
-    <article class="card" data-reveal data-spotlight><h3>Exportação e CRM</h3><p>Excel, CSV e webhook assinado com HMAC-SHA256 — plugue em Zapier, Make, Power Automate ou no seu endpoint.</p></article>
+    <article class="card card-lg" data-reveal data-spotlight><h3>Relatório de DNS</h3><p>MX, SPF, DMARC, DKIM, hospedagem e o titular do domínio.</p></article>
+    <article class="card card-lg" data-reveal data-spotlight><h3>Decisores por cargo</h3><p>Perfis públicos por cargo, com e-mail provável e nota de confiança.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Dados de CNPJ</h3><p>Razão social, situação, telefone e sócios, direto da Receita.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Retorno automático</h3><p>Não atendeu? A tarefa volta em 2 dias. Reunião vira convite de agenda.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Pipeline</h3><p>Do primeiro contato à reunião, com suas taxas de conversão.</p></article>
+    <article class="card" data-reveal data-spotlight><h3>Excel e CRM</h3><p>Exporte em Excel ou CSV, ou envie para Zapier, Make e Power Automate.</p></article>
   </div>
 </section>
 
 <!-- ── Extensão para LinkedIn ── -->
 <section class="extension" id="extension" data-section="extension">
   <p class="eyebrow mono" data-reveal>// extensão do navegador</p>
-  <h2 class="section-title" data-reveal>O contato aparece onde<br />você já está prospectando.</h2>
+  <h2 class="section-title" data-reveal>O contato aparece<br />dentro do LinkedIn.</h2>
   <div class="ext-grid">
     <div class="ext-copy">
-      <p class="ext-lead" data-reveal>
-        Instale a extensão do Chrome ou Edge, conecte com um código gerado no
-        app e o LeadEnricher passa a trabalhar dentro do LinkedIn.
-      </p>
+      <p class="ext-lead" data-reveal>Instale no Chrome ou Edge e conecte com um código do app.</p>
       <ul class="persona-list" data-reveal>
-        <li>No perfil: nome, cargo, empresa e o contato mascarado com botão <strong>Revelar</strong></li>
-        <li>Na página da empresa: CNPJ, situação cadastral, porte, telefone e decisores</li>
-        <li>Um clique salva o lead direto no seu pipeline</li>
-        <li>Só lê a página que você abriu — nunca navega nem clica sozinha</li>
+        <li>No perfil: cargo, empresa e contato com um clique em <strong>Revelar</strong></li>
+        <li>Na empresa: CNPJ, porte, telefone e decisores</li>
+        <li>Salve o lead no pipeline sem sair da página</li>
+        <li>Só lê a página aberta. Nunca clica sozinha.</li>
       </ul>
-      <p class="ext-note mono" data-reveal>
-        revelação livre, sem contador · quem pediu remoção pela LGPD nunca é
-        exibido · o que não achamos, dizemos que não achamos
-      </p>
+      <p class="ext-note mono" data-reveal>sem limite de revelações · quem pediu remoção pela LGPD não aparece</p>
     </div>
     <div class="ext-card mono" data-reveal aria-hidden="true">
       <div class="ext-card-hdr">linkedin.com/in/marina-alves</div>
@@ -241,7 +227,7 @@
       <div class="ext-row"><span>TELEFONE</span>(11) 3•••-•••• <em class="jv-dim">Receita Federal</em></div>
       <div class="ext-row"><span>EMPRESA</span>Acme Tecnologia · CNPJ ativo</div>
       <div class="ext-cta">Revelar contato</div>
-      <div class="ext-foot">Salva na sua pipeline com um clique</div>
+      <div class="ext-foot">Salve no pipeline com um clique</div>
     </div>
   </div>
 </section>
@@ -249,33 +235,33 @@
 <!-- ── Para quem é ── -->
 <section class="personas" id="personas" data-section="personas">
   <p class="eyebrow mono" data-reveal>// para quem é</p>
-  <h2 class="section-title" data-reveal>Feito para quem precisa<br />bater meta no fim do mês.</h2>
+  <h2 class="section-title" data-reveal>Para quem precisa<br />bater meta.</h2>
   <div class="persona-grid">
     <article class="card persona" data-reveal data-spotlight>
       <h3>SDR e pré-vendas</h3>
-      <p class="persona-pain">"Perco metade do dia garimpando contato antes de conseguir ligar."</p>
+      <p class="persona-pain">"Perco metade do dia procurando contato."</p>
       <ul class="persona-list">
-        <li>Decisores por cargo e e-mail corporativo em uma busca</li>
-        <li>Telefone e sócios da empresa vindos do CNPJ</li>
-        <li>Follow-up criado sozinho quando não atendem</li>
+        <li>Decisores e e-mail em uma busca</li>
+        <li>Telefone e sócios pelo CNPJ</li>
+        <li>Retorno agendado sozinho</li>
       </ul>
     </article>
     <article class="card persona" data-reveal data-spotlight>
       <h3>Gerente comercial</h3>
-      <p class="persona-pain">"Não sei em que pé está o pipeline sem cobrar todo mundo."</p>
+      <p class="persona-pain">"Não sei como está o pipeline sem cobrar o time."</p>
       <ul class="persona-list">
-        <li>Funil por estágio e taxas de contato e reunião</li>
-        <li>Atividades registradas por lead, com histórico</li>
-        <li>Exportação em Excel para a reunião de resultados</li>
+        <li>Funil e taxas de contato e reunião</li>
+        <li>Histórico de cada lead</li>
+        <li>Excel pronto para a reunião de resultados</li>
       </ul>
     </article>
     <article class="card persona" data-reveal data-spotlight>
       <h3>Agências e consultorias</h3>
-      <p class="persona-pain">"Cada cliente novo começa com uma planilha do zero."</p>
+      <p class="persona-pain">"Cada cliente novo começa do zero."</p>
       <ul class="persona-list">
-        <li>Enriquecimento por domínio, sem base paga por contato</li>
-        <li>Webhook assinado envia o lead pronto ao CRM do cliente</li>
-        <li>Fontes públicas, com origem e confiança declaradas em cada dado</li>
+        <li>Análise por domínio, sem pagar por contato</li>
+        <li>Lead enviado direto ao CRM do cliente</li>
+        <li>Origem de cada dado declarada</li>
       </ul>
     </article>
   </div>
@@ -284,7 +270,7 @@
 <!-- ── O produto, de verdade ── -->
 <section class="proof" id="proof" data-section="proof">
   <p class="eyebrow mono" data-reveal>// o produto</p>
-  <h2 class="section-title" data-reveal>É isto que você recebe<br />a cada busca.</h2>
+  <h2 class="section-title" data-reveal>Isto é o que você recebe<br />em cada busca.</h2>
   <div class="proof-card mono" data-reveal aria-hidden="true">
     <div class="proof-hdr">
       <span class="proof-co">acme.com.br · Acme Tecnologia</span>
@@ -298,30 +284,30 @@
       <div class="proof-cell"><span>LINKEDIN</span>página confirmada <em class="jv-ok">✓</em></div>
       <div class="proof-cell"><span>CNPJ</span>ativo · 3 sócios listados</div>
     </div>
-    <div class="proof-foot">relatório DNS completo · exportação XLSX/CSV · envio ao CRM em 1 clique</div>
+    <div class="proof-foot">relatório de DNS · Excel e CSV · envio ao CRM</div>
   </div>
 </section>
 
 <!-- ── ATO III · Acesso ── -->
 <section class="pricing" id="acesso" data-section="acesso">
   <p class="eyebrow mono" data-reveal>// acesso</p>
-  <h2 class="section-title" data-reveal>Entrou, está tudo aberto.</h2>
+  <h2 class="section-title" data-reveal>Grátis e completo.</h2>
   <div class="pricing-grid">
     <article class="card price" data-reveal>
-      <h3>Análises de empresa</h3>
-      <p>Ficha completa, relatório DNS, decisores por cargo e dados de CNPJ. Quantas empresas você precisar analisar.</p>
-      <a class="btn btn-ghost" href="/app">Analisar uma empresa</a>
+      <h3>Análise de empresas</h3>
+      <p>Ficha, DNS, decisores e CNPJ. Sem limite.</p>
+      <a class="btn btn-ghost" href="/app">Analisar empresa</a>
     </article>
     <article class="card price price-featured" data-reveal>
-      <span class="price-badge mono">sem cadastro pago</span>
+      <span class="price-badge mono">sem plano pago</span>
       <h3>Lote, planilha e extensão</h3>
-      <p>Lista colada, CSV ou .xlsx pela fila; a extensão revela contato nas páginas do LinkedIn. Sem contador de uso.</p>
-      <a class="btn btn-brand" data-magnetic href="/app">Entrar com o Google</a>
+      <p>Listas, planilhas e o LinkedIn, sem contador de uso.</p>
+      <a class="btn btn-brand" data-magnetic href="/app">Entrar grátis</a>
     </article>
     <article class="card price" data-reveal>
-      <h3>Exportação e CRM</h3>
-      <p>XLSX/CSV e webhook assinado (HMAC) para Zapier, Make ou Power Automate — configurados por você, em Configurações.</p>
-      <a class="btn btn-ghost" href="/app#settings">Ver as integrações</a>
+      <h3>Excel e CRM</h3>
+      <p>Exporte ou envie para Zapier, Make e Power Automate.</p>
+      <a class="btn btn-ghost" href="/app#settings">Ver integrações</a>
     </article>
   </div>
 </section>
@@ -329,28 +315,28 @@
 <!-- ── ATO IV · Comparação ── -->
 <section class="comparison" id="comparison" data-section="comparison">
   <p class="eyebrow mono" data-reveal>// comparação</p>
-  <h2 class="section-title" data-reveal>LeadEnricher vs. base importada + planilha</h2>
+  <h2 class="section-title" data-reveal>LeadEnricher vs. lista comprada + planilha</h2>
   <div class="comparison-grid">
     <div class="comp-col" data-reveal>
-      <h3 style="color:#999">Base de contatos importada + planilha</h3>
+      <h3 style="color:#999">Lista comprada + planilha</h3>
       <ul class="comp-list">
-        <li style="opacity:.7"><strong>✗</strong> Base comprada envelhece; o contato some e você não sabe</li>
-        <li style="opacity:.7"><strong>✗</strong> Dados espalhados em planilha, sem histórico do contato</li>
-        <li><strong>✗</strong> Sem CNPJ, quadro societário ou situação cadastral</li>
-        <li style="opacity:.8"><strong>✗</strong> Infraestrutura de e-mail (MX, SPF, DMARC) por fora, na mão</li>
-        <li style="opacity:.8"><strong>✗</strong> Follow-up depende de você lembrar</li>
-        <li style="opacity:.7"><strong>✗</strong> Exportação e integração manuais</li>
+        <li style="opacity:.7"><strong>✗</strong> A lista envelhece e você não percebe</li>
+        <li style="opacity:.7"><strong>✗</strong> Dados soltos, sem histórico</li>
+        <li><strong>✗</strong> Sem CNPJ nem sócios</li>
+        <li style="opacity:.8"><strong>✗</strong> E-mail e DNS conferidos na mão</li>
+        <li style="opacity:.8"><strong>✗</strong> O retorno depende da sua memória</li>
+        <li style="opacity:.7"><strong>✗</strong> Exportar e integrar dá trabalho</li>
       </ul>
     </div>
     <div class="comp-col comp-col--highlight" data-reveal>
       <h3 style="color:var(--brand-bright)">LeadEnricher</h3>
       <ul class="comp-list">
-        <li><strong>✓</strong> Coleta feita na hora, das fontes públicas do próprio domínio</li>
-        <li><strong>✓</strong> Lead, decisores e atividades no mesmo lugar, com timeline</li>
-        <li><strong>✓</strong> CNPJ, sócios, porte e telefone das bases públicas da Receita</li>
-        <li><strong>✓</strong> Relatório DNS completo com ASN, DKIM e titular do domínio</li>
-        <li><strong>✓</strong> Follow-up criado sozinho · convite .ics para a reunião</li>
-        <li><strong>✓</strong> Webhook assinado (HMAC) para Zapier, Make ou Power Automate</li>
+        <li><strong>✓</strong> Dados coletados na hora, de fontes públicas</li>
+        <li><strong>✓</strong> Lead, contatos e atividades no mesmo lugar</li>
+        <li><strong>✓</strong> CNPJ, sócios e telefone da Receita</li>
+        <li><strong>✓</strong> Relatório de DNS completo</li>
+        <li><strong>✓</strong> Retorno e convite de reunião automáticos</li>
+        <li><strong>✓</strong> Envio ao CRM com um clique</li>
       </ul>
     </div>
   </div>
@@ -376,10 +362,10 @@
   <h2 class="cta-title" data-reveal>Sua próxima reunião<br />começa com um domínio.</h2>
   <form class="cta-form" action="/app" method="get" data-reveal>
     <input class="cta-input mono" name="domain" placeholder="suaempresa.com.br"
-           autocomplete="off" spellcheck="false" aria-label="Domínio para enriquecer" />
+           autocomplete="off" spellcheck="false" aria-label="Domínio para analisar" />
     <button class="btn btn-brand" data-magnetic type="submit">Analisar agora →</button>
   </form>
-  <p class="hero-note mono" data-reveal>acesso aberto · sem cartão · sem senha</p>
+  <p class="hero-note mono" data-reveal>grátis · sem cartão · sem senha</p>
 </section>
 
 <!-- ── FOOTER ── -->
@@ -405,6 +391,6 @@
 <script defer src="/static/landing/vendor/lenis.min.js"></script>
 <script defer src="/static/landing/vendor/gsap.min.js"></script>
 <script defer src="/static/landing/vendor/ScrollTrigger.min.js"></script>
-<script type="module" src="/static/landing/landing.js?v=3"></script>
+<script type="module" src="/static/landing/landing.js?v=4"></script>
 </body>
 </html>

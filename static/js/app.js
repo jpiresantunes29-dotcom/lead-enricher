@@ -78,8 +78,7 @@ async function loadProfile(){
   }catch(e){
     if(e&&e.message==='not_authenticated')return false;
     _profile=null;updateNavUser();
-    showAuthMsg('Não foi possível falar com o servidor para confirmar seu login. '
-      +'Verifique a conexão e tente de novo.','err',true);
+    showAuthMsg('Não foi possível confirmar seu login. Verifique a conexão e tente de novo.','err',true);
     return false;
   }
   if(resp.ok){
@@ -326,51 +325,51 @@ function nav(route){
 const VIEW_META={
   search:{
     title:'Nova análise',
-    sub:'Digite o domínio da empresa e receba a ficha completa em segundos.',
+    sub:'Digite o site e receba a ficha em segundos.',
   },
   lote:{
     title:'Análise em lote',
-    sub:'Cole uma lista de domínios ou solte um CSV. Processamos em fila, sem você ficar esperando cada empresa.',
+    sub:'Várias empresas de uma vez, sem esperar cada uma.',
   },
   import:{
     title:'Importar planilha',
-    sub:'Suba o .xlsx ou .csv que você já usa. Reconhecemos as colunas e criamos as linhas como leads.',
+    sub:'Traga sua planilha; cada linha vira um lead.',
   },
   sheet:{
     title:'Planilha',
-    sub:'Suas linhas como no arquivo original, mais as colunas que descobrimos. Clique numa célula para editar.',
+    sub:'Suas colunas e as que descobrimos, lado a lado.',
   },
   pipeline:{
-    title:'Pipeline de prospecção',
-    sub:'Em que estágio está cada lead. Arraste o card ou use os botões para avançar.',
+    title:'Pipeline',
+    sub:'Seus leads por estágio.',
   },
   agenda:{
-    title:'Agenda do dia',
-    sub:'Quem contatar hoje, com ligação, WhatsApp e e-mail a um toque. Comece pelas atrasadas e registre o resultado no próprio card.',
+    title:'Agenda',
+    sub:'Quem contatar hoje. Comece pelas atrasadas.',
   },
   followups:{
     title:'Follow-ups',
-    sub:'Tarefas criadas a partir das suas ligações. Comece pelas atrasadas.',
+    sub:'Todas as tarefas abertas.',
   },
   dashboard:{
-    title:'Dashboard comercial',
-    sub:'Esforço e conversão do período: quanto ligou, quanto virou contato e quanto virou reunião.',
+    title:'Dashboard',
+    sub:'Ligações, contatos e reuniões do período.',
   },
   conversas:{
-    title:'Conversas de WhatsApp',
-    sub:'O que cada lead respondeu e quem está respondendo por você. A conversa de teste, no topo da lista, não envia nada de verdade.',
+    title:'Conversas',
+    sub:'WhatsApp com os leads.',
   },
   chat:{
     title:'Chat',
-    sub:'Pergunte sobre o seu pipeline e cite leads com @. A IA pode sugerir mudanças, mas só você as aplica, uma por uma.',
+    sub:'Pergunte sobre o pipeline. Use @ para citar um lead.',
   },
   history:{
-    title:'Histórico de leads',
-    sub:'Todas as empresas já analisadas. Filtre, reabra a ficha ou exporte para Excel.',
+    title:'Histórico',
+    sub:'Todas as empresas analisadas.',
   },
   settings:{
     title:'Configurações',
-    sub:'Sua conta, integração com CRM, extensão do navegador e sessão.',
+    sub:'Conta, integrações e extensão.',
   },
 };
 
@@ -481,14 +480,14 @@ async function loadRecent(){
 async function enrich(){
   const input=document.getElementById('domain-input');
   const domain=input.value.trim();
-  if(!domain){showError('Digite o domínio da empresa (ex: nubank.com.br).');return;}
+  if(!domain){showError('Digite o site da empresa, como nubank.com.br.');return;}
   const token=await getToken();
   if(!token){openAuthModal();return;}
   setLoading(true);hideError();hideResults();startLoad();
   try{
     const resp=await authFetch('/api/enrich',{method:'POST',body:JSON.stringify({domain})});
     const json=await resp.json();
-    if(!resp.ok){showError(json.detail||'Erro ao enriquecer este domínio.');return;}
+    if(!resp.ok){showError(json.detail||'Não foi possível analisar este site. Tente de novo.');return;}
     if(!json.success||!json.data){showError(json.message||'Não foi possível coletar dados.');return;}
     renderResult(json.data);
     if(json.data.id)history.replaceState(null,'','#lead-'+json.data.id);
@@ -501,8 +500,8 @@ async function enrich(){
     console.error('enrich:',e);
     const bug=(e instanceof TypeError)||(e instanceof ReferenceError);
     showError(bug
-      ? 'Os dados vieram, mas houve uma falha ao montar a ficha na tela. Detalhes no console do navegador.'
-      : 'Erro de conexão com o servidor.');
+      ? 'Não foi possível mostrar a ficha. Recarregue a página.'
+      : 'Sem conexão com o servidor. Tente de novo.');
   }finally{setLoading(false);stopLoad();}
 }
 
@@ -525,20 +524,20 @@ async function logCall(outcome){
   try{
     const resp=await authFetch(`/api/leads/${currentLeadId}/activities`,{method:'POST',body:JSON.stringify(body)});
     const json=await resp.json();
-    if(!resp.ok){fb.textContent=json.detail||'Erro ao registrar.';fb.classList.add('show');return;}
+    if(!resp.ok){fb.textContent=json.detail||'Não foi possível registrar. Tente de novo.';fb.classList.add('show');return;}
     const meeting=(json.derived||[]).find(d=>d.type==='meeting');
     const ics=meeting?` <a href="#" onclick="downloadIcs(${meeting.id});return false">Baixar convite .ics</a>`:'';
     fb.innerHTML=`${esc(json.message)}${ics}`;
     fb.classList.add('show');
     if(outcome==='meeting_scheduled')document.getElementById('meet-row').style.display='none';
     loadTimeline();loadTodayFollowupsCount();
-  }catch(e){if(e.message!=='not_authenticated'){fb.textContent='Erro de conexão.';fb.classList.add('show');}}
+  }catch(e){if(e.message!=='not_authenticated'){fb.textContent='Sem conexão. Tente de novo.';fb.classList.add('show');}}
 }
 
 async function downloadIcs(activityId){
   const token=await getToken();if(!token)return;
   const resp=await fetch(`/api/activities/${activityId}/ics`,{headers:{Authorization:`Bearer ${token}`}});
-  if(!resp.ok){alert('Erro ao gerar convite.');return;}
+  if(!resp.ok){alert('Não foi possível gerar o convite.');return;}
   const blob=await resp.blob();
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -555,7 +554,7 @@ async function loadFollowups(){
   try{
     const resp=await authFetch('/api/activities/pending');
     const list=await resp.json();
-    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Não foi possível carregar. Tente de novo.</div></div>';return;}
     if(!list.length){
       if(summary)summary.textContent='';
       body.innerHTML=`<div class="panel"><div class="muted-box">
@@ -610,13 +609,13 @@ async function loadFollowups(){
     ].filter(Boolean).join('');
     if(summary)summary.textContent=late?`${late} tarefa(s) em atraso`:'Fila em dia';
     body.innerHTML=`<div class="panel">
-      <div class="fu-head">${tags}<span>O círculo conclui a tarefa e tira da fila; o nome da empresa abre a ficha.</span></div>
+      <div class="fu-head">${tags}</div>
       <div class="tbl-scroll"><table class="lead-tbl fu-tbl">
         <thead><tr><th></th><th>Tarefa</th><th>Empresa</th><th>Prazo</th><th></th></tr></thead>
         <tbody>${secao('Atrasadas',grupos.late,true)}${secao('Hoje',grupos.today,false)}${secao('Amanhã',grupos.tomorrow,false)}${secao('Próximos dias',grupos.later,false)}</tbody>
       </table></div>
     </div>`;
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Sem conexão. Tente de novo.</div></div>';}
 }
 
 async function completeActivity(id){
@@ -654,21 +653,21 @@ function atualizarContagemLote(){
   const input=document.getElementById('lote-input');
   if(!el||!input)return;
   const n=contarDominios(input.value);
-  el.textContent=n?`${n} domínio(s) reconhecido(s)`:'';
+  el.textContent=n?`${n} ${n===1?'domínio':'domínios'}`:'';
 }
 
 async function iniciarLote(){
   const input=document.getElementById('lote-input');
   const fb=document.getElementById('lote-feedback');
   const texto=(input.value||'').trim();
-  if(!texto){fb.className='set-feedback err';fb.textContent='Cole a lista ou escolha um arquivo.';return;}
+  if(!texto){fb.className='set-feedback err';fb.textContent='Cole os domínios ou envie um CSV.';return;}
 
   const btn=document.getElementById('lote-start');
-  btn.disabled=true;fb.className='set-feedback';fb.textContent='Enfileirando…';
+  btn.disabled=true;fb.className='set-feedback';fb.textContent='Criando o lote…';
   try{
     const resp=await authFetch('/api/batches',{method:'POST',body:JSON.stringify({text:texto})});
     const json=await resp.json();
-    if(!resp.ok){fb.className='set-feedback err';fb.textContent=json.detail||'Não foi possível criar o lote.';return;}
+    if(!resp.ok){fb.className='set-feedback err';fb.textContent=json.detail||'Não foi possível criar o lote. Tente de novo.';return;}
 
     _loteId=json.batch_id;
     fb.className='set-feedback ok';
@@ -677,7 +676,7 @@ async function iniciarLote(){
     renderProgressoLote(json.progresso||{total:json.total,concluidos:0,na_fila:json.total,rodando:0,com_erro:0,finalizado:false,itens:[]});
     processarLote();
   }catch(e){
-    if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}
+    if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Sem conexão. Tente de novo.';}
   }finally{btn.disabled=false;}
 }
 
@@ -708,7 +707,7 @@ function pararLote(){
 }
 
 const LOTE_RESULT_LABEL={
-  enriched:['Enriquecido','ok'],partial:['Parcial','warn'],cached:['Já tínhamos','ok'],
+  enriched:['Pronto','ok'],partial:['Incompleto','warn'],cached:['Já analisado','ok'],
   failed:['Sem dados','warn'],error:['Erro','err'],
 };
 
@@ -717,15 +716,15 @@ function renderProgressoLote(p){
   const pct=p.total?Math.round((p.concluidos/p.total)*100):0;
   document.getElementById('lote-bar').style.width=pct+'%';
   document.getElementById('lote-progress-title').textContent=
-    p.finalizado?'Lote concluído':`Processando — ${p.concluidos} de ${p.total}`;
+    p.finalizado?'Lote concluído':`Analisando ${p.concluidos} de ${p.total}`;
   document.getElementById('lote-progress-sub').textContent=
-    `${p.na_fila} na fila · ${p.com_erro} com erro`+(p.finalizado?' · nada mais pendente':'');
+    `${p.na_fila} na fila · ${p.com_erro} com erro`;
 
   const itens=document.getElementById('lote-items');
   itens.innerHTML=(p.itens||[]).map(item=>{
     const [rotulo,classe]=LOTE_RESULT_LABEL[item.result]||
       (item.status==='running'?['Analisando…','']:['Na fila','']);
-    const link=item.lead_id?`<button class="btn-link" onclick="loadLeadIntoView(${item.lead_id})">ver ficha →</button>`:'';
+    const link=item.lead_id?`<button class="btn-link" onclick="loadLeadIntoView(${item.lead_id})">Ver ficha →</button>`:'';
     return `<div class="lote-item">
       <span class="lote-item-dom">${esc(item.domain||'')}</span>
       <span class="lote-item-st ${classe}">${rotulo}</span>
@@ -745,10 +744,10 @@ async function carregarLotesRecentes(){
     if(!lotes.length){painel.style.display='none';return;}
     painel.style.display='block';
     alvo.innerHTML=lotes.map(l=>{
-      const retomar=l.finalizado?'':`<button class="btn-link" onclick="retomarLote('${l.batch_id}')">retomar →</button>`;
+      const retomar=l.finalizado?'':`<button class="btn-link" onclick="retomarLote('${l.batch_id}')">Retomar →</button>`;
       return `<div class="set-row">
-        <span class="set-lbl">${l.total} domínio(s) · ${l.concluidos} concluído(s)${l.com_erro?` · ${l.com_erro} com erro`:''}</span>
-        <span class="set-val">${l.finalizado?'finalizado':`${l.na_fila} na fila`} ${retomar}</span>
+        <span class="set-lbl">${l.concluidos} de ${l.total}${l.com_erro?` · ${l.com_erro} com erro`:''}</span>
+        <span class="set-val">${l.finalizado?'Concluído':`${l.na_fila} na fila`} ${retomar}</span>
       </div>`;
     }).join('');
   }catch(_){ }
@@ -782,23 +781,20 @@ async function loadDashboard(){
   try{
     const resp=await authFetch(`/api/dashboard/metrics?days=${_dashDays}`);
     const m=await resp.json();
-    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
-    document.getElementById('dash-period').textContent=
-      `Números dos últimos ${m.period_days} dias. O funil considera todos os leads da conta.`;
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Não foi possível carregar. Tente de novo.</div></div>';return;}
+    document.getElementById('dash-period').textContent=`Últimos ${m.period_days} dias`;
     if(!m.leads_pesquisados){
       body.innerHTML=`<div class="panel"><div class="muted-box">
-        Ainda não há dados neste período.<br/>
-        Analise uma empresa e registre a ligação: as taxas aparecem aqui.<br/>
-        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar meu primeiro domínio</a>
+        Sem dados neste período.
+        <a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar empresa</a>
       </div></div>`;
       return;
     }
     const pct=v=>Math.round(v*100)+'%';
-    // Cada número explica o que mede — o vendedor não precisa adivinhar a conta.
-    const kpi=(val,lbl,desc,warn)=>`<div class="kpi${warn?' warn':''}">
+    // O que cada número mede fica no tooltip: na tela, só o valor e o nome.
+    const kpi=(val,lbl,desc,warn)=>`<div class="kpi${warn?' warn':''}" title="${esc(desc)}">
       <span class="kpi-val">${val}</span>
       <span class="kpi-lbl">${lbl}</span>
-      <span class="kpi-desc">${desc}</span>
     </div>`;
     const funilMax=Math.max(1,...STAGE_ORDER.map(s=>m.funil_por_estagio[s]||0));
     const funil=STAGE_ORDER.map(s=>{
@@ -807,38 +803,37 @@ async function loadDashboard(){
     }).join('');
 
     const dicas=[];
-    if(m.followups_atrasados)dicas.push(`<b>${m.followups_atrasados} follow-up(s) atrasado(s).</b> Comece por eles — <a class="btn-link" href="#followups">abrir a fila</a>.`);
-    if(!m.ligacoes_realizadas)dicas.push('Nenhuma ligação registrada no período. Registre o resultado na ficha do lead para as taxas passarem a fazer sentido.');
-    if(m.ligacoes_realizadas&&m.taxa_contato<0.2)dicas.push('Taxa de contato abaixo de 20%: vale testar outro horário de ligação ou buscar um cargo diferente na empresa.');
-    if((m.funil_por_estagio.novo||0)>5)dicas.push(`<b>${m.funil_por_estagio.novo} leads parados em "Novo".</b> Eles ainda não receberam nenhuma tentativa de contato.`);
-    if(!dicas.length)dicas.push('Nada travado por aqui: follow-ups em dia e leads circulando no funil.');
+    const atr=m.followups_atrasados;
+    if(atr)dicas.push(`<b>${atr} ${atr===1?'tarefa atrasada':'tarefas atrasadas'}.</b> <a class="btn-link" href="#followups">Ver tarefas</a>`);
+    if(!m.ligacoes_realizadas)dicas.push('Nenhuma ligação registrada. Registre na ficha do lead.');
+    if(m.ligacoes_realizadas&&m.taxa_contato<0.2)dicas.push('Poucos atendimentos. Tente outro horário ou outro cargo.');
+    if((m.funil_por_estagio.novo||0)>5)dicas.push(`<b>${m.funil_por_estagio.novo} leads em "Novo"</b> ainda sem contato.`);
+    if(!dicas.length)dicas.push('Tudo em dia.');
 
     body.innerHTML=`
       <div id="dash-tiers"></div>
       <div class="kpi-grid">
-        ${kpi(m.leads_pesquisados,'Leads pesquisados','Empresas analisadas no período')}
-        ${kpi(m.ligacoes_realizadas,'Ligações registradas','Tentativas anotadas na ficha do lead')}
+        ${kpi(m.leads_pesquisados,'Leads analisados','Empresas analisadas no período')}
+        ${kpi(m.ligacoes_realizadas,'Ligações','Tentativas registradas na ficha do lead')}
         ${kpi(pct(m.taxa_contato),'Taxa de contato','Ligações em que você falou com alguém')}
         ${kpi(pct(m.taxa_reuniao),'Taxa de reunião','Ligações que terminaram em reunião marcada')}
-        ${kpi(pct(m.conversao_oportunidade),'Conversão em oportunidade','Leads que chegaram a oportunidade ou ganho')}
-        ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} atrasados)</small>`:''),'Follow-ups pendentes','Tarefas em aberto na sua fila',m.followups_atrasados>0)}
+        ${kpi(pct(m.conversao_oportunidade),'Viraram oportunidade','Leads que chegaram a oportunidade ou ganho')}
+        ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} atrasados)</small>`:''),'Tarefas abertas','Tarefas em aberto na sua fila',m.followups_atrasados>0)}
       </div>
       <div class="dash-cols">
         <div class="panel panel-pad">
           <div class="dash-sec-title">Funil por estágio</div>
-          <div class="dash-sec-sub">Quantos leads estão parados em cada etapa da negociação.</div>
           <div class="funnel">${funil}</div>
         </div>
         <div class="panel panel-pad">
           <div class="dash-sec-title">O que fazer agora</div>
-          <div class="dash-sec-sub">Leitura automática dos números acima.</div>
           <div class="next-list">
             ${dicas.map(d=>`<div class="next-item"><span class="next-dot"></span><span>${d}</span></div>`).join('')}
           </div>
         </div>
       </div>`;
     loadDashTiers();
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Sem conexão. Tente de novo.</div></div>';}
 }
 
 /* ══════ VIEW: PIPELINE (KANBAN) ══════ */
@@ -858,7 +853,7 @@ async function loadPipeline(){
   try{
     const resp=await authFetch('/api/leads?per_page=100');
     const leads=await resp.json();
-    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Erro ao carregar.</div></div>';return;}
+    if(!resp.ok){body.innerHTML='<div class="panel"><div class="muted-box">Não foi possível carregar. Tente de novo.</div></div>';return;}
     if(!leads.length){
       body.innerHTML=`<div class="panel"><div class="muted-box">
         Nenhum lead no pipeline ainda.<br/>
@@ -907,7 +902,7 @@ async function loadPipeline(){
       c.addEventListener('dragend',()=>{c.classList.remove('dragging');document.querySelectorAll('.kb-col.drag-over').forEach(k=>k.classList.remove('drag-over'));});
     });
     filterPipeline(_plBusca);
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Sem conexão. Tente de novo.</div></div>';}
 }
 
 const KB_IC={
@@ -973,13 +968,13 @@ async function genAiSummary(force){
   if(!currentLeadId)return;
   const box=document.getElementById('ai-box');
   box.style.display='block';
-  box.innerHTML='<div class="ai-loading">Gerando resumo com IA…</div>';
+  box.innerHTML='<div class="ai-loading">Gerando resumo…</div>';
   try{
     const resp=await authFetch(`/api/leads/${currentLeadId}/ai-summary${force?'?force=true':''}`,{method:'POST'});
     const json=await resp.json();
-    if(!resp.ok){box.innerHTML=`<div class="ai-loading">${esc(json.detail||'Erro ao gerar resumo.')}</div>`;return;}
-    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo ${json.cached?'<small>(cacheado)</small>':''} <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(json.summary).replace(/\n/g,'<br/>')}</div>`;
-  }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="ai-loading">Erro de conexão.</div>';}
+    if(!resp.ok){box.innerHTML=`<div class="ai-loading">${esc(json.detail||'Não foi possível gerar o resumo. Tente de novo.')}</div>`;return;}
+    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo <a href="#" onclick="genAiSummary(true);return false">Gerar de novo</a></div><div class="ai-text">${esc(json.summary).replace(/\n/g,'<br/>')}</div>`;
+  }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="ai-loading">Sem conexão. Tente de novo.</div>';}
 }
 
 async function pushToCrm(){
@@ -989,9 +984,9 @@ async function pushToCrm(){
   try{
     const resp=await authFetch(`/api/leads/${currentLeadId}/push`,{method:'POST'});
     const json=await resp.json();
-    fb.textContent=resp.ok?'✓ Lead enviado ao CRM com sucesso.':(json.detail||'Falha no envio ao CRM.');
+    fb.textContent=resp.ok?'✓ Enviado ao CRM.':(json.detail||'Não foi possível enviar ao CRM.');
     if(resp.ok)loadTimeline();
-  }catch(e){if(e.message!=='not_authenticated')fb.textContent='Erro de conexão.';}
+  }catch(e){if(e.message!=='not_authenticated')fb.textContent='Sem conexão. Tente de novo.';}
 }
 
 /* ══════ TIMELINE ══════ */
@@ -1050,7 +1045,7 @@ async function addLeadNote(){
     if(!resp.ok){const j=await resp.json().catch(()=>({}));fb.textContent=j.detail||'Não foi possível salvar a nota.';return;}
     ta.value='';fb.textContent='Nota salva.';
     loadTimeline();
-  }catch(e){if(e.message!=='not_authenticated')fb.textContent='Erro de conexão.';}
+  }catch(e){if(e.message!=='not_authenticated')fb.textContent='Sem conexão. Tente de novo.';}
   finally{btn.disabled=false;}
 }
 
@@ -1088,7 +1083,7 @@ function blockNoteHtml(data){
   const site=data.website||('https://'+(data.domain||''));
   return `<div class="block-note">
     <span aria-hidden="true">⚠</span>
-    <span><b>Coleta parcial:</b> ${esc(txt)}. Os campos vazios abaixo não significam que a empresa não tem esses dados — significam que não conseguimos lê-los. <a href="${esc(site)}" target="_blank" rel="noopener">Abrir o site</a> para conferir à mão. DNS, MX e LinkedIn não dependem do site e seguem válidos.</span>
+    <span><b>Dados incompletos:</b> ${esc(txt)}. Campo vazio aqui não quer dizer que a informação não existe. <a href="${esc(site)}" target="_blank" rel="noopener">Abrir o site</a></span>
   </div>`;
 }
 
@@ -1102,7 +1097,7 @@ function renderResult(data){
   const recent=document.getElementById('recent-block');
   if(recent)recent.style.display='none';
   const root=document.getElementById('results-section');root.innerHTML='';
-  const smap={enriched:['Enriquecido','enriched'],partial:['Parcial','partial'],failed:['Falhou','failed']};
+  const smap={enriched:['Pronto','enriched'],partial:['Incompleto','partial'],failed:['Sem dados','failed']};
   const[sl,sc]=smap[data.status]||['—','partial'];
   const init=(data.company_name||data.domain||'?').trim()[0].toUpperCase();
   const fav=data.domain?`https://www.google.com/s2/favicons?domain=${data.domain}&sz=64`:'';
@@ -1129,12 +1124,12 @@ function renderResult(data){
     // Estágio primeiro, como no detalhe do CRM de referência; muda pelo Pipeline.
     `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.stage}Estágio</span><span class="data-val"><span class="stage-chip" data-stage="${esc(stage)}">${esc(STAGE_LABELS[stage]||stage)}</span></span></div>`,
     cell('Site',ws,{ic:IC.globe,isLink:true,disp:ws,delay:d+=50}),
-    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.li}LinkedIn</span>${data.linkedin_url?`<a class="data-val link" href="${data.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(data.linkedin_confidence)}`:`<a class="data-val link" href="https://www.google.com/search?q=${encodeURIComponent('site:linkedin.com/company "'+(data.company_name||data.domain||'')+'"')}" target="_blank" rel="noopener">Buscar no Google →</a>`}</div>`,
+    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.li}LinkedIn</span>${data.linkedin_url?`<a class="data-val link" href="${data.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(data.linkedin_confidence)}`:`<a class="data-val link" href="https://www.google.com/search?q=${encodeURIComponent('site:linkedin.com/company "'+(data.company_name||data.domain||'')+'"')}" target="_blank" rel="noopener">Procurar no Google →</a>`}</div>`,
     // A ficha mostra o servidor MX como ele é publicado no DNS. O nome
     // comercial do provedor e o resto da infraestrutura ficam no relatório
     // completo, logo abaixo.
-    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.mail}Domínio MX</span>${_mxCell?`<span class="data-val mono">${esc(_mxCell.host)}</span>${_mxCell.count>1?`<span class="data-sub">+${_mxCell.count-1} servidor(es) de reserva</span>`:''}`:'<span class="data-val muted">—</span>'}</div>`,
-    cell('Pessoas associadas',emp,{ic:IC.users,delay:d+=50}),
+    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl" title="Registro MX publicado no DNS do domínio">${IC.mail}Servidor de e-mail</span>${_mxCell?`<span class="data-val mono">${esc(_mxCell.host)}</span>${_mxCell.count>1?`<span class="data-sub">+${_mxCell.count-1} de reserva</span>`:''}`:'<span class="data-val muted">—</span>'}</div>`,
+    cell('Funcionários',emp,{ic:IC.users,delay:d+=50}),
     cell('Localização',data.location,{ic:IC.pin,delay:d+=50}),
     cell('Setor',data.sector,{ic:IC.tag,delay:d+=50}),
   ];
@@ -1152,9 +1147,9 @@ function renderResult(data){
     </div>
     <div class="lead-actions" id="lead-actions"></div>
     <section class="np-section" id="np-section" aria-label="Próximo passo">
-      <div class="np-empty">Carregando o próximo passo…</div>
+      <div class="np-empty">Carregando…</div>
     </section>
-    <div class="sec-head"><span class="sec-num">1</span><h4>Ficha da empresa</h4><span>Dados públicos coletados a partir do domínio</span></div>
+    <div class="sec-head"><span class="sec-num">1</span><h4>Empresa</h4></div>
     ${blockNoteHtml(data)}
     <div class="result-grid">${cards.join('')}</div>
     ${dns}
@@ -1162,28 +1157,27 @@ function renderResult(data){
       <div class="mc-head">
         <div>
           <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>Contatos do decisor</div>
-          <div class="dec-sub">Quem você já conhece nesta empresa. O contato <strong>principal</strong> é quem a Agenda usa para montar a ligação, o WhatsApp e o e-mail.</div>
+          <div class="dec-sub">O contato <strong>principal</strong> é quem a Agenda chama.</div>
         </div>
         <button type="button" class="set-btn primary mc-add" id="mc-add" onclick="mcNovo()">+ Adicionar contato</button>
       </div>
-      <div id="mc-list" class="mc-list"><div class="np-empty">Carregando contatos…</div></div>
+      <div id="mc-list" class="mc-list"><div class="np-empty">Carregando…</div></div>
     </div>
     <div class="dec-section">
-      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Contatos populares da empresa</div>
+      <div class="dec-title"><span class="dec-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11l-3-3m0 0l-3 3m3-3v12"/></svg></span>Outros contatos da empresa</div>
       <div id="decisores-list" class="dec-list">
         <div class="empty-state-box">
           <div class="empty-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></div>
-          <div class="empty-title">Buscando contatos da empresa…</div>
-          <div class="empty-sub">Os cargos mais comuns (CEO, CTO, CFO, diretoria) sao carregados automaticamente.</div>
+          <div class="empty-title">Buscando contatos…</div>
         </div>
       </div>
     </div>
     <!-- Registro avulso (anterior à cadência): fica recolhido. O caminho
          principal é o painel "Próximo passo", no topo da ficha. -->
     <details class="call-legacy" id="call-legacy">
-    <summary>Registrar uma ligação avulsa, fora da cadência</summary>
+    <summary>Registrar ligação fora da cadência</summary>
     <div class="call-section">
-      <div class="dec-sub">Clique no que aconteceu. <strong>Não atendeu</strong>, <strong>Ocupado</strong> e <strong>Caixa postal</strong> criam sozinhos um follow-up para daqui a 2 dias; <strong>Conversou</strong> move o lead para "Contatado"; <strong>Reunião agendada</strong> pede a data e gera o convite .ics.</div>
+      <div class="dec-sub">Clique no que aconteceu. Sem resposta, criamos uma tarefa de retorno.</div>
       <div class="call-row">
         <button class="call-btn" onclick="logCall('no_answer')" title="Cria um follow-up para daqui a 2 dias">Não atendeu</button>
         <button class="call-btn" onclick="logCall('busy')" title="Cria um follow-up para daqui a 2 dias">Ocupado</button>
@@ -1215,7 +1209,7 @@ function renderResult(data){
   if(data.ai_summary){
     const box=document.getElementById('ai-box');
     box.style.display='block';
-    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo executivo <small>(cacheado)</small> <a href="#" onclick="genAiSummary(true);return false">regenerar</a></div><div class="ai-text">${esc(data.ai_summary).replace(/\n/g,'<br/>')}</div>`;
+    box.innerHTML=`<div class="ai-title">${IC_SPARK} Resumo <a href="#" onclick="genAiSummary(true);return false">Gerar de novo</a></div><div class="ai-text">${esc(data.ai_summary).replace(/\n/g,'<br/>')}</div>`;
   }
   // Os contatos chegam sozinhos (loadPopularContacts): nao ha mais campo de
   // cargo na ficha, entao nao ha listener de teclado para prender aqui.
@@ -1252,7 +1246,7 @@ async function loadChat(){
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
         </button>
       </div>
-      <div class="chat-foot" id="chat-foot">Enter envia · Shift+Enter quebra a linha · a IA pode errar: confira na ficha antes de agir.</div>
+      <div class="chat-foot" id="chat-foot">A IA pode errar. Confira na ficha antes de agir.</div>
     </div>`;
     _chatRender();
   }
@@ -1277,7 +1271,7 @@ function _chatRender(){
   if(!_chat.hist.length){
     log.innerHTML=`<div class="chat-empty">
       <div class="chat-empty-title">Pergunte sobre o seu pipeline</div>
-      <div class="chat-empty-sub">A IA vê seus leads, estágios, tiers e tarefas. Telefones e e-mails não são enviados a ela.</div>
+      <div class="chat-empty-sub">Telefones e e-mails não são enviados à IA.</div>
       <div class="chat-sugs">${CHAT_SUGESTOES.map((s,i)=>`<button type="button" class="chat-sug" onclick="chatSugestao(${i})">${esc(s)}</button>`).join('')}</div>
     </div>`;
     return;
@@ -1354,7 +1348,7 @@ async function chatAplicar(mi,pi){
     }
   }catch(e){
     p.estado=e.message==='not_authenticated'?'pendente':'erro';
-    if(p.estado==='erro')p.erro='Erro de conexão.';
+    if(p.estado==='erro')p.erro='Sem conexão. Tente de novo.';
   }
   _chatRender();
 }
@@ -1476,18 +1470,18 @@ async function chatEnviar(){
     const j=await resp.json().catch(()=>({}));
     if(resp.ok){
       const aviso=j.total_leads>j.leads_no_contexto
-        ?`A IA viu os ${j.leads_no_contexto} leads mais recentes de ${j.total_leads}. Cite com @ os que não estiverem entre eles.`:'';
+        ?`A IA viu os ${j.leads_no_contexto} mais recentes de ${j.total_leads} leads. Use @ para os outros.`:'';
       msg={role:'assistant',content:j.resposta||'',leads:j.leads||[],aviso,
         propostas:(j.propostas||[]).map(p=>({...p,estado:'pendente'}))};
     }else{
-      const motivo=resp.status===503?'A IA não está configurada neste servidor (falta a GROQ_API_KEY).'
-        :resp.status===429?'Muitas perguntas seguidas. Espere um minuto e tente de novo.'
+      const motivo=resp.status===503?'IA desligada neste servidor.'
+        :resp.status===429?'Muitas perguntas seguidas. Espere um minuto.'
         :(typeof j.detail==='string'?j.detail:'Não foi possível responder agora.');
       msg={role:'assistant',content:motivo,fora:true};
     }
   }catch(e){
     if(e.message==='not_authenticated'){_chat.hist.pop();}
-    else msg={role:'assistant',content:'Erro de conexão. Tente de novo.',fora:true};
+    else msg={role:'assistant',content:'Sem conexão. Tente de novo.',fora:true};
   }
   _chat.enviando=false;
   document.getElementById('chat-send').disabled=false;
@@ -1563,10 +1557,9 @@ function avisoHorarioHtml(st){
   const j=janelaWa();
   if(!j||j.pode_enviar)return '';
   return `<div class="cv-warn">
-      <strong>${j.indeterminado?'Horário indeterminado no servidor.':'Fora do horário de envio.'}</strong>
+      <strong>${j.indeterminado?'Horário indefinido no servidor.':'Fora do horário de envio.'}</strong>
       ${esc(j.explicacao)}
-      Responder à mão nas conversas abertas continua liberado — esta trava vale
-      para o convite pago e para a resposta automática.
+      Você ainda pode responder à mão.
     </div>`;
 }
 
@@ -1578,10 +1571,10 @@ function renderConversas(){
   // Serviço não configurado: a tela continua existindo e diz o que falta. Some
   // da tela é o que impede alguém de descobrir que a função existe.
   const aviso=st.configurado?'':`<div class="cv-warn">
-      <strong>WhatsApp ainda não está ligado neste servidor.</strong>
-      As conversas abaixo continuam visíveis, mas nada é enviado enquanto faltar:
+      <strong>WhatsApp desligado neste servidor.</strong>
+      Nada é enviado até configurar:
       <span class="cv-vars">${(st.faltando||[]).map(v=>`<code>${esc(v)}</code>`).join(' ')}</span>
-      ${st.webhook_assinado?'':'<br/>Falta também <code>WHATSAPP_APP_SECRET</code> — sem ele o recebimento é recusado.'}
+      ${st.webhook_assinado?'':' <code>WHATSAPP_APP_SECRET</code>'}
     </div>`;
 
   // Caixa fixa: fica no HTML mesmo vazia, para o recarregamento de 15 s poder
@@ -1668,11 +1661,9 @@ function listaConversas(){
   const visiveis=conversasVisiveis();
   if(!visiveis.length){
     if(!_conversas.length&&_cvFiltro==='todas'&&!_cvBusca){
-      return `<div class="cv-nada">Nenhuma conversa real ainda.<br/>
-        Abra a ficha de um lead e clique em <strong>Iniciar contato por WhatsApp</strong>.
-        O primeiro convite parte de você; a partir da resposta do lead, a
-        automação assume dentro das regras.<br/><br/>
-        Para testar a IA sem gastar um convite, use a conversa de teste, fixa acima.</div>`;
+      return `<div class="cv-nada">Nenhuma conversa ainda.<br/>
+        Na ficha de um lead, clique em <strong>Chamar no WhatsApp</strong>.
+        Para testar sem gastar, use a conversa de teste acima.</div>`;
     }
     return `<div class="cv-nada">${_cvBusca||_cvFiltro!=='todas'
       ? 'Nenhuma conversa com esse filtro.'
@@ -1747,8 +1738,7 @@ function faixaMetricas(){
       ${bloco(m.pediram_para_parar,'Pediram para parar','Número bloqueado permanentemente')}
     </div>
     ${motivos?`<div class="cv-motivos"><span>Por que passaram para você:</span><ul>${motivos}</ul></div>`:''}
-    <div class="cv-metrics-sub">Últimos ${m.dias} dias. Não mostramos custo em reais: o preço do
-      template muda por país e categoria — multiplique os convites pela tabela atual da Meta.</div>
+    <div class="cv-metrics-sub" title="O preço do convite muda por país e categoria: use a tabela atual da Meta">Últimos ${m.dias} dias.</div>
   </div>`;
 }
 
@@ -1756,8 +1746,6 @@ function painelVazio(){
   return `<div class="cv-empty">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
     <strong>Escolha uma conversa</strong>
-    <span>Clique num contato à esquerda para ler as mensagens, ver quem está
-    respondendo e assumir quando quiser.</span>
   </div>`;
 }
 
@@ -1842,7 +1830,7 @@ async function abrirConversa(id,silencioso){
     const resp=await authFetch(`/api/wa/conversations/${id}`);
     if(!resp.ok){painel.innerHTML='<div class="muted-box">Conversa não encontrada.</div>';return;}
     renderPainelConversa(await resp.json());
-  }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
+  }catch(_){painel.innerHTML='<div class="muted-box">Sem conexão. Tente de novo.</div>';}
 }
 
 /* A conversa de teste não tem um id de servidor para consultar — a sessão do
@@ -1859,7 +1847,7 @@ async function abrirConversaTeste(silencioso){
         authFetch('/api/wa/sandbox').then(r=>r.ok?r.json():null),
       ]);
       _simStatus=st;_simSessao=sess||{empresa:'',mensagens:[],turnos:[]};
-    }catch(_){painel.innerHTML='<div class="muted-box">Erro de conexão.</div>';return;}
+    }catch(_){painel.innerHTML='<div class="muted-box">Sem conexão. Tente de novo.</div>';return;}
   }
   renderPainelConversa({teste:true});
 }
@@ -1966,12 +1954,11 @@ function renderPainelConversa(det){
            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z"/></svg>
          </button>
        </div>
-       <div class="cv-reply-sub" id="cv-msg">Enter envia, Shift+Enter quebra a linha.
-         Responder aqui assume a conversa: a automação para de responder por você.</div>`
+       <div class="cv-reply-sub" id="cv-msg">Ao responder, você assume a conversa e a IA para.</div>`
     : `<div class="cv-reply off">
          ${c.janela_aberta
-           ? 'WhatsApp não está configurado neste servidor, então nada pode ser enviado por aqui.'
-           : 'A janela de 24 horas fechou. Dentro dela a resposta é livre e gratuita; fora dela, só um novo convite (cobrado pela Meta) reabre a conversa.'}
+           ? 'WhatsApp desligado neste servidor.'
+           : 'Passaram 24 h sem resposta do lead. Só um novo convite (pago) reabre a conversa.'}
        </div>`;
 
   painel.innerHTML=`
@@ -1992,7 +1979,7 @@ function renderPainelConversa(det){
       <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(mensagens,{
         // Sem lead, "Lead" seria rotular de prospect um fornecedor ou cliente.
         quemEscreve:c.lead_id==null?(c.contato||'Contato'):'Lead',
-        vazio:c.lead_id==null?'Nenhuma mensagem ainda.':'Nenhuma mensagem trocada ainda.<br/>O convite foi enviado — a conversa começa quando o lead responder.'})}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
+        vazio:c.lead_id==null?'Nenhuma mensagem ainda.':'Convite enviado. Aguardando o lead responder.'})}${digitandoHtml(c,mensagens[mensagens.length-1])}</div>
       ${caixa}
     </div>
     <aside class="cv-panel-aside cv-ficha">${fichaHtml(c,det)}</aside>`;
@@ -2177,12 +2164,12 @@ function botoesConversa(c){
   if(c.lead_id==null){
     // Sem lead não há automação: nem "assumir" (já é sua) nem "devolver para
     // a IA" (o portão recusaria). Vincular a um lead fica na coluna da ficha.
-    return c.ai_status!=='STOPPED'?b('encerrar','Encerrar','Fecha a conversa: nada mais é enviado'):'';
+    return c.ai_status!=='STOPPED'?b('encerrar','Encerrar','Nada mais é enviado'):'';
   }
-  const botoes=[b('assumir','Assumir agora','A automação cala na hora e quem responde passa a ser você','destaque')];
-  if(c.ai_status==='AI_ACTIVE')botoes.push(b('pausar','Pausar IA','Ninguém responde até você retomar ou assumir'));
-  else if(c.ai_status!=='STOPPED')botoes.push(b('retomar','Devolver para a IA','A automação volta a responder, dentro das regras'));
-  if(c.ai_status!=='STOPPED')botoes.push(b('encerrar','Encerrar','Fecha a conversa: nada mais é enviado'));
+  const botoes=[b('assumir','Assumir','A IA para e você responde','destaque')];
+  if(c.ai_status==='AI_ACTIVE')botoes.push(b('pausar','Pausar IA','Ninguém responde até você retomar'));
+  else if(c.ai_status!=='STOPPED')botoes.push(b('retomar','Devolver à IA','A IA volta a responder'));
+  if(c.ai_status!=='STOPPED')botoes.push(b('encerrar','Encerrar','Nada mais é enviado'));
   return botoes.join('');
 }
 
@@ -2208,12 +2195,11 @@ function vinculoHtml(c){
           <span>${esc(l.company_name||l.domain||'Lead #'+l.id)}</span>
           ${l.mesmo_telefone?'<span class="cv-vinculo-tag">mesmo telefone</span>':''}
         </button>`).join('')
-      :`<div class="cv-vinculo-nada">${_vinculo.q?'Nenhum lead com esse nome.':'Nenhum lead com este telefone. Busque pelo nome da empresa.'}</div>`);
+      :`<div class="cv-vinculo-nada">${_vinculo.q?'Nenhum lead com esse nome.':'Nenhum lead com este telefone. Busque pela empresa.'}</div>`);
   return `<div class="cv-ficha-sec cv-vinculo">
       <div class="cv-ficha-sec-tit">Vincular a um lead</div>
-      <p class="cv-vinculo-desc">Esta conversa veio do seu WhatsApp e não é de nenhum lead.
-        Se for, vincule — a automação continua desligada até você devolvê-la para a IA.</p>
-      <input id="cv-vinculo-q" class="cv-vinculo-q" placeholder="Buscar empresa ou domínio"
+      <p class="cv-vinculo-desc">Esta conversa ainda não é de nenhum lead.</p>
+      <input id="cv-vinculo-q" class="cv-vinculo-q" placeholder="Buscar empresa"
              autocomplete="off" value="${esc(_vinculo.q)}"
              oninput="digitarBuscaVinculo(${c.id},this.value)" aria-label="Buscar lead para vincular"/>
       <div class="cv-vinculo-lista" id="cv-vinculo-lista">${lista}</div>
@@ -2252,17 +2238,17 @@ async function vincularLead(id,leadId){
     _vinculo={conversa:null,q:'',itens:null,carregando:false};
     await loadConversas();
     abrirConversa(id,true);
-  }catch(_){alert('Erro de conexão.');}
+  }catch(_){alert('Sem conexão. Tente de novo.');}
 }
 
 async function acaoConversa(id,acao){
-  if(acao==='encerrar'&&!confirm('Encerrar esta conversa? Nada mais será enviado por aqui.'))return;
+  if(acao==='encerrar'&&!confirm('Encerrar esta conversa? Nada mais será enviado.'))return;
   try{
     const resp=await authFetch(`/api/wa/conversations/${id}`,{method:'PATCH',body:JSON.stringify({acao})});
     if(!resp.ok){alert((await resp.json()).detail||'Não foi possível concluir.');return;}
     await loadConversas();
     abrirConversa(id,true);
-  }catch(_){alert('Erro de conexão.');}
+  }catch(_){alert('Sem conexão. Tente de novo.');}
 }
 
 async function enviarResposta(id){
@@ -2288,7 +2274,7 @@ async function enviarResposta(id){
     loadConversas();
   }catch(_){
     campo.value=texto;autoCrescer(campo);
-    msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão. A mensagem não foi enviada.';
+    msg.className='cv-reply-sub sub-err';msg.textContent='Sem conexão. A mensagem não foi enviada.';
   }
 }
 
@@ -2332,9 +2318,8 @@ function _renderPainelTeste(painel,rascunho,colado,emojisAbertos){
   const tom=st.ia_configurada?'ativa':'pausada';
 
   const aviso=st.ia_configurada?'':`<div class="cv-warn">
-    <strong>A IA não está configurada neste servidor.</strong>
-    Toda mensagem enviada aqui vai cair em "chamou você", que é o
-    comportamento correto quando não há como classificar.
+    <strong>IA desligada neste servidor.</strong>
+    Toda mensagem vai cair em "chamou você".
     <span class="cv-vars"><code>GROQ_API_KEY</code></span></div>`;
 
   const horario=st.pode_enviar_agora
@@ -2362,15 +2347,14 @@ function _renderPainelTeste(painel,rascunho,colado,emojisAbertos){
           : '<span class="sim-chip off">IA desligada</span>'}
       </div>
       ${aviso}
-      <div class="cv-explica">Você escreve como o <strong>lead</strong>; quem responde é a IA. Nada é enviado
-        para a Meta e nenhum lead real é tocado. ${horario}</div>
+      <div class="cv-explica">Você escreve como o <strong>lead</strong> e a IA responde. Nada é enviado. ${horario}</div>
       <div class="cv-acoes">
         <button type="button" class="cv-btn destaque" onclick="reiniciarConversaTeste()"
                 title="Apaga a conversa de teste e começa outra">Recomeçar</button>
       </div>
-      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(s.mensagens,{teste:true,vazio:'Escreva a primeira mensagem como se fosse o lead.<br/>A IA vai classificar e decidir se responde ou se passa a conversa para você.'})}</div>
+      <div class="cv-msgs" id="cv-msgs">${bolhasDeMensagens(s.mensagens,{teste:true,vazio:'Escreva como se fosse o lead.'})}</div>
       <div class="sim-sug">
-        <span class="sim-sug-lbl">Mensagens de teste — uma por intenção que a IA sabe classificar (role para ver todas):</span>
+        <span class="sim-sug-lbl">Exemplos:</span>
         <div class="sim-sug-row">
           ${_SIM_SUGESTOES.map((x,i)=>`<button type="button" onclick="usarSugestao(${i})"
             title="Deveria ser classificada como ${x.esperado}">${esc(x.txt)}</button>`).join('')}
@@ -2390,13 +2374,12 @@ function _renderPainelTeste(painel,rascunho,colado,emojisAbertos){
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10.2 15 12 3.4 13.8z"/></svg>
         </button>
       </div>
-      <div class="cv-reply-sub" id="cv-msg">Enter envia. O que a IA entendeu aparece ao lado.</div>
+      <div class="cv-reply-sub" id="cv-msg">A leitura da IA aparece ao lado.</div>
     </div>
     <aside class="cv-panel-aside sim-xray">
       <div class="sim-xray-head">
         <strong>O que a IA entendeu</strong>
-        <span>Um bloco por mensagem sua, do mais recente para o mais antigo.
-        A regra que transforma a intenção em ação é a mesma da produção.</span>
+        <span>Mais recente primeiro. Mesmas regras da produção.</span>
       </div>
       <div class="sim-xray-body" id="cv-aside-body">${raioX(s.turnos)}</div>
     </aside>`;
@@ -2416,8 +2399,7 @@ function _renderPainelTeste(painel,rascunho,colado,emojisAbertos){
 
 function raioX(turnos){
   if(!turnos||!turnos.length){
-    return `<div class="sim-xray-vazio">Ainda não há turno para mostrar.<br/>
-      Mande uma mensagem ao lado.</div>`;
+    return `<div class="sim-xray-vazio">Mande uma mensagem ao lado.</div>`;
   }
   return turnos.slice().reverse().map((t,i)=>blocoTurno(t,i===0)).join('');
 }
@@ -2436,8 +2418,8 @@ function blocoTurno(t,atual){
            title="Corte de ${Math.round(corte*100)}%"></div>
     </div>
     <div class="sim-conf-nota">${t.confiavel
-      ? `Acima do corte de ${Math.round(corte*100)}% — a classificação vale.`
-      : `Abaixo do corte de ${Math.round(corte*100)}% — a leitura é descartada e a conversa passa para você.`}</div>
+      ? `Acima de ${Math.round(corte*100)}%: vale.`
+      : `Abaixo de ${Math.round(corte*100)}%: a conversa passa para você.`}</div>
   </div>`:'';
 
   return `<div class="sim-turno${atual?' atual':''}">
@@ -2513,7 +2495,7 @@ async function enviarMensagemTeste(){
       if(slot)slot.innerHTML=cardConversaTeste();
     }
   }catch(_){
-    if(msg){msg.className='cv-reply-sub sub-err';msg.textContent='Erro de conexão com a conversa de teste.';}
+    if(msg){msg.className='cv-reply-sub sub-err';msg.textContent='Sem conexão. Tente de novo.';}
     campo.value=texto;autoCrescer(campo);
   }finally{
     _simOcupado=false;
@@ -2527,12 +2509,12 @@ async function enviarMensagemTeste(){
 /* A frase embaixo da caixa: o que teria acontecido de verdade. */
 function _resumoDoTurno(t){
   if(t.acao==='respondeu')
-    return `A IA respondeu sozinha. Em produção esta mensagem teria saído para o lead.`;
+    return `A IA respondeu. Em produção, isto iria para o lead.`;
   if(t.acao==='encerrou')
-    return `A conversa seria <strong>encerrada</strong> e nada mais sairia por ela.`;
+    return `A conversa seria <strong>encerrada</strong>.`;
   if(t.acao==='nao_enviou')
     return `Nada seria enviado agora.`;
-  return `A automação <strong>passaria a conversa para você</strong> — ela não responde nestes casos.`;
+  return `A conversa <strong>passaria para você</strong>.`;
 }
 
 async function reiniciarConversaTeste(){
@@ -2545,7 +2527,7 @@ async function reiniciarConversaTeste(){
     renderPainelConversa({teste:true});
     const slot=document.getElementById('cv-teste-slot');
     if(slot)slot.innerHTML=cardConversaTeste();
-  }catch(_){alert('Erro de conexão.');}
+  }catch(_){alert('Sem conexão. Tente de novo.');}
 }
 
 /* ══════ INICIAR CONTATO A PARTIR DA FICHA ══════
@@ -2563,15 +2545,15 @@ function renderLeadActions(data){
   // estado apagado, dizendo o que falta — some não ensina nada.
   const integ=_integr||{};
   alvo.innerHTML=[
-    '<span class="la-lbl">Ações do lead</span>',
+    '<span class="la-lbl">Ações</span>',
     integ.ai
-      ? `<button class="la-btn" onclick="genAiSummary()" title="Gera um resumo executivo desta empresa com IA">${IC_SPARK} Resumo com IA</button>`
-      : `<span class="la-btn off" title="Disponível quando a chave de IA está configurada no servidor">${IC_SPARK} Resumo com IA</span>`,
+      ? `<button class="la-btn" onclick="genAiSummary()" title="Resumo da empresa e ganchos de abordagem">${IC_SPARK} Resumo com IA</button>`
+      : `<span class="la-btn off" title="IA não configurada neste servidor">${IC_SPARK} Resumo com IA</span>`,
     integ.crm_webhook
-      ? `<button class="la-btn accent" onclick="pushToCrm()" title="Envia este lead ao webhook configurado em Configurações">${IC_PUSH} Enviar ao CRM</button>`
-      : `<span class="la-btn off" onclick="nav('settings')" title="Configure um webhook em Configurações para habilitar" style="cursor:pointer">${IC_PUSH} Enviar ao CRM · configurar</span>`,
+      ? `<button class="la-btn accent" onclick="pushToCrm()" title="Envia para o CRM conectado em Configurações">${IC_PUSH} Enviar ao CRM</button>`
+      : `<span class="la-btn off" onclick="nav('settings')" title="Conecte seu CRM em Configurações" style="cursor:pointer">${IC_PUSH} Conectar CRM</span>`,
     botaoWhatsappHtml(data),
-    `<button class="la-btn" onclick="openExportModal()" title="Baixar seus leads em Excel ou CSV">${IC_DOWN} Exportar leads</button>`,
+    `<button class="la-btn" onclick="openExportModal()" title="Baixar seus leads em Excel ou CSV">${IC_DOWN} Exportar</button>`,
   ].filter(Boolean).join('');
 }
 
@@ -2605,14 +2587,14 @@ function janelaWa(){
    pedir confirmação de um envio cobrado e só então recusar. */
 function botaoWhatsappHtml(data){
   if(!(_waStatus&&_waStatus.configurado))
-    return `<span class="la-btn off" title="Falta configurar as credenciais da Meta no servidor">${IC_CHAT} WhatsApp · não configurado</span>`;
+    return `<span class="la-btn off" title="Conecte o WhatsApp em Configurações">${IC_CHAT} WhatsApp desligado</span>`;
   if(!data.phone)
-    return `<span class="la-btn off" title="Informe o telefone na ficha para poder enviar o convite">${IC_CHAT} WhatsApp · informe o telefone</span>`;
+    return `<span class="la-btn off" title="Informe o telefone na ficha">${IC_CHAT} WhatsApp · sem telefone</span>`;
 
   const j=janelaWa();
   if(j&&!j.pode_enviar){
     const rotulo=j.indeterminado
-      ? 'WhatsApp · horário indeterminado no servidor'
+      ? 'WhatsApp · horário indefinido'
       : (j.volta_em?`WhatsApp · fora do horário · volta ${j.volta_em}`
                    :'WhatsApp · fora do horário');
     return `<span class="la-btn off" title="${esc(j.explicacao)}">${IC_CHAT} ${esc(rotulo)}</span>`;
@@ -2621,9 +2603,9 @@ function botaoWhatsappHtml(data){
   // Dentro da faixa de envio, mas fora do comercial: o convite sai igual; o que
   // muda é o tamanho da resposta automática, se o lead responder agora.
   const ressalva=j&&j.fora_do_horario
-    ? ' Fora do horário comercial: o convite sai normalmente, mas a resposta automática vem em uma frase só.'
+    ? ' Fora do horário comercial, a resposta automática é curta.'
     : '';
-  return `<button class="la-btn" onclick="iniciarWhatsapp()" title="Envia o convite aprovado para ${esc(data.phone)}. A Meta cobra por esta mensagem.${esc(ressalva)}">${IC_CHAT} Iniciar contato por WhatsApp</button>`;
+  return `<button class="la-btn" onclick="iniciarWhatsapp()" title="Envia o convite para ${esc(data.phone)}. A Meta cobra esta mensagem.${esc(ressalva)}">${IC_CHAT} Chamar no WhatsApp</button>`;
 }
 
 async function iniciarWhatsapp(){
@@ -2631,13 +2613,13 @@ async function iniciarWhatsapp(){
   const d=currentLeadData;
   const numero=d.phone;
   if(!numero){
-    alert('Este lead não tem telefone. Informe o número na ficha antes de iniciar o contato.');
+    alert('Informe o telefone na ficha primeiro.');
     return;
   }
   const alerta=d.phone_is_mobile===false
-    ? '\n\nATENÇÃO: este número atende numa central, não é celular. O convite é cobrado mesmo assim.'
+    ? '\n\nEste número é de central, não de celular.'
     : '';
-  if(!confirm(`Enviar o convite de WhatsApp para ${numero}?${alerta}\n\nA mensagem é cobrada pela Meta e não pode ser desfeita.`))return;
+  if(!confirm(`Enviar convite de WhatsApp para ${numero}?${alerta}\n\nA Meta cobra esta mensagem.`))return;
   try{
     const resp=await authFetch('/api/wa/start',{method:'POST',body:JSON.stringify({lead_id:currentLeadId})});
     const json=await resp.json();
@@ -2650,7 +2632,7 @@ async function iniciarWhatsapp(){
       return;
     }
     nav('conversas');
-  }catch(_){alert('Erro de conexão.');}
+  }catch(_){alert('Sem conexão. Tente de novo.');}
 }
 
 /* ══════ TELEFONE — o único campo da ficha que se corrige à mão ══════
@@ -2660,16 +2642,16 @@ async function iniciarWhatsapp(){
 
 function phoneCellHtml(delay){
   const d=currentLeadData||{};
-  const editar=`<button type="button" class="cell-edit" onclick="editPhone()" title="Corrigir ou informar o telefone desta empresa">${d.phone?'Editar':'Informar'}</button>`;
+  const editar=`<button type="button" class="cell-edit" onclick="editPhone()" title="Corrigir o telefone">${d.phone?'Editar':'Informar'}</button>`;
   const topo=`<span class="data-lbl">${IC_PHONE}Telefone</span>`;
   if(!d.phone){
     return `<div class="data-cell" id="phone-cell" style="animation-delay:${delay}ms">${topo}
       <span class="data-val muted">—</span>
-      <span class="data-sub">Nenhum telefone público encontrado. ${editar}</span></div>`;
+      <span class="data-sub">Não encontrado. ${editar}</span></div>`;
   }
   const sub=d.phone_is_mobile===false
-    ? 'Atende numa central. O celular do decisor vai no card dele, abaixo.'
-    : (d.phone_is_mobile===true ? 'Celular — aceita ligação e mensagem.' : 'Tipo de linha não identificado.');
+    ? 'Central da empresa.'
+    : (d.phone_is_mobile===true ? 'Celular.' : '');
   return `<div class="data-cell" id="phone-cell" style="animation-delay:${delay}ms">${topo}
     <span class="data-val">${esc(d.phone)}</span>
     <span class="data-sub">${sub} ${editar}</span></div>`;
@@ -2690,7 +2672,7 @@ function editPhone(){
       <button type="button" class="cell-save" onclick="savePhone()">Salvar</button>
       <button type="button" class="cell-cancel" onclick="renderPhoneCell()">Cancelar</button>
     </div>
-    <span class="data-sub" id="phone-msg">Com DDD. Em branco apaga o telefone da ficha.</span>`;
+    <span class="data-sub" id="phone-msg">Com DDD. Em branco apaga.</span>`;
   const inp=document.getElementById('phone-input');
   inp.focus();inp.select();
   inp.addEventListener('keydown',e=>{
@@ -2710,7 +2692,7 @@ async function savePhone(){
     if(!resp.ok){msg.className='data-sub sub-err';msg.textContent=json.detail||'Não foi possível salvar.';return;}
     currentLeadData=json;
     renderPhoneCell();
-  }catch(e){msg.className='data-sub sub-err';msg.textContent='Erro de conexão. O telefone não foi salvo.';}
+  }catch(e){msg.className='data-sub sub-err';msg.textContent='Sem conexão. Não foi salvo.';}
 }
 
 
@@ -2769,7 +2751,7 @@ async function _prospBuscar(){
   const list=document.getElementById('decisores-list');
   if(!list||!currentLeadId)return;
   _prosp.carregando=true;
-  list.innerHTML='<div class="muted-box">Carregando contatos da empresa…</div>';
+  list.innerHTML='<div class="muted-box">Carregando…</div>';
   try{
     const resp=await authFetch(`/api/leads/${currentLeadId}/contacts?${_prospQuery()}`);
     const json=await resp.json();
@@ -2785,7 +2767,7 @@ async function _prospBuscar(){
     _prosp.erro=json.erro||null;
     renderProspecting();
   }catch(e){
-    list.innerHTML='<div class="muted-box">Erro de conexão ao carregar contatos.</div>';
+    list.innerHTML='<div class="muted-box">Sem conexão. Tente de novo.</div>';
   }finally{_prosp.carregando=false;}
 }
 
@@ -2881,7 +2863,7 @@ function _prospCard(p){
       <button class="pr-copy" onclick="prospCopiar('${esc(p.phone)}')" title="Copiar telefone">copiar</button></div>`);
     if(endereco)linhas.push(`<div class="pr-row"><span class="pr-row-ic">✉</span><span class="pr-val">${esc(endereco)}</span>
       <button class="pr-copy" onclick="prospCopiar('${esc(endereco)}')" title="Copiar e-mail">copiar</button></div>`);
-    if(!linhas.length)linhas.push('<div class="pr-row pr-vazio">A Lusha não tinha e-mail nem telefone deste contato.</div>');
+    if(!linhas.length)linhas.push('<div class="pr-row pr-vazio">Sem e-mail nem telefone.</div>');
     acao=`<div class="pr-dados">${linhas.join('')}</div>`;
   }else if(p.source==='lusha'&&p.can_reveal&&p.can_reveal.length){
     // O custo aparece ANTES do clique. Quem paga tem que saber quanto vai
@@ -2930,8 +2912,8 @@ function renderProspecting(){
   // A tela diz de onde veio a lista: pago e gratuito têm garantias diferentes,
   // e esconder isso faria o usuário culpar o produto por um limite da fonte.
   const fonte=_prosp.fonte==='lusha'
-    ? '<span class="pr-fonte pr-fonte-paga">Lusha · contatos verificados</span>'
-    : '<span class="pr-fonte">Fontes públicas · sem celular</span>';
+    ? '<span class="pr-fonte pr-fonte-paga">Lusha · verificados</span>'
+    : '<span class="pr-fonte">Fontes públicas</span>';
 
   const aviso=_prosp.erro
     ? `<div class="pr-aviso">${esc(_prosp.erro)}${/Configura/.test(_prosp.erro)?' <a href="/configuracoes">Abrir Configurações</a>':''}</div>`
@@ -2939,8 +2921,7 @@ function renderProspecting(){
 
   const lista=_prosp.contatos.length
     ? _prosp.contatos.map(_prospCard).join('')
-    : `<div class="empty-state-box"><div class="empty-title">Nenhum contato com esses filtros</div>
-       <div class="empty-sub">Tente remover um filtro da barra ao lado.</div></div>`;
+    : `<div class="empty-state-box"><div class="empty-title">Nenhum contato com esses filtros</div></div>`;
 
   root.innerHTML=`<div class="pr-wrap">
     ${_prospSidebar()}
@@ -3117,7 +3098,7 @@ async function saveDecPhone(id){
     const json=await resp.json();
     if(!resp.ok){msg.className='dec-msg sub-err';msg.textContent=json.detail||'Não foi possível salvar.';return;}
     renderDecisores(_decisores.map(p=>p.id===id?json:p));
-  }catch(e){msg.className='dec-msg sub-err';msg.textContent='Erro de conexão. O celular não foi salvo.';}
+  }catch(e){msg.className='dec-msg sub-err';msg.textContent='Sem conexão. Não foi salvo.';}
 }
 
 /* ══════ INFRAESTRUTURA DE DNS E E-MAIL ══════
@@ -3170,7 +3151,7 @@ function renderInfra(data){
       <span class="infra-icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg></span>
       <span class="dnsx-txt">
         <span class="dnsx-title">Relatório DNS completo</span>
-        <span class="dnsx-sub">Registros MX, NS, TXT, SPF/DMARC/DKIM, hosts com IP e ASN, e titular de ${e(data.domain||'')}</span>
+        <span class="dnsx-sub">Servidores, segurança de e-mail e titular do domínio</span>
       </span>
       <span class="dnsx-chips">${chips}</span>
       <span class="dnsx-chev"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg></span>
@@ -3203,7 +3184,7 @@ async function loadDnsReport(refresh){
   // O que o enriquecimento já coletou aparece na hora; o relatório completo
   // substitui quando chega — ninguém fica olhando para um spinner vazio.
   body.innerHTML=renderDnsBasic(currentLeadData)+
-    `<div class="dnsx-load"><span class="spinner"></span>Consultando DNS, logs de certificado, ASN e RDAP… (até 25s)</div>`;
+    `<div class="dnsx-load"><span class="spinner"></span>Consultando o DNS… pode levar até 25 s.</div>`;
   try{
     const resp=await authFetch(`/api/leads/${id}/dns${refresh?'?refresh=true':''}`);
     const json=await resp.json();
@@ -3213,7 +3194,7 @@ async function loadDnsReport(refresh){
   }catch(err){
     if(err.message==='not_authenticated')return;
     body.innerHTML=renderDnsBasic(currentLeadData)+
-      `<div class="dnsx-err">Não foi possível coletar o relatório completo. <a href="#" onclick="loadDnsReport(true);return false">Tentar de novo</a></div>`;
+      `<div class="dnsx-err">Não foi possível montar o relatório. <a href="#" onclick="loadDnsReport(true);return false">Tentar de novo</a></div>`;
   }finally{_dnsBusy[id]=false;}
 }
 
@@ -3453,10 +3434,10 @@ async function loadHistory(){
   document.getElementById('history-filter').value='';
   try{
     const resp=await authFetch('/api/leads?per_page=100');
-    if(!resp.ok){body.innerHTML='<div class="muted-box">Erro ao carregar histórico.</div>';return;}
+    if(!resp.ok){body.innerHTML='<div class="muted-box">Não foi possível carregar. Tente de novo.</div>';return;}
     _histLeads=await resp.json();
     renderHistory('');
-  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="muted-box">Erro de conexão.</div>';}
+  }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="muted-box">Sem conexão. Tente de novo.</div>';}
 }
 
 function filterHistory(q){renderHistory(q);}
@@ -3509,15 +3490,15 @@ function renderHistory(q){
     return (va<vb?-1:va>vb?1:0)*_histSort.dir;
   });
   count.textContent=_histLeads.length
-    ? `Mostrando ${leads.length} de ${_histLeads.length} empresa${_histLeads.length!==1?'s':''} · clique no nome para ver o resumo`
+    ? `${leads.length} de ${_histLeads.length}`
     : '';
   if(!_histLeads.length){
-    body.innerHTML=`<div class="muted-box">Nenhuma empresa analisada ainda.<br/>O histórico guarda tudo o que você pesquisar, com exportação para Excel.<br/><a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Fazer minha primeira análise</a></div>`;
+    body.innerHTML=`<div class="muted-box">Nenhuma empresa analisada ainda.<a class="empty-cta" href="#" onclick="nav('');focusSearch();return false">Analisar empresa</a></div>`;
     return;
   }
   if(!leads.length){
     const temFiltroTier=_histTier!=='all'||_histNaoExec;
-    body.innerHTML=`<div class="muted-box">Nenhuma empresa corresponde ao filtro.${temFiltroTier?'<br/><a class="empty-cta" href="#" onclick="limparFiltroTier();return false">Mostrar todos os tiers</a>':''}</div>`;
+    body.innerHTML=`<div class="muted-box">Nada com esse filtro.${temFiltroTier?'<a class="empty-cta" href="#" onclick="limparFiltroTier();return false">Limpar filtro</a>':''}</div>`;
     return;
   }
 
@@ -3558,9 +3539,9 @@ async function deleteLead(leadId){
     if(resp.ok||resp.status===204){
       _histLeads=_histLeads.filter(l=>l.id!==leadId);
       renderHistory(document.getElementById('history-filter').value);
-    }else alert('Erro ao remover lead.');
+    }else alert('Não foi possível excluir. Tente de novo.');
   }catch(e){
-    if(e.message!=='not_authenticated')alert('Erro de conexão.');
+    if(e.message!=='not_authenticated')alert('Sem conexão. Tente de novo.');
   }
 }
 
@@ -3574,7 +3555,7 @@ function openLeadSummary(leadId){
 function closeLeadSummary(){document.getElementById('lead-summary-modal').classList.remove('open');}
 
 function renderLeadSummary(l){
-  const smap={enriched:['Enriquecido','enriched'],partial:['Parcial','partial'],failed:['Falhou','failed']};
+  const smap={enriched:['Pronto','enriched'],partial:['Incompleto','partial'],failed:['Sem dados','failed']};
   const[sl,sc]=smap[l.status]||['—','partial'];
   const init=(l.company_name||l.domain||'?').trim()[0].toUpperCase();
   const fav=l.domain?`https://www.google.com/s2/favicons?domain=${l.domain}&sz=64`:'';
@@ -3587,13 +3568,13 @@ function renderLeadSummary(l){
   const rows=[
     row('Site',ws?`<a class="data-val link" href="${l.website}" target="_blank" rel="noopener">${esc(ws)}</a>`:''),
     row('LinkedIn',l.linkedin_url?`<a class="data-val link" href="${l.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(l.linkedin_confidence)}`:''),
-    row('Pessoas associadas',emp?esc(String(emp)):''),
+    row('Funcionários',emp?esc(String(emp)):''),
     row('Localização',l.location?esc(l.location):''),
     row('Setor',l.sector?esc(l.sector):''),
-    row('Provedor de e-mail',l.mx_provider?`<span class="mx-tag">${esc(l.mx_provider)}</span>${cb(l.mx_provider_confidence)}`:''),
+    row('E-mail',l.mx_provider?`<span class="mx-tag">${esc(l.mx_provider)}</span>${cb(l.mx_provider_confidence)}`:''),
     row('Estágio',`<span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span>`),
     row('Tier',l.tier!==undefined?`${tierBadgeHtml(l,{long:true})}${l.tier_reason?`<small class="ls-tier-why">${esc(l.tier_reason)}</small>`:''}`:''),
-    row('Criado em',new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'})),
+    row('Analisado em',new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'})),
   ].join('');
   const ai=l.ai_summary?`<div class="ai-box" style="margin:16px 0 0"><div class="ai-title">${IC_SPARK} Resumo IA</div><div class="ai-text">${esc(l.ai_summary)}</div></div>`:'';
   return `
@@ -3607,7 +3588,7 @@ function renderLeadSummary(l){
     <div class="ls-rows">${rows}</div>
     ${ai}
     <div class="ls-footer">
-      <button class="la-btn" onclick="closeLeadSummary();loadLeadIntoView(${l.id})">Ver ficha completa e decisores →</button>
+      <button class="la-btn" onclick="closeLeadSummary();loadLeadIntoView(${l.id})">Abrir ficha →</button>
     </div>`;
 }
 
@@ -3630,7 +3611,7 @@ async function runExport(fmt){
   if(preset==='custom'){
     const start=document.getElementById('export-date-start').value;
     const end=document.getElementById('export-date-end').value;
-    if(!start||!end){alert('Informe as duas datas do intervalo.');return;}
+    if(!start||!end){alert('Escolha as duas datas.');return;}
     params.set('date_start',start);params.set('date_end',end);
   }
   const token=await getToken();if(!token)return;
@@ -3640,7 +3621,7 @@ async function runExport(fmt){
     const resp=await fetch(`/api/export?${params.toString()}`,{headers:{Authorization:`Bearer ${token}`}});
     if(!resp.ok){
       const j=await resp.json().catch(()=>({}));
-      alert(j.detail||'Nenhum lead encontrado para o período selecionado.');
+      alert(j.detail||'Nenhum lead nesse período.');
       return;
     }
     const blob=await resp.blob();
@@ -3652,7 +3633,7 @@ async function runExport(fmt){
     document.body.appendChild(a);a.click();
     setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);
     closeExportModal();
-  }catch(e){alert('Erro de conexão ao exportar.');}
+  }catch(e){alert('Sem conexão. Tente de novo.');}
   finally{btn.disabled=false;btn.textContent=label;}
 }
 
@@ -3677,13 +3658,13 @@ async function loadSettings(){
     updateNavUser();
     renderSettings(me,conns,wa,lusha);
   }catch(e){
-    if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
+    if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Sem conexão. Tente de novo.</div></div>';
   }
 }
 
 const _setHead=(icon,title,desc)=>`<div class="set-head">
   <span class="set-ic">${icon}</span>
-  <span><div class="set-title">${title}</div><p class="set-desc">${desc}</p></span>
+  <span><div class="set-title">${title}</div>${desc?`<p class="set-desc">${desc}</p>`:''}</span>
 </div>`;
 const IC_USER='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 const IC_PLUG='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2v6M15 2v6"/><path d="M6 8h12v4a6 6 0 0 1-12 0z"/><path d="M12 18v4"/></svg>';
@@ -3705,8 +3686,8 @@ let _setTab='conta';
 
 const SET_SECOES=[
   {id:'conta',      lbl:'Conta',       desc:'Perfil e sessão',       icon:IC_USER},
-  {id:'integracoes',lbl:'Integrações', desc:'CRM e enriquecimento',  icon:IC_PLUG},
-  {id:'whatsapp',   lbl:'WhatsApp',    desc:'Número que fala',       icon:IC_WA},
+  {id:'integracoes',lbl:'Integrações', desc:'CRM e Lusha',           icon:IC_PLUG},
+  {id:'whatsapp',   lbl:'WhatsApp',    desc:'Seu número',            icon:IC_WA},
   {id:'extensao',   lbl:'Extensão',    desc:'LinkedIn no navegador', icon:IC_EXT},
 ];
 
@@ -3737,16 +3718,15 @@ const _setDot=(estado)=>estado?`<span class="set-nav-dot ${estado}" aria-hidden=
 function _cardWhatsApp(wa){
   if(!wa){
     return`<div class="panel panel-pad">
-      <div class="muted-box">Não foi possível carregar a configuração do WhatsApp agora.</div>
+      <div class="muted-box">Não foi possível carregar. Tente de novo.</div>
     </div>`;
   }
   const conectado=!!wa.conectado;
-  const pelaConta=wa.origem==='conta';
   const estado=conectado
     ?`<div class="crm-conn">
         <div class="crm-conn-info">
           <span class="crm-conn-name">${esc(wa.display_phone_number||'Número conectado')}</span>
-          <span class="crm-conn-meta">id ${esc(wa.phone_number_id||'—')}${wa.verificado_em?' · confirmado com a Meta em '+new Date(wa.verificado_em).toLocaleDateString('pt-BR'):' · ainda não confirmado'}${pelaConta?' · as mensagens saem por este número':''}</span>
+          <span class="crm-conn-meta">ID ${esc(wa.phone_number_id||'—')}${wa.verificado_em?' · confirmado em '+new Date(wa.verificado_em).toLocaleDateString('pt-BR'):' · não confirmado'}</span>
         </div>
         <div class="crm-conn-acts">
           <span class="crm-conn-state ${wa.configurado?'on':'off'}">${wa.configurado?'pronto':'incompleto'}</span>
@@ -3754,7 +3734,7 @@ function _cardWhatsApp(wa){
         </div>
       </div>`
     :(wa.configurado
-      ?`<div class="muted-box">Hoje as mensagens saem pelo número configurado no servidor. Conecte o seu para falar pelo seu próprio WhatsApp.</div>`
+      ?`<div class="muted-box">Hoje as mensagens saem pelo número do servidor. Conecte o seu.</div>`
       :'');
 
   const pendencias=(wa.faltando||[]).length
@@ -3768,42 +3748,40 @@ function _cardWhatsApp(wa){
   return`
     ${_blocoMeta(wa)}
     <div class="panel panel-pad">
-      ${_setHead(IC_WA,'Conexão com o Meta Business','O número pelo qual as conversas saem. Os segredos ficam cifrados aqui — depois de salvos não voltam para esta tela.')}
+      ${_setHead(IC_WA,'Seu número','Segredos ficam cifrados e não voltam a aparecer.')}
       ${estado}
       ${erro}
       <div class="set-form">
         <details class="set-details"${manualAberto?' open':''}>
         <summary>Configuração manual (avançado)</summary>
-        <p class="set-desc">Para quem já tem um app próprio na Meta: as credenciais vêm de
-          <strong>Meta Business</strong> → Apps → WhatsApp → Configuração da API.</p>
+        <p class="set-desc">Em <strong>Meta Business</strong> → Apps → WhatsApp → Configuração da API.</p>
         ${_setSub('Credenciais')}
           <div class="set-field">
             <label for="wa-pnid">ID do número (Phone Number ID)</label>
             <input id="wa-pnid" class="set-input" placeholder="Ex.: 109876543210987" autocomplete="off" spellcheck="false" value="${esc(wa.phone_number_id||'')}"/>
           </div>
           <div class="set-field">
-            <label for="wa-token">Token de acesso${wa.tem_token?' (preenchido — deixe em branco para manter)':''}</label>
+            <label for="wa-token">Token de acesso${wa.tem_token?' · salvo':''}</label>
             <input id="wa-token" class="set-input" type="password" placeholder="${wa.tem_token?'••••••••••••':'EAAG…'}" autocomplete="off" spellcheck="false"/>
           </div>
           <div class="set-field">
-            <label for="wa-secret">App Secret${wa.tem_app_secret?' (preenchido — deixe em branco para manter)':''}</label>
-            <input id="wa-secret" class="set-input" type="password" placeholder="${wa.tem_app_secret?'••••••••••••':'Assina o webhook: sem ele nada é recebido'}" autocomplete="off" spellcheck="false"/>
+            <label for="wa-secret" title="Sem ele, nenhuma resposta chega">App Secret${wa.tem_app_secret?' · salvo':''}</label>
+            <input id="wa-secret" class="set-input" type="password" placeholder="${wa.tem_app_secret?'Em branco mantém o atual':'App Secret do app na Meta'}" autocomplete="off" spellcheck="false"/>
           </div>
           <div class="set-field">
-            <label for="wa-verify">Token de verificação${wa.tem_verify_token?' (preenchido — deixe em branco para manter)':''}</label>
-            <input id="wa-verify" class="set-input" type="password" placeholder="${wa.tem_verify_token?'••••••••••••':'Uma frase que você inventa e repete na Meta'}" autocomplete="off" spellcheck="false"/>
+            <label for="wa-verify">Token de verificação${wa.tem_verify_token?' · salvo':''}</label>
+            <input id="wa-verify" class="set-input" type="password" placeholder="${wa.tem_verify_token?'Em branco mantém o atual':'Uma frase sua, repetida na Meta'}" autocomplete="off" spellcheck="false"/>
           </div>
         </div>
         </details>
         ${_setSub('Mensagem de abertura')}
           <div class="set-field">
-            <label for="wa-template">Template aprovado na Meta</label>
+            <label for="wa-template" title="O único formato que a Meta deixa enviar antes de o lead responder">Template aprovado</label>
             <input id="wa-template" class="set-input" placeholder="Ex.: primeiro_contato" autocomplete="off" spellcheck="false" value="${esc(wa.template_name||'')}"/>
-            <p class="set-desc">É o único formato que a Meta deixa você enviar primeiro, antes de o lead responder.</p>
           </div>
         </div>
         <div class="set-actions">
-          <button class="set-btn primary" onclick="saveWhatsApp()">${conectado?'Atualizar conexão':'Conectar WhatsApp'}</button>
+          <button class="set-btn primary" onclick="saveWhatsApp()">${conectado?'Atualizar':'Conectar WhatsApp'}</button>
         </div>
         ${pendencias}
         <p id="wa-feedback" class="set-feedback"></p>
@@ -3811,7 +3789,7 @@ function _cardWhatsApp(wa){
     </div>
 
     <div class="panel panel-pad">
-      ${_setHead(IC_PLUG,'Webhook de recebimento','Cadastre esta URL e o token de verificação na Meta (WhatsApp → Configuração → Webhook) e assine o campo <strong>messages</strong>. É o que faz as respostas dos leads chegarem aqui.')}
+      ${_setHead(IC_PLUG,'Webhook de respostas','Cadastre na Meta (WhatsApp → Configuração → Webhook) e assine <strong>messages</strong>.')}
       <div class="set-row set-row--stack">
         <span class="set-lbl">URL do webhook</span>
         <span class="set-val set-val--code">${esc(wa.webhook_url||'')}</span>
@@ -3824,13 +3802,13 @@ function _cardWhatsApp(wa){
 function _secConta(me){
   return`
     <div class="panel panel-pad">
-      ${_setHead(IC_USER,'Identificação','A conta com que você entrou neste navegador. Todas as funções do LeadEnricher — análises, lote, planilha, extensão e conversas — estão liberadas, sem limite de uso.')}
+      ${_setHead(IC_USER,'Sua conta','Todas as funções liberadas, sem limite de uso.')}
       <div class="set-row"><span class="set-lbl">E-mail</span><span class="set-val">${esc(me?.email||'—')}</span></div>
     </div>
 
     <div class="panel panel-pad">
-      ${_setHead(IC_EXIT,'Sessão neste navegador','Encerra o acesso neste navegador. Seus leads continuam salvos na conta.')}
-      <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair da conta</button></div>
+      ${_setHead(IC_EXIT,'Sair','Seus leads continuam salvos.')}
+      <div class="set-actions"><button class="set-btn danger" onclick="signOut()">Sair deste navegador</button></div>
     </div>`;
 }
 
@@ -3839,7 +3817,7 @@ function _secIntegracoes(webhook,lusha){
     ?`<div class="crm-conn">
         <div class="crm-conn-info">
           <span class="crm-conn-name">Webhook</span>
-          <span class="crm-conn-meta">${webhook.webhook_configured?'URL configurada':'sem URL'}${webhook.updated_at?' · atualizado em '+new Date(webhook.updated_at).toLocaleDateString('pt-BR'):''}</span>
+          <span class="crm-conn-meta">${webhook.webhook_configured?'URL salva':'Sem URL'}${webhook.updated_at?' · '+new Date(webhook.updated_at).toLocaleDateString('pt-BR'):''}</span>
         </div>
         <div class="crm-conn-acts">
           <span class="crm-conn-state ${webhook.is_active?'on':'off'}">${webhook.is_active?'ativo':'inativo'}</span>
@@ -3851,31 +3829,31 @@ function _secIntegracoes(webhook,lusha){
 
   return`
     <div class="panel panel-pad">
-      ${_setHead(IC_PLUG,'Enviar leads para o seu CRM','Cada lead — com decisores e atividades — é enviado por <strong>POST assinado com HMAC-SHA256</strong> ao endereço que você informar. Funciona com Zapier, Make, Power Automate ou um sistema próprio. Com o webhook ativo, o botão “Enviar ao CRM” fica habilitado na ficha do lead.')}
+      ${_setHead(IC_PLUG,'Seu CRM','Envie leads para Zapier, Make, Power Automate ou um sistema próprio.')}
       ${connCard}
       <div class="set-form">
         <div class="set-field">
-          <label for="crm-url">URL que vai receber os leads</label>
+          <label for="crm-url">URL do webhook</label>
           <input id="crm-url" class="set-input" placeholder="https://hooks.zapier.com/…" autocomplete="off" spellcheck="false"/>
         </div>
         <div class="set-field">
-          <label for="crm-secret">Segredo para assinar o envio (opcional, recomendado)</label>
-          <input id="crm-secret" class="set-input" placeholder="Uma frase secreta que só você e o seu sistema conhecem" autocomplete="off" spellcheck="false"/>
+          <label for="crm-secret" title="Usado para assinar cada envio com HMAC-SHA256">Segredo (opcional)</label>
+          <input id="crm-secret" class="set-input" placeholder="Uma frase que só você e seu sistema sabem" autocomplete="off" spellcheck="false"/>
         </div>
         <div class="set-actions">
-          <button class="set-btn primary" onclick="saveCrmWebhook()">${webhook?'Atualizar webhook':'Salvar e ativar webhook'}</button>
+          <button class="set-btn primary" onclick="saveCrmWebhook()">${webhook?'Atualizar':'Conectar CRM'}</button>
         </div>
         <p id="crm-feedback" class="set-feedback"></p>
       </div>
     </div>
 
     <div class="panel panel-pad">
-      ${_setHead(IC_LUSHA,'Lusha (enriquecimento pago, opcional)','Conecte a chave API da sua conta Lusha para enriquecer contatos com telefone e dados adicionais. A chave fica cifrada e só você gasta seus créditos. Sem ela, tudo funciona 100% gratuito. Você gera a chave em app.lusha.com → Hub de APIs → Copiar chave da API.')}
+      ${_setHead(IC_LUSHA,'Lusha (opcional)','Telefones e e-mails verificados, com seus créditos Lusha. Sem ela, tudo segue grátis.')}
       ${lusha?.conectado
         ?`<div class="crm-conn">
           <div class="crm-conn-info">
             <span class="crm-conn-name">Conectado</span>
-            <span class="crm-conn-meta">Sua chave está salva e criptografada</span>
+            <span class="crm-conn-meta">Chave salva e cifrada</span>
           </div>
           <div class="crm-conn-acts">
             <span class="crm-conn-state on">ativo</span>
@@ -3886,8 +3864,8 @@ function _secIntegracoes(webhook,lusha){
         :''}
       <div class="set-form">
         <div class="set-field">
-          <label for="lusha-key">Chave da API</label>
-          <input id="lusha-key" class="set-input" type="password" placeholder="Sua chave da Lusha (começa com um UUID)" autocomplete="off" spellcheck="false" value=""/>
+          <label for="lusha-key" title="Em app.lusha.com → Hub de APIs → Copiar chave da API">Chave da API</label>
+          <input id="lusha-key" class="set-input" type="password" placeholder="Cole a chave da sua conta Lusha" autocomplete="off" spellcheck="false" value=""/>
         </div>
         <div class="set-actions">
           <button class="set-btn primary" onclick="conectarLusha()">${lusha?.conectado?'Atualizar chave':'Conectar Lusha'}</button>
@@ -3900,10 +3878,10 @@ function _secIntegracoes(webhook,lusha){
 function _secExtensao(){
   return`
     <div class="panel panel-pad">
-      ${_setHead(IC_EXT,'Parear este navegador','Mostra decisores, e-mail corporativo e telefone da empresa direto nas páginas do LinkedIn, e salva o lead no seu pipeline. Gere o código abaixo e cole no popup da extensão para conectar este navegador. Revelar contato é livre — não há limite de revelações.')}
+      ${_setHead(IC_EXT,'Conectar a extensão','Veja contatos e salve leads direto do LinkedIn.')}
       <div class="set-actions">
-        <button class="set-btn primary" onclick="generatePairCode()">Gerar código de pareamento</button>
-        <span class="set-lbl">Válido por poucos minutos, uso único</span>
+        <button class="set-btn primary" onclick="generatePairCode()">Gerar código</button>
+        <span class="set-lbl">Vale por poucos minutos, uma vez</span>
       </div>
       <p id="ext-feedback" class="set-feedback"></p>
     </div>`;
@@ -3924,19 +3902,19 @@ function renderSettings(me,conns,wa,lusha){
 
   const secoes={
     conta:{
-      sub:'Quem está usando este navegador e como encerrar o acesso.',
+      sub:'',
       html:_secConta(me),
     },
     integracoes:{
-      sub:'Para onde os leads vão depois de prontos, e de onde vêm os dados pagos.',
+      sub:'',
       html:_secIntegracoes(webhook,lusha),
     },
     whatsapp:{
-      sub:'O número que fala com os leads e o webhook que traz as respostas de volta.',
+      sub:'',
       html:_cardWhatsApp(wa),
     },
     extensao:{
-      sub:'Conecte este navegador para ver os dados dentro do LinkedIn.',
+      sub:'',
       html:_secExtensao(),
     },
   };
@@ -3960,7 +3938,7 @@ function renderSettings(me,conns,wa,lusha){
              id="set-sec-${s.id}" role="tabpanel" aria-label="${s.lbl}">
       <div class="set-sec-head">
         <h2>${s.lbl}</h2>
-        <p>${secoes[s.id].sub}</p>
+        ${secoes[s.id].sub?`<p>${secoes[s.id].sub}</p>`:''}
       </div>
       ${secoes[s.id].html}
     </section>`).join('');
@@ -3979,13 +3957,13 @@ async function generatePairCode(){
   el.textContent='Gerando…';el.className='set-feedback ok';
   try{
     const resp=await authFetch('/api/extension/pair-code',{method:'POST',body:'{}'});
-    if(!resp.ok){el.textContent='Não conseguimos gerar o código agora.';el.className='set-feedback err';return;}
+    if(!resp.ok){el.textContent='Não foi possível gerar o código. Tente de novo.';el.className='set-feedback err';return;}
     const data=await resp.json();
-    el.innerHTML=`Cole este código no popup da extensão:<br><span class="pair-code">${esc(data.code)}</span>
-      <br><span class="set-lbl">Válido por ${data.expires_in_minutes} minutos.</span>`;
+    el.innerHTML=`Cole na extensão:<br><span class="pair-code">${esc(data.code)}</span>
+      <br><span class="set-lbl">Vale por ${data.expires_in_minutes} minutos.</span>`;
     el.className='set-feedback ok';
   }catch(e){
-    if(e.message!=='not_authenticated'){el.textContent='Erro de conexão.';el.className='set-feedback err';}
+    if(e.message!=='not_authenticated'){el.textContent='Sem conexão. Tente de novo.';el.className='set-feedback err';}
   }
 }
 
@@ -4018,21 +3996,21 @@ async function saveWhatsApp(){
     const resp=await authFetch('/api/wa/connection',{method:'POST',body:JSON.stringify(corpo)});
     const json=await resp.json();
     if(!resp.ok){_waFeedback(json.detail||'Não foi possível conectar.',false);return;}
-    _waFeedback('WhatsApp conectado. As mensagens saem pelo seu número.',true);
+    _waFeedback('WhatsApp conectado.',true);
     loadSettings();
   }catch(e){
-    if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
+    if(e.message!=='not_authenticated')_waFeedback('Sem conexão. Tente de novo.',false);
   }
 }
 
 async function disconnectWhatsApp(){
-  if(!confirm('Desconectar o WhatsApp desta conta? As conversas continuam salvas, mas você deixa de enviar e receber até conectar de novo.'))return;
+  if(!confirm('Desconectar o WhatsApp? As conversas ficam salvas, mas nada é enviado nem recebido.'))return;
   try{
     const resp=await authFetch('/api/wa/connection',{method:'DELETE'});
     if(!resp.ok){_waFeedback('Não foi possível desconectar.',false);return;}
     loadSettings();
   }catch(e){
-    if(e.message!=='not_authenticated')_waFeedback('Erro de conexão.',false);
+    if(e.message!=='not_authenticated')_waFeedback('Sem conexão. Tente de novo.',false);
   }
 }
 
@@ -4062,11 +4040,11 @@ function _carregarSdkMeta(cfg){
 }
 
 const _HIST_ROTULO={
-  solicitado:'Histórico pedido à Meta — os primeiros lotes costumam chegar em minutos.',
-  importando:'Importando o histórico do celular',
+  solicitado:'Histórico pedido. Chega em alguns minutos.',
+  importando:'Importando o histórico',
   concluido:'Histórico importado.',
-  recusado:'O compartilhamento do histórico não foi autorizado no celular. As conversas novas chegam normalmente.',
-  falhou:'A Meta não aceitou o pedido de histórico. As conversas novas chegam normalmente.',
+  recusado:'Histórico não autorizado no celular. Conversas novas chegam normalmente.',
+  falhou:'A Meta recusou o histórico. Conversas novas chegam normalmente.',
 };
 
 function _blocoMeta(wa){
@@ -4079,17 +4057,16 @@ function _blocoMeta(wa){
   const hist=coex&&wa.historico_status
     ?`<p class="set-feedback ${ruim?'err':'ok'}">${esc(_HIST_ROTULO[wa.historico_status]||wa.historico_status)}${pct}</p>`
     :'';
-  const falta=cfg.disponivel?'':`<p class="set-feedback err">O servidor ainda não está pronto para o
-      popup da Meta. Falta configurar: ${(cfg.faltando||[]).map(v=>`<code>${esc(v)}</code>`).join(' ')}.</p>`;
+  const falta=cfg.disponivel?'':`<p class="set-feedback err">Indisponível neste servidor. Falta: ${(cfg.faltando||[]).map(v=>`<code>${esc(v)}</code>`).join(' ')}.</p>`;
   return`
     <div class="panel panel-pad">
-      ${_setHead(IC_WA,'Conectar com a Meta (recomendado)','Use o WhatsApp Business que você já tem no celular. Você entra com o Facebook, escolhe a empresa e lê um <strong>QR code</strong> com o app WhatsApp Business. O número continua funcionando no celular, e as conversas — inclusive até 6 meses de histórico — aparecem aqui.')}
-      ${coex?`<div class="muted-box">Conectado em modo Coexistência: o que você responder pelo celular também aparece aqui, e a automação para de responder naquela conversa.</div>`:''}
+      ${_setHead(IC_WA,'Conectar pela Meta (recomendado)','Use o WhatsApp Business do seu celular. Ele continua funcionando lá, e até 6 meses de conversas aparecem aqui.')}
+      ${coex?`<div class="muted-box">O que você responder pelo celular aparece aqui, e a automação para naquela conversa.</div>`:''}
       ${hist}
       ${falta}
       <div class="set-actions">
         <button class="set-btn primary" onclick="conectarPelaMeta()" ${cfg.disponivel?'':'disabled'}>
-          ${wa&&wa.conectado?'Reconectar com a Meta':'Conectar com a Meta'}</button>
+          ${wa&&wa.conectado?'Reconectar':'Conectar pela Meta'}</button>
       </div>
       <p id="wa-meta-feedback" class="set-feedback"></p>
     </div>`;
@@ -4104,9 +4081,9 @@ function _metaFeedback(msg,ok){
 
 async function conectarPelaMeta(){
   const cfg=_esConfig;
-  if(!cfg||!cfg.disponivel){_metaFeedback('O servidor ainda não está configurado para o popup da Meta.',false);return;}
+  if(!cfg||!cfg.disponivel){_metaFeedback('Indisponível neste servidor.',false);return;}
   try{await _carregarSdkMeta(cfg);}
-  catch(_){_metaFeedback('Não foi possível carregar o login da Meta. Verifique se algum bloqueador está impedindo connect.facebook.net.',false);return;}
+  catch(_){_metaFeedback('O login da Meta não abriu. Desative bloqueadores para connect.facebook.net.',false);return;}
 
   let codigo=null,sessao=null,enviado=false;
   const sair=()=>window.removeEventListener('message',ouvir);
@@ -4123,7 +4100,7 @@ async function conectarPelaMeta(){
       _metaFeedback(avisos?`Conectado, com ressalvas: ${avisos}`:'WhatsApp conectado. As conversas começam a chegar em instantes.',!avisos);
       setTimeout(loadSettings,avisos?6000:1500);
     }catch(e){
-      if(e.message!=='not_authenticated')_metaFeedback('Erro de conexão.',false);
+      if(e.message!=='not_authenticated')_metaFeedback('Sem conexão. Tente de novo.',false);
     }
   };
   const ouvir=(ev)=>{
@@ -4194,7 +4171,7 @@ function _lushaSaldo(lusha){
   }else{
     const baixo=c.restantes<=20;
     saldo=`<span class="lu-saldo ${baixo?'lu-saldo-baixo':''}">${c.restantes} crédito${c.restantes===1?'':'s'} restante${c.restantes===1?'':'s'}</span>`
-      +(baixo?'<span class="lu-alerta">Saldo baixo — recarregue em app.lusha.com para continuar revelando.</span>':'');
+      +(baixo?'<span class="lu-alerta">Saldo baixo. Recarregue em app.lusha.com.</span>':'');
   }
 
   const lim=lusha.limites&&lusha.limites.dia;
@@ -4222,29 +4199,29 @@ function _lushaFeedback(msg,ok){
 
 async function conectarLusha(){
   const chave=(document.getElementById('lusha-key')?.value||'').trim();
-  if(!chave){_lushaFeedback('Informe a chave da sua conta Lusha.',false);return;}
+  if(!chave){_lushaFeedback('Cole a chave da Lusha.',false);return;}
 
-  _lushaFeedback('Validando a chave com a Lusha…',true);
+  _lushaFeedback('Conferindo com a Lusha…',true);
   try{
     const resp=await authFetch('/api/me/lusha',{method:'PUT',body:JSON.stringify({api_key:chave})});
     const json=await resp.json();
-    if(!resp.ok){_lushaFeedback(json.detail||'A chave não foi aceita pela Lusha.',false);return;}
-    _lushaFeedback('Lusha conectado. Seus créditos serão usados no enriquecimento.',true);
+    if(!resp.ok){_lushaFeedback(json.detail||'A Lusha recusou esta chave.',false);return;}
+    _lushaFeedback('Lusha conectada.',true);
     document.getElementById('lusha-key').value='';
     loadSettings();
   }catch(e){
-    if(e.message!=='not_authenticated')_lushaFeedback('Erro de conexão.',false);
+    if(e.message!=='not_authenticated')_lushaFeedback('Sem conexão. Tente de novo.',false);
   }
 }
 
 async function desconectarLusha(){
-  if(!confirm('Desconectar a Lusha? O enriquecimento continuará pelo caminho gratuito.'))return;
+  if(!confirm('Desconectar a Lusha? A busca de contatos segue pelo caminho gratuito.'))return;
   try{
     const resp=await authFetch('/api/me/lusha',{method:'DELETE'});
     if(!resp.ok){_lushaFeedback('Não foi possível desconectar.',false);return;}
     loadSettings();
   }catch(e){
-    if(e.message!=='not_authenticated')_lushaFeedback('Erro de conexão.',false);
+    if(e.message!=='not_authenticated')_lushaFeedback('Sem conexão. Tente de novo.',false);
   }
 }
 
@@ -4262,11 +4239,11 @@ async function saveCrmWebhook(){
   try{
     const resp=await authFetch('/api/crm/connections',{method:'POST',body:JSON.stringify({provider:'webhook',webhook_url:url,webhook_secret:secret||null})});
     const json=await resp.json();
-    if(!resp.ok){_crmFeedback(json.detail||'Erro ao salvar.',false);return;}
+    if(!resp.ok){_crmFeedback(json.detail||'Não foi possível salvar. Tente de novo.',false);return;}
     _crmFeedback('Webhook salvo e ativado.',true);
     loadIntegrations();
     loadSettings();
-  }catch(e){if(e.message!=='not_authenticated')_crmFeedback('Erro de conexão.',false);}
+  }catch(e){if(e.message!=='not_authenticated')_crmFeedback('Sem conexão. Tente de novo.',false);}
 }
 
 async function toggleCrmConn(provider){
@@ -4302,16 +4279,14 @@ function renderImportDrop(errorMsg){
         <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
         </svg>
-        <strong>Arraste a planilha aqui ou clique para escolher</strong>
-        <span>.xlsx ou .csv · até 5.000 linhas · todas as colunas são preservadas</span>
+        <strong>Arraste a planilha ou clique para escolher</strong>
+        <span>.xlsx ou .csv · até 5.000 linhas</span>
       </div>
       <input type="file" id="imp-file" accept=".xlsx,.xlsm,.csv,.tsv" style="display:none"
              onchange="impFileChange(this)" />
       <div class="imp-hint">
-        Nada é descartado: cada coluna do seu arquivo vira uma coluna da planilha, com o mesmo
-        nome e na mesma ordem. As que o sistema entende — <em>Empresa, Domínio, Site, LinkedIn,
-        E-mail, Telefone, Funcionários</em> — também alimentam o enriquecimento, que acrescenta
-        colunas novas sem mexer nas suas.
+        Suas colunas ficam como estão. Usamos <em>Empresa, Domínio, Site, LinkedIn, E-mail,
+        Telefone</em> e <em>Funcionários</em> para analisar.
       </div>
     </div>`;
 }
@@ -4349,10 +4324,10 @@ async function uploadImportFile(file,sheet){
     console.log('uploadImportFile: json parseado', json.message?.substring(0,50));
     if(!resp.ok){
       if(resp.status===401||resp.status===403){
-        renderImportDrop('Sua sessão expirou. Por favor, entre novamente.');
+        renderImportDrop('Sua sessão expirou. Entre de novo.');
         setTimeout(()=>location.reload(),2000);return;
       }
-      renderImportDrop(json.detail||'Não consegui ler esta planilha.');return;
+      renderImportDrop(json.detail||'Não foi possível ler esta planilha.');return;
     }
     if(!json||!json.columns){throw new Error('Resposta inválida do servidor: '+JSON.stringify(json).substring(0,100));}
     _imp.preview=json;
@@ -4360,7 +4335,7 @@ async function uploadImportFile(file,sheet){
     renderImportPreview();
   }catch(e){
     console.error('Import upload error:',e.message,e.stack);
-    const msg=e.message.includes('Resposta inválida')?e.message:(e.name==='TypeError'?'Erro de conexão ou timeout. Verifique sua internet e tente novamente.':'Erro de conexão ao enviar o arquivo.');
+    const msg=e.message.includes('Resposta inválida')?e.message:(e.name==='TypeError'?'Sem conexão. Verifique a internet e tente de novo.':'Não foi possível enviar o arquivo. Tente de novo.');
     renderImportDrop(msg);
   }
 }
@@ -4406,20 +4381,20 @@ function renderImportPreview(){
       </div>
       ${sheetPicker}
       <div class="imp-map">
-        <div class="imp-map-lbl">${p.columns.length} colunas — ${mapped.length} reconhecidas pelo sistema</div>
+        <div class="imp-map-lbl">${p.columns.length} colunas · ${mapped.length} reconhecidas</div>
         <div class="imp-chips">${chips||'<span class="imp-unmapped">nenhuma</span>'}</div>
-        ${extras?`<div class="imp-unmapped">As outras ${extras} coluna(s) entram na planilha do mesmo jeito, sem interpretação.</div>`:''}
+        ${extras?`<div class="imp-unmapped">As outras ${extras} entram como estão.</div>`:''}
       </div>
-      ${p.truncated?'<div class="imp-warn">O arquivo passa de 5.000 linhas — só as primeiras 5.000 foram lidas.</div>':''}
+      ${p.truncated?'<div class="imp-warn">Só as primeiras 5.000 linhas foram lidas.</div>':''}
       <div class="tbl-scroll"><table class="lead-tbl imp-tbl">
         <thead><tr><th>Linha</th>${head}<th>Situação</th></tr></thead>
         <tbody>${rows}</tbody>
       </table></div>
-      <div class="imp-more">Mostrando ${p.rows.length} de ${p.total_rows} linhas e ${cols.length} de ${p.columns.length} colunas — a planilha completa aparece depois de importar.</div>
+      <div class="imp-more">Prévia: ${p.rows.length} de ${p.total_rows} linhas.</div>
       <div class="imp-foot">
         <label class="imp-check">
           <input type="checkbox" id="imp-skip-dup" ${p.counts.duplicate_db?'checked':''} />
-          Pular ${p.counts.duplicate_db||0} empresa(s) que já estão no histórico
+          Pular ${p.counts.duplicate_db||0} que já estão no histórico
         </label>
         <button class="app-btn-primary" id="imp-commit-btn" onclick="commitImport()"
                 ${p.importable?'':'disabled'}>
@@ -4439,10 +4414,10 @@ async function commitImport(){
     const resp=await authFetch(`/api/import/${p.batch_id}/commit`,{method:'POST',
       body:JSON.stringify({skip_existing:skipExisting,skip_duplicates:false})});
     const json=await resp.json().catch(()=>({}));
-    if(!resp.ok){renderImportPreview();alert(json.detail||'Erro ao importar a planilha.');return;}
+    if(!resp.ok){renderImportPreview();alert(json.detail||'Não foi possível importar. Tente de novo.');return;}
     renderImportDone(json);
   }catch(e){
-    if(e.message!=='not_authenticated'){renderImportPreview();alert('Erro de conexão.');}
+    if(e.message!=='not_authenticated'){renderImportPreview();alert('Sem conexão. Tente de novo.');}
   }
 }
 
@@ -4452,11 +4427,10 @@ function renderImportDone(result){
       <div class="imp-done-ico">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="20 6 9 17 4 12"/></svg>
       </div>
-      <h3>${result.created} empresa(s) importada(s)</h3>
+      <h3>${result.created} ${result.created===1?'empresa importada':'empresas importadas'}</h3>
       <p class="imp-done-sub">
-        ${result.skipped?`${result.skipped} linha(s) ignorada(s) por já existirem ou por não terem identificação.<br/>`:''}
-        A planilha completa já está no sistema, com todas as colunas do seu arquivo.
-        O enriquecimento roda de lá e acrescenta site, LinkedIn, DNS/MX e telefone.
+        ${result.skipped?`${result.skipped} ${result.skipped===1?'linha pulada':'linhas puladas'} (repetidas ou sem identificação).<br/>`:''}
+        Abra a planilha para analisar as empresas.
       </p>
       <div class="imp-done-actions">
         <button class="app-btn-primary" onclick="nav('sheet')">Abrir a planilha</button>
@@ -4469,7 +4443,7 @@ async function downloadImportTemplate(fmt){
   const token=await getToken();
   if(!token){openAuthModal();return;}
   const resp=await fetch(`/api/import/template?format=${fmt}`,{headers:{Authorization:`Bearer ${token}`}});
-  if(!resp.ok){alert('Erro ao baixar o modelo.');return;}
+  if(!resp.ok){alert('Não foi possível baixar o modelo.');return;}
   const url=URL.createObjectURL(await resp.blob());
   const a=document.createElement('a');
   a.href=url;a.download=`modelo_importacao.${fmt}`;
@@ -4483,12 +4457,12 @@ async function enrichImportedLead(leadId,btn){
   try{
     const resp=await authFetch(`/api/leads/${leadId}/enrich`,{method:'POST'});
     const json=await resp.json().catch(()=>({}));
-    if(!resp.ok){alert(json.detail||'Erro ao enriquecer.');return;}
+    if(!resp.ok){alert(json.detail||'Não foi possível analisar.');return;}
     loadHistory();
   }catch(e){
-    if(e.message!=='not_authenticated')alert('Erro de conexão.');
+    if(e.message!=='not_authenticated')alert('Sem conexão. Tente de novo.');
   }finally{
-    if(btn){btn.disabled=false;btn.textContent='Enriquecer';}
+    if(btn){btn.disabled=false;btn.textContent='Analisar';}
   }
 }
 
@@ -4563,10 +4537,9 @@ function _waHref(phone){
   return 'https://wa.me/'+d;
 }
 function _kpi(val,lbl,desc,warn){
-  return `<div class="kpi${warn?' warn':''}">
+  return `<div class="kpi${warn?' warn':''}" title="${esc(desc)}">
     <span class="kpi-val">${val}</span>
     <span class="kpi-lbl">${lbl}</span>
-    <span class="kpi-desc">${desc}</span>
   </div>`;
 }
 function _setBusy(root,busy){
@@ -4629,10 +4602,10 @@ function renderTierHeader(data){
   if(data.tier===undefined){r.style.display='none';r.innerHTML='';return;}
   const semTier=data.tier===null;
   const sup=!semTier&&_tierSuposto(data)&&data.tier_manual==null;
-  const motivo=data.tier_reason||(semTier?'Este lead ainda não foi classificado.':'');
+  const motivo=data.tier_reason||(semTier?'Ainda sem tier.':'');
   const cliente=data.relationship==='CUSTOMER'?'<span class="tier-flag">Já é cliente</span>':'';
   let acao='';
-  if(sup)acao=` <button type="button" class="btn-link" onclick="openTierModal(${Number(data.id)},'emp')">Informar nº de funcionários para confirmar</button>`;
+  if(sup)acao=` <button type="button" class="btn-link" onclick="openTierModal(${Number(data.id)},'emp')">Confirmar porte</button>`;
   else if(semTier)acao=` <button type="button" class="btn-link" onclick="openTierModal(${Number(data.id)})">Classificar agora</button>`;
   r.className='result-tier-reason'+(sup||semTier?' rev':'');
   r.innerHTML=`${cliente}${sup?'<span class="tier-flag sup">Porte suposto</span>':''}<span>${esc(motivo)}</span>${acao}`;
@@ -4654,7 +4627,7 @@ async function openTierModal(leadId,foco){
       lead=await resp.json();
     }catch(e){
       if(e.message==='not_authenticated')return;
-      body.innerHTML='<div class="muted-box">Não foi possível carregar o tier deste lead.</div>';
+      body.innerHTML='<div class="muted-box">Não foi possível carregar. Tente de novo.</div>';
       return;
     }
   }
@@ -4680,8 +4653,8 @@ function tierModalHtml(l){
   const m=TIER_META[l.tier]||TIER_NONE;
   const manual=l.tier_manual!=null;
   const sup=l.tier!=null&&_tierSuposto(l);
-  const titulo=l.tier!=null?`Por que Tier ${l.tier}?`:'Este lead ainda não foi classificado';
-  const motivo=l.tier_reason||(l.tier==null?'Clique em Reclassificar para a régua calcular o tier com os dados atuais da ficha.':'');
+  const titulo=l.tier!=null?`Por que Tier ${l.tier}?`:'Ainda sem tier';
+  const motivo=l.tier_reason||(l.tier==null?'Clique em Reclassificar para calcular.':'');
 
   const caminho=(det.path||[]).map((p,i)=>`
     <li class="tp-step">
@@ -4714,12 +4687,12 @@ function tierModalHtml(l){
   // Porte suposto: informar os funcionários é A ação desta tela, então vem
   // no topo, antes da explicação. Nos outros casos fica em "Ajustar".
   const empRow=`<div class="tm-row${sup?' tm-cta':''}">
-        <label class="tm-row-lbl" for="tier-emp">${sup?'Quantos funcionários a empresa tem?':(semPorte?'Informe o nº de funcionários':'Corrigir nº de funcionários')}</label>
-        ${sup?`<small class="tm-cta-sub">O tier ${esc(m.lbl)} foi suposto pelo provedor de e-mail porque não achamos o porte. Informe o número para confirmar ou corrigir.</small>`:''}
+        <label class="tm-row-lbl" for="tier-emp">${sup?'Quantos funcionários a empresa tem?':(semPorte?'Funcionários':'Corrigir funcionários')}</label>
+        ${sup?`<small class="tm-cta-sub">Não achamos o porte; o ${esc(m.lbl)} veio do provedor de e-mail.</small>`:''}
         <div class="tm-inline">
           <input type="number" id="tier-emp" class="cell-inp" min="1" step="1" inputmode="numeric" placeholder="Ex.: 120" value="${esc(empVal)}"
                  onkeydown="if(event.key==='Enter')salvarFuncionarios()"/>
-          <button type="button" class="set-btn primary" onclick="salvarFuncionarios()">Salvar e reclassificar</button>
+          <button type="button" class="set-btn primary" onclick="salvarFuncionarios()">Salvar</button>
         </div>
       </div>`;
 
@@ -4728,7 +4701,7 @@ function tierModalHtml(l){
       <span class="tier-big ${m.cls}">${esc(m.lbl)}${sup?'<small>?</small>':''}</span>
       <div class="tm-hdr-txt">
         <h3 class="tm-title" id="tier-modal-title">${esc(titulo)}</h3>
-        <div class="tm-sub">${esc(m.full)} · ${esc(m.nome)}${sup&&!manual?' · <b>porte suposto</b>':''}${manual?` · <b>definido por você</b> (a régua daria ${esc(autoTxt)})`:''}</div>
+        <div class="tm-sub">${esc(m.full)} · ${esc(m.nome)}${sup&&!manual?' · <b>porte suposto</b>':''}${manual?` · <b>definido por você</b> (automático: ${esc(autoTxt)})`:''}</div>
       </div>
     </div>
     ${sup?empRow:''}
@@ -4742,10 +4715,10 @@ function tierModalHtml(l){
       ${sup?'':empRow}
 
       <div class="tm-row">
-        <span class="tm-row-lbl">Definir o tier na mão</span>
+        <span class="tm-row-lbl">Escolher tier</span>
         <div class="tm-inline">
           <div class="seg tier-seg" role="group" aria-label="Tier manual">${seg}</div>
-          <button type="button" class="set-btn ghost" onclick="setTierManual(null)" ${manual?'':'disabled'} title="Descarta a escolha manual e usa o tier calculado">Voltar ao automático</button>
+          <button type="button" class="set-btn ghost" onclick="setTierManual(null)" ${manual?'':'disabled'} title="Usar o tier calculado">Automático</button>
         </div>
       </div>
 
@@ -4754,7 +4727,7 @@ function tierModalHtml(l){
           <input type="checkbox" id="tier-cliente" ${l.relationship==='CUSTOMER'?'checked':''} onchange="toggleCliente(this)"/>
           <span><b>Já é cliente</b><small>Vira Tier 4 e sai da prospecção.</small></span>
         </label>
-        <button type="button" class="set-btn ghost" onclick="reclassificarTier()" title="Roda a régua de novo com os dados atuais da ficha">Reclassificar</button>
+        <button type="button" class="set-btn ghost" onclick="reclassificarTier()" title="Calcular de novo com os dados atuais">Reclassificar</button>
       </div>
       <p class="set-feedback" id="tier-fb" role="status" aria-live="polite"></p>
     </div>
@@ -4773,7 +4746,7 @@ async function _tierReq(url,opts,okMsg){
     if(!resp.ok){
       _setBusy(ctl,false);
       if(fb){fb.className='set-feedback err';fb.textContent=resp.status===404
-        ?'Esta ação ainda não está disponível no servidor.'
+        ?'Indisponível neste servidor.'
         :_detailMsg(json,'Não foi possível salvar.');}
       return;
     }
@@ -4783,17 +4756,17 @@ async function _tierReq(url,opts,okMsg){
     _toast(okMsg);
   }catch(e){
     _setBusy(ctl,false);
-    if(e.message!=='not_authenticated'&&fb){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}
+    if(e.message!=='not_authenticated'&&fb){fb.className='set-feedback err';fb.textContent='Sem conexão. Tente de novo.';}
   }
 }
 function setTierManual(t){
   if(!_tierLead)return;
   _tierReq(`/api/leads/${_tierLead.id}/tier`,{method:'PATCH',body:JSON.stringify({tier:t})},
-    t==null?'Tier voltou para o cálculo automático.':`Tier ${t} definido por você.`);
+    t==null?'Tier automático.':`Tier ${t} definido.`);
 }
 function reclassificarTier(){
   if(!_tierLead)return;
-  _tierReq(`/api/leads/${_tierLead.id}/reclassificar`,{method:'POST'},'Tier recalculado com os dados atuais.');
+  _tierReq(`/api/leads/${_tierLead.id}/reclassificar`,{method:'POST'},'Tier recalculado.');
 }
 function salvarFuncionarios(){
   if(!_tierLead)return;
@@ -4801,17 +4774,17 @@ function salvarFuncionarios(){
   const v=parseInt(inp&&inp.value,10);
   if(!(v>0)){
     const fb=document.getElementById('tier-fb');
-    if(fb){fb.className='set-feedback err';fb.textContent='Informe um número inteiro maior que zero.';}
-    _toast('Informe um número inteiro de funcionários, maior que zero.');
+    if(fb){fb.className='set-feedback err';fb.textContent='Digite um número maior que zero.';}
+    _toast('Digite um número maior que zero.');
     inp?.focus();return;
   }
   _tierReq(`/api/leads/${_tierLead.id}`,{method:'PATCH',body:JSON.stringify({employees:v})},
-    `Funcionários atualizados para ${v.toLocaleString('pt-BR')} e tier recalculado.`);
+    `${v.toLocaleString('pt-BR')} funcionários. Tier recalculado.`);
 }
 function toggleCliente(cb){
   if(!_tierLead)return;
   _tierReq(`/api/leads/${_tierLead.id}`,{method:'PATCH',body:JSON.stringify({relationship:cb.checked?'CUSTOMER':'LEAD'})},
-    cb.checked?'Marcado como cliente: o lead saiu da prospecção.':'Desmarcado como cliente: o lead voltou para a prospecção.');
+    cb.checked?'Marcado como cliente.':'Voltou para a prospecção.');
 }
 
 /* Um LeadOut novo chegou (tier, cadência ou relacionamento mudou): atualiza
@@ -4855,9 +4828,9 @@ function histTierChipsHtml(){
   }).join('');
   const naoExec=_histLeads.filter(l=>l.cadence==null).length;
   return `<span class="tf-lbl">Tier</span>${chips}
-    <label class="tf-toggle" title="Leads que ainda não receberam nenhuma tentativa da cadência">
+    <label class="tf-toggle" title="Leads que ainda não receberam nenhuma tentativa">
       <input type="checkbox" ${_histNaoExec?'checked':''} onchange="setHistNaoExec(this.checked)"/>
-      Só não executados <span class="tf-n">${naoExec}</span>
+      Só sem contato <span class="tf-n">${naoExec}</span>
     </label>`;
 }
 function setHistTier(v){_histTier=v;renderHistory(document.getElementById('history-filter')?.value||'');}
@@ -4872,28 +4845,28 @@ function _classifCalloutHtml(semTier){
   const n=Number(semTier||0);
   if(!(n>0))return '';
   return `<div class="classif-callout">
-    <span><b>${n} ficha(s) sem tier.</b> Leads analisados antes da classificação automática ainda não têm tier: classifique todos de uma vez.</span>
-    <button type="button" class="set-btn primary" onclick="reclassificarTodos(this)">Classificar fichas existentes</button>
+    <span><b>${n} ${n===1?'lead sem tier':'leads sem tier'}.</b></span>
+    <button type="button" class="set-btn primary" onclick="reclassificarTodos(this)">Classificar agora</button>
   </div>`;
 }
 async function reclassificarTodos(btn){
-  const rotulo='Classificar fichas existentes';
+  const rotulo='Classificar agora';
   if(btn){btn.disabled=true;btn.textContent='Classificando…';}
   try{
     const resp=await authFetch('/api/tiers/reclassificar',{method:'POST'});
     const json=await _jsonOrNull(resp);
     if(!resp.ok){
       if(btn){btn.disabled=false;btn.textContent=rotulo;}
-      _toast(_detailMsg(json,'Não foi possível classificar as fichas.'));
+      _toast(_detailMsg(json,'Não foi possível classificar. Tente de novo.'));
       return;
     }
-    _toast((json&&json.message)||`${Number(json&&json.reclassificados||0)} ficha(s) classificada(s).`);
+    _toast((json&&json.message)||`${Number(json&&json.reclassificados||0)} classificados.`);
     if(document.getElementById('dash-tiers'))loadDashTiers();
     if(document.getElementById('agl'))_agCarregarDisponiveis();
     if(_histLeads.length)loadHistory();
   }catch(e){
     if(btn){btn.disabled=false;btn.textContent=rotulo;}
-    if(e.message!=='not_authenticated')_toast('Erro de conexão.');
+    if(e.message!=='not_authenticated')_toast('Sem conexão. Tente de novo.');
   }
 }
 
@@ -4912,7 +4885,7 @@ function dashTiersHtml(r){
   const tile=t=>`<button type="button" class="tier-kpi" onclick="goHistoryTier(${t})" title="Ver os leads Tier ${t} no histórico">
       <span class="tier-kpi-top"><span class="tier-badge t${t}">T${t}</span><span class="tier-kpi-val">${Number(pt[t]||0)}</span></span>
       <span class="tier-kpi-lbl">${esc(TIER_META[t].nome)}</span>
-      <span class="tier-kpi-sub">${t<4?`${Number(ne[t]||0)} não executado(s)`:'Fora da prospecção'}</span>
+      <span class="tier-kpi-sub">${t<4?`${Number(ne[t]||0)} sem contato`:'Fora da prospecção'}</span>
     </button>`;
   const rev=Number((r&&r.revisar)||0);
   const naoExecTotal=[1,2,3].reduce((s,t)=>s+Number(ne[t]||0),0);
@@ -4921,16 +4894,16 @@ function dashTiersHtml(r){
     <div class="block-head">
       <div>
         <div class="dash-sec-title">Leads por tier</div>
-        <div class="dash-sec-sub">${naoExecTotal?`<b>${naoExecTotal}</b> lead(s) de T1 a T3 ainda sem nenhum contato.`:'Todos os leads de T1 a T3 já estão em cadência.'} Clique num tier para ver a lista.</div>
+        <div class="dash-sec-sub">${naoExecTotal?`<b>${naoExecTotal}</b> de T1 a T3 sem contato.`:'T1 a T3 já em cadência.'}</div>
       </div>
-      <button type="button" class="set-btn ${Number(pt.sem_tier||0)>0?'ghost':'primary'}" onclick="nav('agenda')">Agendar lote de 1º contato</button>
+      <button type="button" class="set-btn ${Number(pt.sem_tier||0)>0?'ghost':'primary'}" onclick="nav('agenda')">Agendar 1º contato</button>
     </div>
     <div class="tier-kpis">
       ${[1,2,3,4].map(tile).join('')}
-      <button type="button" class="tier-kpi" onclick="goHistoryTier('rev')" title="Tier suposto pelo e-mail porque o porte é desconhecido: informe os funcionários para confirmar">
+      <button type="button" class="tier-kpi" onclick="goHistoryTier('rev')" title="Porte desconhecido: confirme os funcionários">
         <span class="tier-kpi-top"><span class="tier-badge rev">Revisar</span><span class="tier-kpi-val">${rev}</span></span>
         <span class="tier-kpi-lbl">Porte suposto</span>
-        <span class="tier-kpi-sub">Informe os funcionários</span>
+        <span class="tier-kpi-sub">Confirmar porte</span>
       </button>
     </div>
   </div>`;
@@ -4939,11 +4912,11 @@ function dashTiersHtml(r){
 /* ══════ PRÓXIMO PASSO (cadência do lead) ══════ */
 const CAD_STEPS=[['agendado','Agendado'],['tentativas','Tentativas'],['qualificacao','Qualificação'],['proposta','Proposta']];
 const CAD_HEADLINE={
-  agendado:'1º contato agendado. Quando chegar o dia, ligue e registre o que aconteceu.',
-  qualificacao:'Reunião de qualificação marcada. Depois da conversa, registre o resultado.',
-  proposta:'Lead qualificado com demanda: monte e envie a proposta comercial.',
-  aquecimento:'Em aquecimento: e-mails quinzenais e WhatsApp até o lead esquentar.',
-  encerrado:'Cadência encerrada para este lead.',
+  agendado:'1º contato agendado. No dia, ligue e registre aqui.',
+  qualificacao:'Reunião marcada. Depois, registre o resultado.',
+  proposta:'Qualificado. Envie a proposta.',
+  aquecimento:'Em aquecimento: e-mails a cada 15 dias e WhatsApp.',
+  encerrado:'Cadência encerrada.',
 };
 const DONE_STEPS=new Set(['aquec_email_1','aquec_email_2','aquec_email_3','aquec_whatsapp','contato_alternativo']);
 const CALL_STEPS=new Set(['primeiro_contato','tentativa_2','tentativa_3']);
@@ -4968,9 +4941,9 @@ function _cadIndisponivel(status){
   if(!box)return;
   box.innerHTML=`<div class="np-head"><div class="dec-title">Próximo passo</div></div>
     <div class="np-empty">${status===404
-      ?'A cadência automática ainda não está disponível neste servidor.'
-      :'Não foi possível carregar a cadência agora.'}
-      Enquanto isso, registre a ligação no formulário avulso mais abaixo.</div>`;
+      ?'Cadência indisponível neste servidor.'
+      :'Não foi possível carregar a cadência.'}
+      Registre a ligação mais abaixo.</div>`;
   const leg=document.getElementById('call-legacy');
   if(leg)leg.open=true;
 }
@@ -5012,12 +4985,12 @@ function renderCadencia(){
   const cad=c.cadence;
   const tent=Math.max(1,Math.min(3,Number(c.cadence_attempt)||1));
   const headline=cad==null
-    ?'Este lead ainda não entrou na cadência de contato.'
-    :(cad==='tentativas'?`Tentativa ${tent} de 3: ligue e registre o que aconteceu.`:(CAD_HEADLINE[cad]||''));
+    ?'Ainda fora da cadência.'
+    :(cad==='tentativas'?`Tentativa ${tent} de 3. Ligue e registre aqui.`:(CAD_HEADLINE[cad]||''));
   const prox=(c.proximas||[]);
   const tarefas=prox.length
-    ?prox.slice(0,3).map(_proxHtml).join('')+(prox.length>3?`<div class="np-more">+${prox.length-3} tarefa(s) depois destas</div>`:'')
-    :'<div class="np-empty np-empty-sm">Nenhuma tarefa aberta nesta cadência.</div>';
+    ?prox.slice(0,3).map(_proxHtml).join('')+(prox.length>3?`<div class="np-more">+${prox.length-3} depois</div>`:'')
+    :'<div class="np-empty np-empty-sm">Nenhuma tarefa aberta.</div>';
   const acoes=c.acoes||[];
   const botoes=acoes.map((a,i)=>{
     const estilo=['primary','ghost','danger'].includes(a.estilo)?a.estilo:'ghost';
@@ -5031,7 +5004,7 @@ function renderCadencia(){
     ${cad!=null?cadStepperHtml(c):''}
     <div class="np-grid">
       <div class="np-col">
-        <div class="np-lbl">${prox.length?'Tarefas abertas':'Agenda deste lead'}</div>
+        <div class="np-lbl">Tarefas</div>
         ${tarefas}
       </div>
       <div class="np-col" id="np-acoes">
@@ -5046,8 +5019,8 @@ function renderCadencia(){
               <button type="button" class="np-btn ghost" onclick="cadCancelarData()">Cancelar</button>
             </div>
           </div>
-          <input id="np-notas" class="cell-inp np-notas" maxlength="500" placeholder="Anotação para a atividade (opcional)" aria-label="Anotação sobre este contato"/>`
-          :'<div class="np-empty np-empty-sm">Nenhuma ação disponível agora.</div>'}
+          <input id="np-notas" class="cell-inp np-notas" maxlength="500" placeholder="Anotação (opcional)" aria-label="Anotação sobre este contato"/>`
+          :'<div class="np-empty np-empty-sm">Nada a fazer agora.</div>'}
       </div>
     </div>`;
 }
@@ -5065,7 +5038,7 @@ function cadAcao(i){
     if(row){row.hidden=false;inp?.focus();}
     return;
   }
-  if(a.estilo==='danger'&&!confirm(`${a.label}?\n\nEsta ação muda a cadência deste lead.`))return;
+  if(a.estilo==='danger'&&!confirm(`${a.label}?\n\nIsso muda a cadência deste lead.`))return;
   cadEnviar(a.resultado,null);
 }
 function cadConfirmarData(){
@@ -5109,7 +5082,7 @@ async function cadEnviar(resultado,reuniaoEm){
     loadTimeline();loadTodayFollowupsCount();
   }catch(e){
     _setBusy(box,false);
-    if(e.message!=='not_authenticated')_toast('Erro de conexão. Nada foi registrado.');
+    if(e.message!=='not_authenticated')_toast('Sem conexão. Nada foi registrado.');
   }
 }
 
@@ -5117,10 +5090,10 @@ async function cadConcluirTarefa(activityId,btn){
   if(btn)btn.disabled=true;
   try{
     const resp=await authFetch(`/api/activities/${activityId}`,{method:'PATCH',body:JSON.stringify({completed:true})});
-    if(!resp.ok){if(btn)btn.disabled=false;_toast('Não foi possível concluir a tarefa.');return;}
+    if(!resp.ok){if(btn)btn.disabled=false;_toast('Não foi possível concluir. Tente de novo.');return;}
     _toast('Etapa concluída.');
     loadCadencia();loadTimeline();loadTodayFollowupsCount();
-  }catch(e){if(btn)btn.disabled=false;if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+  }catch(e){if(btn)btn.disabled=false;if(e.message!=='not_authenticated')_toast('Sem conexão. Tente de novo.');}
 }
 
 /* ══════ CONTATOS DO DECISOR (cadastro manual) ══════ */
@@ -5136,7 +5109,7 @@ async function loadManualContacts(){
     if(id!==currentLeadId)return;
     if(!resp.ok){
       box.innerHTML=`<div class="np-empty">${resp.status===404
-        ?'O cadastro de contatos ainda não está disponível neste servidor.'
+        ?'Contatos indisponíveis neste servidor.'
         :'Não foi possível carregar os contatos.'}</div>`;
       document.getElementById('mc-add')?.setAttribute('hidden','');
       return;
@@ -5146,7 +5119,7 @@ async function loadManualContacts(){
     document.getElementById('mc-add')?.removeAttribute('hidden');
     renderManualContacts();
   }catch(e){
-    if(e.message!=='not_authenticated')box.innerHTML='<div class="np-empty">Erro de conexão ao carregar os contatos.</div>';
+    if(e.message!=='not_authenticated')box.innerHTML='<div class="np-empty">Sem conexão. Tente de novo.</div>';
   }
 }
 
@@ -5167,12 +5140,12 @@ function _mcCardHtml(c){
   ].filter(Boolean).join('');
   return `<div class="mc-card${pri?' primary':''}">
     <button type="button" class="mc-star${pri?' on':''}" aria-pressed="${pri}" onclick="mcPrincipal(${id})"
-      title="${pri?'Contato principal — clique para desmarcar':'Tornar este o contato principal (usado pela Agenda)'}"
+      title="${pri?'Contato principal. Clique para desmarcar.':'Tornar contato principal'}"
       aria-label="${pri?'Desmarcar como contato principal':'Marcar como contato principal'}">${IC_STAR}</button>
     <div class="mc-info">
       <div class="mc-name">${esc(nome)}${pri?'<span class="mc-tag pri">Principal</span>':''}${fonte?`<span class="mc-tag">${esc(fonte)}</span>`:''}</div>
       ${c.title?`<div class="mc-title">${esc(c.title)}</div>`:''}
-      <div class="mc-sub">${[c.phone,c.email].filter(Boolean).map(esc).join(' · ')||'<span class="muted">Sem telefone nem e-mail — edite para completar.</span>'}</div>
+      <div class="mc-sub">${[c.phone,c.email].filter(Boolean).map(esc).join(' · ')||'<span class="muted">Sem telefone nem e-mail.</span>'}</div>
       ${contatos?`<div class="mc-acts">${contatos}</div>`:''}
     </div>
     <div class="mc-manage">
@@ -5196,10 +5169,10 @@ function _mcFormHtml(c){
       <label class="mc-field mc-field-wide"><span>LinkedIn</span><input name="linkedin_url" type="url" inputmode="url" class="cell-inp" maxlength="300" value="${v('linkedin_url')}" placeholder="linkedin.com/in/…"/></label>
     </div>
     <label class="tm-check mc-check"><input type="checkbox" name="is_primary" ${c&&c.is_primary?'checked':(novo&&!_mc.some(x=>x.is_primary)?'checked':'')}/>
-      <span><b>Contato principal</b><small>É para ele que a Agenda monta a ligação, o WhatsApp e o e-mail.</small></span></label>
+      <span><b>Contato principal</b><small>Quem a Agenda chama.</small></span></label>
     <p class="mc-err" role="alert"></p>
     <div class="mc-form-acts">
-      <button type="submit" class="set-btn primary">Salvar contato</button>
+      <button type="submit" class="set-btn primary">Salvar</button>
       <button type="button" class="set-btn ghost" onclick="mcCancelar()">Cancelar</button>
     </div>
   </form>`;
@@ -5213,8 +5186,8 @@ function renderManualContacts(){
   if(_mcEdit==='new')partes.push(_mcFormHtml(null));
   ordem.forEach(c=>partes.push(_mcEdit===c.id?_mcFormHtml(c):_mcCardHtml(c)));
   if(!partes.length){
-    box.innerHTML=`<div class="mc-empty">Nenhum contato cadastrado ainda. Conhece alguém na empresa?
-      <button type="button" class="btn-link" onclick="mcNovo()">Adicionar o primeiro contato</button></div>`;
+    box.innerHTML=`<div class="mc-empty">Nenhum contato ainda.
+      <button type="button" class="btn-link" onclick="mcNovo()">Adicionar contato</button></div>`;
     return;
   }
   box.innerHTML=partes.join('');
@@ -5231,7 +5204,7 @@ async function mcSalvar(ev,id){
   const err=f.querySelector('.mc-err');
   const val=n=>(f.elements[n]?.value||'').trim();
   const name=val('name');
-  if(!name){err.textContent='Informe o nome do contato.';f.elements.name.focus();return;}
+  if(!name){err.textContent='Digite o nome.';f.elements.name.focus();return;}
   const campos={name,title:val('title'),phone:val('phone'),email:val('email'),linkedin_url:val('linkedin_url')};
   const body={is_primary:!!f.elements.is_primary?.checked};
   // Novo: só manda o que foi preenchido. Edição: "" apaga o campo no servidor.
@@ -5244,7 +5217,7 @@ async function mcSalvar(ev,id){
     const json=await _jsonOrNull(resp);
     if(!resp.ok){
       _setBusy(f,false);
-      err.textContent=resp.status===404?'Este cadastro ainda não está disponível no servidor.':_detailMsg(json,'Não foi possível salvar o contato.');
+      err.textContent=resp.status===404?'Indisponível neste servidor.':_detailMsg(json,'Não foi possível salvar.');
       return;
     }
     _mcEdit=null;
@@ -5252,28 +5225,28 @@ async function mcSalvar(ev,id){
     loadManualContacts();
   }catch(e){
     _setBusy(f,false);
-    if(e.message!=='not_authenticated')err.textContent='Erro de conexão. O contato não foi salvo.';
+    if(e.message!=='not_authenticated')err.textContent='Sem conexão. Não foi salvo.';
   }
 }
 async function mcPrincipal(id){
   const c=_mc.find(x=>x.id===id);if(!c)return;
   try{
     const resp=await authFetch(`/api/decisores/${id}`,{method:'PATCH',body:JSON.stringify({is_primary:!c.is_primary})});
-    if(!resp.ok){_toast(_detailMsg(await _jsonOrNull(resp),'Não foi possível alterar o contato principal.'));return;}
-    _toast(c.is_primary?'Contato principal desmarcado.':`${c.name||'Contato'} agora é o contato principal.`);
+    if(!resp.ok){_toast(_detailMsg(await _jsonOrNull(resp),'Não foi possível alterar.'));return;}
+    _toast(c.is_primary?'Contato principal desmarcado.':`${c.name||'Contato'} é o contato principal.`);
     loadManualContacts();
-  }catch(e){if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+  }catch(e){if(e.message!=='not_authenticated')_toast('Sem conexão. Tente de novo.');}
 }
 async function mcExcluir(id){
   const c=_mc.find(x=>x.id===id);if(!c)return;
-  if(!confirm(`Excluir o contato ${c.name||''}?\n\nEsta ação não pode ser desfeita.`))return;
+  if(!confirm(`Excluir ${c.name||'este contato'}? Não dá para desfazer.`))return;
   try{
     const resp=await authFetch(`/api/decisores/${id}`,{method:'DELETE'});
     if(!(resp.ok||resp.status===204)){_toast(_detailMsg(await _jsonOrNull(resp),'Não foi possível excluir.'));return;}
     _toast('Contato excluído.');
     if(_mcEdit===id)_mcEdit=null;
     loadManualContacts();
-  }catch(e){if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+  }catch(e){if(e.message!=='not_authenticated')_toast('Sem conexão. Tente de novo.');}
 }
 
 /* ══════ VIEW: AGENDA ══════ */
@@ -5307,21 +5280,21 @@ async function loadAgenda(){
     if(dia)dia.value=_isoDia(_proxDiaUtil());
   }
   const main=document.getElementById('ag-main');
-  main.innerHTML='<div class="panel"><div class="muted-box">Carregando a agenda…</div></div>';
+  main.innerHTML='<div class="panel"><div class="muted-box">Carregando…</div></div>';
   _agCarregarDisponiveis();
   try{
     const resp=await authFetch(`/api/agenda?dia=${encodeURIComponent(_agDia)}`);
     if(!resp.ok){
       document.getElementById('ag-kpis').innerHTML='';
       main.innerHTML=`<div class="panel"><div class="muted-box">${resp.status===404
-        ?'A agenda ainda não está disponível neste servidor.<br/>Enquanto isso, as tarefas abertas estão em Follow-ups.'
+        ?'Agenda indisponível neste servidor.'
         :'Não foi possível carregar a agenda.'}
-        <a class="empty-cta" href="#followups">Abrir Follow-ups</a></div></div>`;
+        <a class="empty-cta" href="#followups">Ver tarefas</a></div></div>`;
       return;
     }
     renderAgenda(await resp.json());
   }catch(e){
-    if(e.message!=='not_authenticated')main.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
+    if(e.message!=='not_authenticated')main.innerHTML='<div class="panel"><div class="muted-box">Sem conexão. Tente de novo.</div></div>';
   }
 }
 
@@ -5342,17 +5315,16 @@ function renderAgenda(d){
   document.getElementById('ag-kpis').innerHTML=`<div class="kpi-grid ag-kpis">
     ${_kpi(nAtr,'Atrasadas','Ficaram de dias anteriores: comece por elas',nAtr>0)}
     ${_kpi(nHoje,ehHoje?'Para hoje':'Neste dia','Etapas da cadência agendadas')}
-    <div class="kpi"><span class="kpi-lbl">Por tier</span><div class="ag-tier-row">${tiers}</div><span class="kpi-desc">Tarefas deste dia por tier do lead</span></div>
+    <div class="kpi" title="Tarefas deste dia por tier do lead"><span class="kpi-lbl">Por tier</span><div class="ag-tier-row">${tiers}</div></div>
   </div>`;
 
   const main=document.getElementById('ag-main');
   if(!atr.length&&!hoje.length){
     main.innerHTML=`<div class="panel"><div class="muted-box">
-      ${ehHoje?'Nada para hoje: agenda em dia.':'Nada agendado para este dia.'}<br/>
-      Agende um lote de 1º contato ao lado ou analise novas empresas.
+      ${ehHoje?'Nada para hoje.':'Nada neste dia.'}
       <div class="ag-empty-acts">
-        <a class="empty-cta" href="#" onclick="document.getElementById('agl-total')?.focus();return false">Agendar lote de 1º contato</a>
-        <a class="empty-cta ghost" href="#" onclick="nav('');focusSearch();return false">Analisar um domínio</a>
+        <a class="empty-cta" href="#" onclick="document.getElementById('agl-total')?.focus();return false">Agendar 1º contato</a>
+        <a class="empty-cta ghost" href="#" onclick="nav('');focusSearch();return false">Analisar empresa</a>
       </div>
     </div></div>`;
     return;
@@ -5376,7 +5348,7 @@ function agItemHtml(it,late){
   const tentativa=CALL_STEPS.has(step)&&l.cadence_attempt?`<span class="ag-attempt">Tentativa ${Number(l.cadence_attempt)}/3</span>`:'';
   const contato=c
     ?`<div class="ag-contact">${IC_USER_INLINE}<span><b>${esc(c.name||'Contato')}</b>${c.title?` · ${esc(c.title)}`:''}</span></div>`
-    :`<div class="ag-contact muted">Sem contato principal. <a class="btn-link" href="#lead-${lid}">Cadastre na ficha</a></div>`;
+    :`<div class="ag-contact muted">Sem contato principal. <a class="btn-link" href="#lead-${lid}">Adicionar</a></div>`;
   const comm=[
     tel?`<a class="ag-act call" href="${esc(tel)}">${IC_PHONE} Ligar</a>`:'',
     wa?`<a class="ag-act wa" href="${esc(wa)}" target="_blank" rel="noopener">${IC_CHAT} WhatsApp</a>`:'',
@@ -5399,7 +5371,7 @@ function agItemHtml(it,late){
         </div>
       </div>`;
   }else if(step==='reuniao_qualificacao'||step==='proposta'){
-    res=`<div class="ag-res"><a class="ag-rbtn ok" href="#lead-${lid}">Registrar o resultado na ficha</a></div>`;
+    res=`<div class="ag-res"><a class="ag-rbtn ok" href="#lead-${lid}">Registrar resultado</a></div>`;
   }else{
     res=`<div class="ag-res"><button type="button" class="ag-rbtn ok" onclick="agFeito(${aid})">Feito</button></div>`;
   }
@@ -5437,7 +5409,7 @@ async function agResultado(aid,resultado,reuniaoEm){
     if(!resp.ok){_setBusy(card,false);_toast(_detailMsg(json,'Não foi possível registrar.'));return;}
     _toast(json&&json.message||'Registrado.');
     _agSaiu(aid);
-  }catch(e){_setBusy(card,false);if(e.message!=='not_authenticated')_toast('Erro de conexão. Nada foi registrado.');}
+  }catch(e){_setBusy(card,false);if(e.message!=='not_authenticated')_toast('Sem conexão. Nada foi registrado.');}
 }
 function agReuniao(aid){
   const row=document.getElementById('ag-date-'+aid);
@@ -5461,7 +5433,7 @@ async function agFeito(aid){
     if(!resp.ok){_setBusy(card,false);_toast('Não foi possível concluir a tarefa.');return;}
     _toast('Tarefa concluída.');
     _agSaiu(aid);
-  }catch(e){_setBusy(card,false);if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+  }catch(e){_setBusy(card,false);if(e.message!=='not_authenticated')_toast('Sem conexão. Tente de novo.');}
 }
 
 /* ── Lote de 1º contato (40/5/5) ── */
@@ -5475,18 +5447,18 @@ function _agLoteCardHtml(){
       <small id="agl-disp-${t}">— disponíveis</small>
     </label>`).join('');
   return `<section class="panel panel-pad ag-card" id="agl">
-    <h3 class="ag-card-title">Agendar lote de 1º contato</h3>
+    <h3 class="ag-card-title">Agendar 1º contato</h3>
     <div id="agl-classif"></div>
-    <p class="ag-card-sub">Escolhe leads ainda não trabalhados (do T1 para baixo, pela nota) e cria a tarefa de 1º contato às 09:00 do dia. Faltou lead num tier? Completamos com o próximo.</p>
+    <p class="ag-card-sub">Cria tarefas às 9h para leads ainda sem contato, do T1 para baixo.</p>
     <div class="agl-row">
-      <label class="mc-field"><span>Dia do contato</span><input type="date" id="agl-dia" class="cell-inp" oninput="aglInvalidar()"/></label>
-      <label class="mc-field"><span>Total de leads</span><input type="number" id="agl-total" class="cell-inp" min="1" max="500" step="1" inputmode="numeric" value="50" oninput="aglInvalidar()"/></label>
+      <label class="mc-field"><span>Dia</span><input type="date" id="agl-dia" class="cell-inp" oninput="aglInvalidar()"/></label>
+      <label class="mc-field"><span>Total</span><input type="number" id="agl-total" class="cell-inp" min="1" max="500" step="1" inputmode="numeric" value="50" oninput="aglInvalidar()"/></label>
     </div>
-    <div class="agl-mix-lbl">Quantos de cada tier</div>
+    <div class="agl-mix-lbl">Por tier</div>
     <div class="agl-mix">${mix}</div>
     <div class="agl-btns">
-      <button type="button" class="set-btn ghost" id="agl-prev" onclick="aglEnviar(true)">Pré-visualizar</button>
-      <button type="button" class="set-btn primary" id="agl-ok" onclick="aglEnviar(false)" hidden>Confirmar agendamento</button>
+      <button type="button" class="set-btn ghost" id="agl-prev" onclick="aglEnviar(true)">Ver prévia</button>
+      <button type="button" class="set-btn primary" id="agl-ok" onclick="aglEnviar(false)" hidden>Agendar</button>
     </div>
     <p class="set-feedback" id="agl-fb" role="status" aria-live="polite"></p>
     <div id="agl-res"></div>
@@ -5527,7 +5499,7 @@ async function aglEnviar(preview){
   const dia=document.getElementById('agl-dia')?.value;
   const total=parseInt(document.getElementById('agl-total')?.value,10);
   const mix={};[1,2,3].forEach(t=>{mix[t]=Math.max(0,parseInt(document.getElementById('agl-mix-'+t)?.value,10)||0);});
-  if(!dia){fb.className='set-feedback err';fb.textContent='Escolha o dia do contato.';document.getElementById('agl-dia')?.focus();return;}
+  if(!dia){fb.className='set-feedback err';fb.textContent='Escolha o dia.';document.getElementById('agl-dia')?.focus();return;}
   if(!(total>0)){fb.className='set-feedback err';fb.textContent='O total precisa ser maior que zero.';document.getElementById('agl-total')?.focus();return;}
   if(!preview&&!_aglPreviewOk)return;
   fb.className='set-feedback ok';fb.textContent=preview?'Montando a prévia…':'Agendando…';
@@ -5538,7 +5510,7 @@ async function aglEnviar(preview){
     _setBusy(card,false);
     if(!resp.ok){
       fb.className='set-feedback err';
-      fb.textContent=resp.status===404?'O agendamento em lote ainda não está disponível no servidor.':_detailMsg(json,'Não foi possível agendar.');
+      fb.textContent=resp.status===404?'Indisponível neste servidor.':_detailMsg(json,'Não foi possível agendar.');
       return;
     }
     _aglDisponiveis(json.disponiveis);
@@ -5559,23 +5531,23 @@ async function aglEnviar(preview){
     }
   }catch(e){
     _setBusy(card,false);
-    if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}
+    if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Sem conexão. Tente de novo.';}
   }
 }
 function _aglPreviaHtml(j){
   const sel=j.selecionados||[];
   const pt=j.por_tier||{};
-  if(!sel.length)return `<div class="np-empty">Nenhum lead disponível para agendar.
-    <button type="button" class="btn-link" onclick="nav('lote')">Analisar uma lista de domínios</button></div>`;
+  if(!sel.length)return `<div class="np-empty">Nenhum lead disponível.
+    <button type="button" class="btn-link" onclick="nav('lote')">Analisar em lote</button></div>`;
   const chips=Object.keys(pt).sort().map(k=>`<span class="ag-tier-n"><span class="tier-badge t${esc(k)}">T${esc(k)}</span><b>${Number(pt[k]||0)}</b></span>`).join('');
   const lista=sel.map(s=>`<li>
       <a class="agl-li-name" href="#lead-${Number(s.lead_id)}">${esc(s.company_name||s.domain||'—')}</a>
       <span class="agl-li-meta">${tierBadgeHtml({tier:s.tier==null?null:s.tier})}</span>
     </li>`).join('');
   return `<div class="agl-prev">
-    <div class="agl-prev-head"><b>${sel.length} lead(s) na prévia</b><span class="ag-tier-row">${chips}</span></div>
+    <div class="agl-prev-head"><b>${sel.length} ${sel.length===1?'lead':'leads'}</b><span class="ag-tier-row">${chips}</span></div>
     <ol class="agl-list">${lista}</ol>
-    <p class="agl-hint">Confira e clique em <b>Confirmar agendamento</b>. Nada foi criado ainda.</p>
+    <p class="agl-hint">Nada foi criado ainda. Confira e clique em <b>Agendar</b>.</p>
   </div>`;
 }
 
@@ -5583,7 +5555,7 @@ function _aglPreviaHtml(j){
 function _agClientesCardHtml(){
   return `<details class="panel ag-card ag-cli" id="ag-cli" ontoggle="if(this.open)loadClientes()">
     <summary>
-      <span class="ag-cli-sum"><b>Base de clientes do time</b><small>Clientes Skymail ou de revenda viram Tier 4 e saem da prospecção.</small></span>
+      <span class="ag-cli-sum"><b>Clientes do time</b><small>Viram Tier 4 e saem da prospecção.</small></span>
       <span class="ag-cli-n" id="cli-n"></span>
     </summary>
     <div class="ag-cli-body">
@@ -5592,7 +5564,7 @@ function _agClientesCardHtml(){
       <div class="agl-row">
         <label class="mc-field"><span>Tipo</span>
           <select id="cli-kind" class="cell-inp"><option value="skymail">Cliente Skymail</option><option value="revenda">Revenda</option></select></label>
-        <button type="button" class="set-btn primary cli-add" onclick="addClientes(this)">Adicionar à base</button>
+        <button type="button" class="set-btn primary cli-add" onclick="addClientes(this)">Adicionar</button>
       </div>
       <p class="set-feedback" id="cli-fb" role="status" aria-live="polite"></p>
       <div id="cli-list" class="cli-list"></div>
@@ -5606,25 +5578,25 @@ async function loadClientes(){
   box.innerHTML='<div class="np-empty np-empty-sm">Carregando…</div>';
   try{
     const resp=await authFetch('/api/clientes');
-    if(!resp.ok){box.innerHTML=`<div class="np-empty np-empty-sm">${resp.status===404?'A base de clientes ainda não está disponível no servidor.':'Não foi possível carregar a base.'}</div>`;return;}
+    if(!resp.ok){box.innerHTML=`<div class="np-empty np-empty-sm">${resp.status===404?'Indisponível neste servidor.':'Não foi possível carregar.'}</div>`;return;}
     const r=await resp.json();
     const itens=(r&&r.itens)||[];
     const n=document.getElementById('cli-n');
     if(n)n.textContent=r&&r.total!=null?`${Number(r.total)}`:'';
-    if(!itens.length){box.innerHTML=`<div class="np-empty np-empty-sm">Nenhum domínio na base${r&&r.team?` do time ${esc(r.team)}`:''} ainda.</div>`;return;}
-    box.innerHTML=`${r.team?`<div class="cli-team">Time ${esc(r.team)} · ${Number(r.total||itens.length)} domínio(s)</div>`:''}
+    if(!itens.length){box.innerHTML=`<div class="np-empty np-empty-sm">Nenhum cliente ainda.</div>`;return;}
+    box.innerHTML=`${r.team?`<div class="cli-team">Time ${esc(r.team)} · ${Number(r.total||itens.length)}</div>`:''}
       ${itens.map(i=>`<div class="cli-row">
         <span class="cli-dom">${esc(i.domain)}</span>
         <span class="cli-kind">${esc(_CLI_KIND[i.kind]||i.kind||'')}</span>
         <button type="button" class="mc-mbtn danger" data-dom="${esc(i.domain)}" onclick="delCliente(this.dataset.dom)" aria-label="Remover ${esc(i.domain)} da base">Remover</button>
       </div>`).join('')}`;
-  }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="np-empty np-empty-sm">Erro de conexão.</div>';}
+  }catch(e){if(e.message!=='not_authenticated')box.innerHTML='<div class="np-empty np-empty-sm">Sem conexão. Tente de novo.</div>';}
 }
 async function addClientes(btn){
   const txt=document.getElementById('cli-txt');
   const fb=document.getElementById('cli-fb');
   const texto=(txt?.value||'').trim();
-  if(!texto){fb.className='set-feedback err';fb.textContent='Cole pelo menos um domínio.';txt?.focus();return;}
+  if(!texto){fb.className='set-feedback err';fb.textContent='Cole ao menos um domínio.';txt?.focus();return;}
   const kind=document.getElementById('cli-kind')?.value||'skymail';
   btn.disabled=true;fb.className='set-feedback ok';fb.textContent='Adicionando…';
   try{
@@ -5635,16 +5607,16 @@ async function addClientes(btn){
     fb.className='set-feedback ok';fb.textContent=json.message||'Base atualizada.';
     txt.value='';
     loadClientes();_agCarregarDisponiveis();
-  }catch(e){btn.disabled=false;if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Erro de conexão.';}}
+  }catch(e){btn.disabled=false;if(e.message!=='not_authenticated'){fb.className='set-feedback err';fb.textContent='Sem conexão. Tente de novo.';}}
 }
 async function delCliente(domain){
-  if(!domain||!confirm(`Remover ${domain} da base de clientes?\n\nOs leads deste domínio podem voltar para a prospecção.`))return;
+  if(!domain||!confirm(`Remover ${domain} dos clientes? Os leads dele voltam para a prospecção.`))return;
   try{
     const resp=await authFetch(`/api/clientes/${encodeURIComponent(domain)}`,{method:'DELETE'});
     if(!(resp.ok||resp.status===204)){_toast(_detailMsg(await _jsonOrNull(resp),'Não foi possível remover.'));return;}
-    _toast(`${domain} removido da base.`);
+    _toast(`${domain} removido.`);
     loadClientes();
-  }catch(e){if(e.message!=='not_authenticated')_toast('Erro de conexão.');}
+  }catch(e){if(e.message!=='not_authenticated')_toast('Sem conexão. Tente de novo.');}
 }
 
 /* ══════ HELPERS ══════ */
@@ -5652,7 +5624,7 @@ function setLoading(s){
   const btn=document.getElementById('search-btn');
   const txt=document.getElementById('search-btn-text');
   const sp=document.getElementById('search-btn-spinner');
-  btn.disabled=s;txt.textContent=s?'Analisando...':'Analisar';sp.style.display=s?'inline-block':'none';
+  btn.disabled=s;txt.textContent=s?'Analisando…':'Analisar';sp.style.display=s?'inline-block':'none';
 }
 function showError(m){const el=document.getElementById('error-banner');el.textContent=m;el.style.display='block';}
 function hideError(){document.getElementById('error-banner').style.display='none';}
