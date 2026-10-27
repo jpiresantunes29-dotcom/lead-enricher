@@ -7,49 +7,47 @@
 
 /* ── TOKENS ── */
 :root{
-  /* Tema CRM: neutros azulados, primário azul e tons pastel nas bolinhas
-     e etiquetas (referência visual: AI CRM dashboard da 21st). */
+  color-scheme:dark;
   --font-head:'Inter',-apple-system,'Segoe UI',sans-serif;
   --radius:10px;
-  --bg:#FFFFFF;
-  --bg-2:#FFFFFF;
-  --surface:#F5F6F8;
-  --surface-2:#EBEDF0;
-  --border:#E5E7EB;
-  --border-2:#D1D5DB;
-  --text:#111827;
-  --text-2:#4B5563;
-  --text-3:#6B7280;
-  --accent:#3F6FE8;
-  --accent-h:#2F5AD0;
-  --accent-ink:#FFFFFF;           /* texto sobre o primário */
-  /* Fundo e borda de estados ativos: cinza neutro, não azul claro. */
-  --accent-bg:#F1F3F6;
-  --accent-border:#D1D5DB;
-  --ok:#1B7556;   --ok-bg:#E8F8F1;   --ok-border:#BDEBD7;
-  --warn:#8F5509; --warn-bg:#FFF6E3; --warn-border:#FBE3AE;
-  --err:#BA3250;  --err-bg:#FFF0F3;  --err-border:#FFD2DB;
-  --info:#3F6FE8; --info-bg:#F1F3F6; --info-border:#D1D5DB;
-  --li:#0A66C2;
-  --shadow-sm:0 1px 2px rgba(16,24,40,.05);
-  --shadow-md:0 2px 6px rgba(16,24,40,.06);
-  --shadow-lg:0 16px 40px rgba(16,24,40,.14);
-  /* Barra lateral em cinza bem claro, sem tom azulado */
-  --sb:#F9FAFB;
-  --sb-2:#F1F3F5;
-  --sb-line:#E5E7EB;
-  --sb-txt:#111827;
-  --sb-txt-2:#4B5563;
-  --sb-txt-3:#6B7280;
-  /* Painel técnico (DNS/MX) — escuro e sóbrio, sem cara de syntax highlight */
-  --panel:#141A24;
-  --panel-hdr:#10151E;
-  --panel-line:#232B38;
-  --panel-line-2:#1D242F;
-  --panel-txt:#E3E8EF;      /* valor principal */
-  --panel-txt-2:#B7C0CD;    /* valor secundário */
-  --panel-txt-3:#8590A0;    /* rótulo / apoio */
-  --panel-accent:#A8CFB8;   /* único acento: hostname de e-mail */
+  --bg:#08090A;
+  --bg-2:#0E1214;
+  --surface:#12171A;
+  --surface-2:#1A2125;
+  --border:#1E2A2D;
+  --border-2:#2B3C40;
+  --text:#E8F5F1;
+  --text-2:#A7BDB8;
+  --text-3:#74908A;
+  --accent:#51F0D8;               /* menta do shader Metaballs */
+  --accent-h:#7AF5E3;
+  --accent-ink:#04201C;           /* texto sobre o primário */
+  --accent-bg:rgba(81,240,216,.09);
+  --accent-border:#0B6065;
+  --ok:#5FE0A8;   --ok-bg:rgba(95,224,168,.10);   --ok-border:rgba(95,224,168,.28);
+  --warn:#E8B450; --warn-bg:rgba(232,180,80,.10); --warn-border:rgba(232,180,80,.28);
+  --err:#FF8FA3;  --err-bg:rgba(255,143,163,.10); --err-border:rgba(255,143,163,.30);
+  --info:#51F0D8; --info-bg:rgba(81,240,216,.09); --info-border:#0B6065;
+  --li:#4C9AE0;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 2px 8px rgba(0,0,0,.45);
+  --shadow-lg:0 16px 40px rgba(0,0,0,.6);
+  /* Barra lateral: preto mais fundo que a área de trabalho */
+  --sb:#060708;
+  --sb-2:#0F1416;
+  --sb-line:#182124;
+  --sb-txt:#E8F5F1;
+  --sb-txt-2:#A7BDB8;
+  --sb-txt-3:#74908A;
+  /* Painel técnico (DNS/MX) */
+  --panel:#0B0F11;
+  --panel-hdr:#090C0E;
+  --panel-line:#1B2528;
+  --panel-line-2:#151D20;
+  --panel-txt:#E3EFEC;
+  --panel-txt-2:#B2C4C0;
+  --panel-txt-3:#7E9893;
+  --panel-accent:#51F0D8;
   --mono:'SFMono-Regular',Consolas,'Cascadia Mono',Menlo,'Liberation Mono',monospace;
 }
 
@@ -179,7 +177,7 @@ body{
 .sb-acct:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .sb-avatar{
   width:32px;height:32px;border-radius:99px;flex-shrink:0;
-  background:linear-gradient(135deg,#D6E4FF,#BCD0FF);color:#2B3F85;
+  background:linear-gradient(135deg,#51F0D8,#0B6065);color:#04201C;
   display:flex;align-items:center;justify-content:center;
   font-size:12px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;
 }
@@ -220,7 +218,7 @@ body{
   display:flex;align-items:center;justify-content:space-between;
   gap:20px;flex-wrap:wrap;
   padding:10px 24px;min-height:48px;
-  background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+  background:rgba(8,9,10,.88);backdrop-filter:blur(8px);
   border-bottom:1px solid var(--border);
 }
 .tb-head{min-width:0}
@@ -304,13 +302,13 @@ body{
   width:100%;display:flex;align-items:center;gap:4px;margin-top:6px;
   background:var(--bg-2);border:1.5px solid var(--border-2);border-radius:16px;
   padding:7px 7px 7px 20px;
-  box-shadow:0 1px 2px rgba(16,24,40,.05),0 4px 12px rgba(16,24,40,.05);
+  box-shadow:0 1px 2px rgba(0,0,0,.4),0 4px 12px rgba(0,0,0,.35);
   transition:border-color .2s,box-shadow .2s;
 }
-.hero-search-box:hover{border-color:#9CA3AF}
+.hero-search-box:hover{border-color:var(--border-2)}
 .hero-search-box:focus-within{
   border-color:var(--accent);
-  box-shadow:0 1px 2px rgba(16,24,40,.05),0 4px 12px rgba(16,24,40,.05);
+  box-shadow:0 1px 2px rgba(0,0,0,.4),0 4px 12px rgba(0,0,0,.35);
 }
 .hero-search-icon{color:var(--accent);flex-shrink:0;display:flex}
 .hero-search-icon svg{width:20px;height:20px}
@@ -571,7 +569,7 @@ body{
 .ir-k{color:var(--panel-txt-3);font-size:11.5px}
 .ir-asn{color:var(--panel-txt)}
 .ir-org{color:var(--panel-txt-2);line-height:1.45}
-.ir-nil{color:#5F6A7A}
+.ir-nil{color:#6F8883}
 .ir-tag{
   display:inline-block;background:rgba(148,163,184,.10);color:var(--panel-txt-2);
   border:1px solid rgba(148,163,184,.18);
@@ -806,7 +804,7 @@ body{
 .dec2-badge{font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--ok-bg);color:var(--ok);border:1px solid var(--ok-border)}
 .dec2-reveal{
   width:100%;padding:10px;margin-bottom:12px;
-  background:var(--accent);color:#fff;border:none;border-radius:8px;
+  background:var(--accent);color:var(--accent-ink);border:none;border-radius:8px;
   font-size:13.5px;font-weight:700;cursor:pointer;transition:background .15s;
 }
 .dec2-reveal:hover{background:var(--accent-h)}
@@ -900,7 +898,7 @@ body{
    vai gastar ANTES de clicar — telefone custa 5, não é detalhe. */
 .pr-reveal{
   align-self:flex-start;padding:6px 12px;border:none;border-radius:6px;
-  background:var(--accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;
+  background:var(--accent);color:var(--accent-ink);font-size:12px;font-weight:600;cursor:pointer;
   transition:background .15s;
 }
 .pr-reveal:hover{background:var(--accent-h)}
@@ -997,7 +995,7 @@ body{
 }
 .cv-search input:focus{
   outline:none;background:var(--bg-2);border-color:var(--accent);
-  box-shadow:0 0 0 3px rgba(63,111,232,.1);
+  box-shadow:0 0 0 3px rgba(81,240,216,.16);
 }
 .cv-filters{display:flex;gap:6px;margin-top:9px;flex-wrap:wrap}
 .cv-filter{
@@ -1056,7 +1054,7 @@ body{
   width:40px;height:40px;border-radius:50%;flex-shrink:0;
   display:flex;align-items:center;justify-content:center;
   font-family:var(--font-head);font-size:14px;font-weight:700;
-  color:#2B3F85;letter-spacing:.02em;user-select:none;
+  color:#04201C;letter-spacing:.02em;user-select:none;
 }
 .cv-av.g{width:34px;height:34px;font-size:12.5px}
 
@@ -1272,7 +1270,7 @@ body{
 }
 .cv-textarea:focus{
   outline:none;background:var(--bg-2);border-color:var(--accent);
-  box-shadow:0 0 0 3px rgba(63,111,232,.1);
+  box-shadow:0 0 0 3px rgba(81,240,216,.16);
 }
 .cv-icon-btn{
   flex-shrink:0;width:38px;height:38px;border-radius:9px;
@@ -1584,7 +1582,7 @@ body{
 .fn-row{display:flex;align-items:center;gap:10px}
 .fn-lbl{width:140px;font-size:12.5px;color:var(--text-2);flex-shrink:0}
 .fn-track{flex:1;height:20px;background:var(--surface);border-radius:6px;overflow:hidden}
-.fn-bar{height:100%;background:linear-gradient(90deg,#9CBBFF,var(--accent));border-radius:6px;transition:width .5s cubic-bezier(.22,1,.36,1)}
+.fn-bar{height:100%;background:linear-gradient(90deg,#0B6065,var(--accent));border-radius:6px;transition:width .5s cubic-bezier(.22,1,.36,1)}
 .fn-val{width:32px;text-align:right;font-size:12.5px;font-weight:700}
 .next-list{display:flex;flex-direction:column;gap:10px}
 .next-item{
@@ -1925,13 +1923,13 @@ body{
   padding:0;text-align:left;white-space:nowrap;
   min-width:130px;max-width:280px;
 }
-.sh-tbl thead th.sys{background:#EAF1FF;border-bottom-color:#C7D8FF}
+.sh-tbl thead th.sys{background:#0D2326;border-bottom-color:#0B6065}
 .sh-th{
   display:block;width:100%;padding:8px 12px;
   font-size:12px;font-weight:500;
   color:var(--text-3);text-align:left;overflow:hidden;text-overflow:ellipsis;
 }
-.sh-tbl thead th.sys .sh-th{color:#2F5AD0}
+.sh-tbl thead th.sys .sh-th{color:var(--accent)}
 .sh-th:hover,.sh-th.on{color:var(--text)}
 .sh-corner{
   position:sticky;left:0;top:0;z-index:5!important;
@@ -1960,10 +1958,10 @@ body{
   max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   height:30px;cursor:cell;
 }
-.sh-tbl tbody td.sys{background:#F7FAFF}
+.sh-tbl tbody td.sys{background:#0B1517}
 .sh-tbl tbody td.num{text-align:right;font-family:'JetBrains Mono',monospace;font-size:11.5px}
 .sh-tbl tbody tr:hover td{background:var(--surface)}
-.sh-tbl tbody tr:hover td.sys{background:#EEF4FF}
+.sh-tbl tbody tr:hover td.sys{background:#102023}
 .sh-tbl tbody tr.row-sel td{background:var(--accent-bg)}
 .sh-tbl tbody td.sel{
   outline:2px solid var(--accent);outline-offset:-2px;background:var(--bg-2)!important;
@@ -2001,7 +1999,7 @@ body{
 .sh-toast{
   position:fixed;left:50%;bottom:26px;transform:translate(-50%,16px);
   max-width:min(520px,90vw);padding:12px 18px;border-radius:9px;
-  background:var(--text);color:#fff;font-size:12.5px;font-weight:500;
+  background:var(--text);color:var(--bg);font-size:12.5px;font-weight:500;
   box-shadow:var(--shadow-lg);opacity:0;pointer-events:none;transition:all .2s;z-index:900;
 }
 .sh-toast.on{opacity:1;transform:translate(-50%,0)}
@@ -2577,11 +2575,11 @@ body{
    para nunca depender só da cor.
 ════════════════════════════════════════════════════════════════ */
 :root{
-  --t1:#3F6FE8; --t1-ink:#FFFFFF;
-  --t2:#1F63BE; --t2-bg:#E6F2FF; --t2-border:#BBD9FF;
-  --t3:#6F52D8; --t3-bg:#F1EDFF; --t3-border:#D9CEFF;
-  --t4:#5B6784; --t4-bg:#F1F4FA; --t4-border:#D9E0EE;
-  --rev:#8F5509; --rev-bg:#FFF6E3; --rev-border:#FBE3AE;
+  --t1:#51F0D8; --t1-ink:#04201C;
+  --t2:#6CC6F5; --t2-bg:rgba(108,198,245,.10); --t2-border:rgba(108,198,245,.30);
+  --t3:#B8A6FF; --t3-bg:rgba(184,166,255,.10); --t3-border:rgba(184,166,255,.30);
+  --t4:#8FA6A1; --t4-bg:rgba(143,166,161,.10); --t4-border:rgba(143,166,161,.28);
+  --rev:#E8B450; --rev-bg:rgba(232,180,80,.10); --rev-border:rgba(232,180,80,.35);
 }
 .muted{color:var(--text-3)}
 [hidden]{display:none !important}
@@ -2716,7 +2714,7 @@ button.tier-badge:focus-visible,.tf-chip:focus-visible,.np-btn:focus-visible,.ag
 }
 .tf-chip:hover{border-color:var(--accent);color:var(--accent)}
 .tf-chip.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
-.tf-chip.on .tier-dot.rev{border-color:#fff}
+.tf-chip.on .tier-dot.rev{border-color:var(--bg)}
 .tf-n{font-size:11px;font-weight:700;opacity:.75;font-variant-numeric:tabular-nums}
 .tf-toggle{
   display:inline-flex;align-items:center;gap:7px;min-height:34px;margin-left:6px;
@@ -3050,10 +3048,10 @@ button.tier-badge:focus-visible,.tf-chip:focus-visible,.np-btn:focus-visible,.ag
 /* Tier suposto (porte desconhecido) e lead ainda não classificado */
 .tier-badge.none{background:var(--surface);color:var(--text-3);border:1px dashed var(--border-2)}
 .tier-badge.sup{border-style:dashed}
-.tier-badge.t1.sup{border-color:#fff;box-shadow:0 0 0 1px var(--t1)}
+.tier-badge.t1.sup{border-color:var(--bg);box-shadow:0 0 0 1px var(--t1)}
 .tier-q{
   display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;padding:0 4px;
-  border-radius:99px;background:var(--rev);color:#fff;font-size:10px;font-weight:800;line-height:1;
+  border-radius:99px;background:var(--rev);color:#1A1203;font-size:10px;font-weight:800;line-height:1;
   text-transform:none;letter-spacing:0;
 }
 .tier-flag.sup{background:var(--rev-bg);color:var(--rev);border-color:var(--rev-border)}

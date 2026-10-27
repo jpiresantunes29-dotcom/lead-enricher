@@ -21,7 +21,7 @@ from services import guides
 
 BRAND = "LeadEnricher"
 LOCALE = "pt_BR"
-THEME_COLOR = "#1D4ED8"
+THEME_COLOR = "#060708"
 OG_IMAGE_PATH = "/static/og-cover.png?v=1"
 OG_IMAGE_ALT = (
     "Ficha de empresa do LeadEnricher: provedor de e-mail, porte, setor e decisores"
