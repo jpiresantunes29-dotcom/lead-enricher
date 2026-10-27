@@ -5046,7 +5046,7 @@ function renderCadencia(){
               <button type="button" class="np-btn ghost" onclick="cadCancelarData()">Cancelar</button>
             </div>
           </div>
-          <input id="np-notas" class="cell-inp np-notas" maxlength="500" placeholder="Anotação para a timeline (opcional)" aria-label="Anotação sobre este contato"/>`
+          <input id="np-notas" class="cell-inp np-notas" maxlength="500" placeholder="Anotação para a atividade (opcional)" aria-label="Anotação sobre este contato"/>`
           :'<div class="np-empty np-empty-sm">Nenhuma ação disponível agora.</div>'}
       </div>
     </div>`;
