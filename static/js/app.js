@@ -818,7 +818,7 @@ async function loadDashboard(){
         ${kpi(pct(m.taxa_contato),'Taxa de contato','Ligações em que você falou com alguém')}
         ${kpi(pct(m.taxa_reuniao),'Taxa de reunião','Ligações que terminaram em reunião marcada')}
         ${kpi(pct(m.conversao_oportunidade),'Viraram oportunidade','Leads que chegaram a oportunidade ou ganho')}
-        ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} atrasados)</small>`:''),'Tarefas abertas','Tarefas em aberto na sua fila',m.followups_atrasados>0)}
+        ${kpi(m.followups_pendentes+(m.followups_atrasados?` <small>(${m.followups_atrasados} ${m.followups_atrasados===1?'atrasada':'atrasadas'})</small>`:''),'Tarefas abertas','Tarefas em aberto na sua fila',m.followups_atrasados>0)}
       </div>
       <div class="dash-cols">
         <div class="panel panel-pad">
@@ -1689,7 +1689,7 @@ function filtroConversas(id){_cvFiltro=id;_redesenharLista();}
    foto de perfil do contato, e pôr um rosto genérico no lugar seria mostrar
    alguém que não é a pessoa. A cor é estável para o mesmo nome — é o que
    permite reconhecer a conversa de relance. */
-const _AV_CORES=['#1D4ED8','#0F766E','#7C3AED','#B45309','#BE123C','#0E7490','#4D7C0F','#9333EA'];
+const _AV_CORES=['#CFE0FF','#BFE3FF','#D6D9FF','#CDEBF2','#DCD3FF','#D0E8FF','#C5D5F7','#E1D6FF'];
 
 function _avCor(txt){
   let h=0;
