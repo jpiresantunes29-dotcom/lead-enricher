@@ -19,7 +19,7 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 from ._ddg import search_multi
-from ._utils import is_public_host, normalize_domain
+from ._utils import is_public_host, registrable_domain
 from .scraper import scrape_website
 
 logger = logging.getLogger(__name__)
@@ -37,6 +37,14 @@ BLOCKED_HOSTS = {
     "sympla.com.br", "eventbrite.com", "crunchbase.com", "zoominfo.com", "apollo.io",
     "rocketreach.co", "lusha.com", "6sense.com", "dnb.com", "bloomberg.com",
     "jusbrasil.com.br", "escavador.com", "gov.br", "sebrae.com.br",
+    # Construtores de página e lojas hospedadas: "acme.wixsite.com" e
+    # "acme.lojaintegrada.com.br" são da empresa, mas não são o DOMÍNIO dela —
+    # e o domínio é a chave do MX, do DNS e dos decisores.
+    "wixsite.com", "wix.com", "negocio.site", "business.site", "linktr.ee",
+    "webnode.com.br", "webnode.page", "godaddysites.com", "square.site",
+    "carrd.co", "lojaintegrada.com.br", "mercadoshops.com.br",
+    "nuvemshop.com.br", "myshopify.com", "github.io", "netlify.app",
+    "vercel.app", "wa.me", "whatsapp.com",
 }
 
 # Padrão amplo: qualquer URL http(s) (a filtragem fina é nossa, não da engine)
@@ -64,11 +72,17 @@ def _core_name(company_name: str) -> str:
 
 
 def _root_host(url: str) -> str:
+    """
+    Domínio registrável do resultado: "loja.acme.com.br/produto?utm=x" →
+    "acme.com.br". O buscador devolve a página que casou com a busca — blog,
+    loja, área do cliente —, mas o que a ficha precisa é o domínio da
+    empresa, de onde saem o MX e o site oficial.
+    """
     try:
         host = urlparse(url).hostname or ""
     except ValueError:
         return ""
-    return normalize_domain(host)
+    return registrable_domain(host)
 
 
 def _is_blocked(host: str) -> bool:

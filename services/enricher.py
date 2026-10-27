@@ -74,7 +74,16 @@ ENRICH_BUDGET_SECONDS = int(os.getenv("ENRICH_BUDGET_SECONDS", "50"))
 #       é escolhido a dedo numa lista curta e erra muito: "apoio a edifícios"
 #       para o Grupo Positivo, "bem-estar e condicionamento físico" para a
 #       Unimed Curitiba.
-ENRICHMENT_VERSION = 10
+#  11 — MX e links oficiais. O provedor de e-mail sai do MX PRIMÁRIO (backup
+#       conhecido não basta para "high"), por sufixo exato do hostname
+#       ("uol.com.br" não casa mais com "bauol.com.br"), e um MX com nome
+#       próprio é reconhecido pelo CNAME/PTR; gateway (Proofpoint, Mimecast)
+#       vira "Microsoft 365 (via Proofpoint)" quando o SPF aponta uma caixa
+#       postal só. MX nulo (RFC 7505), MX implícito e DNS sem resposta deixam
+#       de sair iguais a "sem MX". O site passa a ser gravado onde a home
+#       termina depois dos redirecionamentos, e o LinkedIn do rodapé ignora o
+#       crédito da agência e vem na forma canônica. Ficha do v10 é recoletada.
+ENRICHMENT_VERSION = 11
 
 
 # Rótulos de setor que descrevem a ADMINISTRAÇÃO de uma empresa, não o que
@@ -239,11 +248,24 @@ def enrich_company(domain_input: str) -> dict:
     # Receita informam corretamente (Curitiba/São José dos Pinhais). A
     # metatag continua valendo, mas como ÚLTIMO recurso, lá embaixo.
     location_do_site = None
+    linkedin_ambiguo = False
+    # Domínios que o próprio site assume como seus além do digitado — hoje, o
+    # destino do redirecionamento da home ("empresa.com.br" → "empresa.com").
+    # O LinkedIn que declara esse endereço é o da empresa.
+    dominios_do_site = ()
     if site_data and isinstance(site_data, dict):
         for key in ("company_name", "description", "sector",
                     "corporate_email", "phone", "linkedin_url", "cnpj"):
             if site_data.get(key):
                 result[key] = site_data[key]
+        # Site no endereço onde a home de fato terminou (www, https, marca
+        # nova), não no que foi digitado — ver `canonical_site_url`.
+        if site_data.get("website"):
+            result["website"] = site_data["website"]
+            site_host = normalize_domain(site_data["website"])
+            if site_host and site_host != domain:
+                dominios_do_site = (site_host,)
+        linkedin_ambiguo = bool(site_data.get("linkedin_ambiguous"))
         location_do_site = site_data.get("location")
         result["site_emails"] = site_data.get("emails") or []
         result["site_phones"] = site_data.get("phones") or []
@@ -309,13 +331,19 @@ def enrich_company(domain_input: str) -> dict:
     found_url = None
     try:
         if site_linkedin_url:
+            # Site que publica várias organizações sem que a escolhida se
+            # pareça com a empresa (parceiro, holding, cliente em destaque)
+            # não conta como declaração: a página do LinkedIn tem de
+            # confirmar, e sem ela o link fica fora da ficha.
             page = inspect_company_page(site_linkedin_url, domain,
-                                        declarado_pelo_site=True,
-                                        company_name=company_name)
+                                        declarado_pelo_site=not linkedin_ambiguo,
+                                        company_name=company_name,
+                                        outros_dominios=dominios_do_site)
             found_url = site_linkedin_url
-            logger.info("LinkedIn source=site domain=%s", domain)
+            logger.info("LinkedIn source=site domain=%s ambiguo=%s", domain, linkedin_ambiguo)
         elif _remaining() > 5:
-            linkedin_data = find_company_linkedin(domain, company_name)
+            linkedin_data = find_company_linkedin(domain, company_name,
+                                                  outros_dominios=dominios_do_site)
             found_url = (linkedin_data or {}).get("url")
             page = (linkedin_data or {}).get("page")
             # Por qual caminho o LinkedIn apareceu (ou não). É o número que decide

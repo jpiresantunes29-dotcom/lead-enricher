@@ -5,7 +5,8 @@ import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from difflib import SequenceMatcher
+from urllib.parse import unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
@@ -13,6 +14,7 @@ from ._utils import (
     HEADERS, normalize_domain, tld_to_region, safe_get,
     jsonld_organization, linkedin_from_sameas, looks_like_bot_wall,
     is_public_linkedin_slug, LINKEDIN_PAGE_RE, fix_response_encoding,
+    linkedin_page_url, is_credit_anchor, canonical_site_url,
 )
 from .phone_normalizer import pick_best_phone, extract_and_normalize_phones
 from .providers.cnpj_receita import extract_cnpj
@@ -68,7 +70,12 @@ def _fetch_com_motivo(url: str, timeout: Optional[int] = None) -> tuple:
             # vez de extrair o título do desafio como se fosse a empresa.
             logger.info("Bot wall detected url=%s", url)
             return None, "bot_wall"
-        return (BeautifulSoup(resp.text, "html.parser"), resp.text), None
+        # O terceiro elemento é onde a página TERMINOU depois dos
+        # redirecionamentos — é dele que sai o endereço oficial do site.
+        final_url = getattr(resp, "url", None) or url
+        if not isinstance(final_url, str):
+            final_url = url
+        return (BeautifulSoup(resp.text, "html.parser"), resp.text, final_url), None
     except Exception as e:
         logger.debug("Fetch failed url=%s: %s", url, e)
         return None, None
@@ -77,7 +84,7 @@ def _fetch_com_motivo(url: str, timeout: Optional[int] = None) -> tuple:
 def _fetch(url: str, timeout: Optional[int] = None) -> Optional[tuple]:
     """Devolve (soup, html) ou None. Para quem não precisa saber o motivo."""
     fetched, _ = _fetch_com_motivo(url, timeout)
-    return fetched
+    return fetched[:2] if fetched else None
 
 
 def _localizacao_plausivel(valor: Optional[str]) -> bool:
@@ -128,32 +135,98 @@ def _usable_linkedin(href: str) -> Optional[str]:
     (/company/<id>/admin) faria a ficha inteira vir vazia: quem chama
     gravaria essa URL e o enricher pularia a busca pela página pública.
     """
-    match = LINKEDIN_PAGE_RE.search(href)
+    match = LINKEDIN_PAGE_RE.search(href or "")
     if not match or not is_public_linkedin_slug(match.group("slug")):
         return None
-    return match.group(0).rstrip("/")
+    # Forma canônica: o mesmo perfil chega como "http://br.linkedin.com/
+    # company/Acme/?trk=..." no rodapé de um site e "https://www.linkedin.com/
+    # company/acme" em outro. Gravar a variante fazia a mesma empresa
+    # aparecer com dois links diferentes (e quebrar a deduplicação no CRM).
+    slug = unquote(match.group("slug")).strip("/").lower()
+    return linkedin_page_url(match.group("kind").lower(), slug)
 
 
-def _extract_linkedin(soup: BeautifulSoup, text: str) -> Optional[str]:
-    """Extrai link LinkedIn priorizando footer/header (social links da própria empresa)."""
-    # 1. Tentar dentro de <footer> ou <header> primeiro
-    for container_name in ("footer", "header"):
+def _similaridade(a: str, b: str) -> float:
+    a = re.sub(r"[^a-z0-9]", "", (a or "").lower())
+    b = re.sub(r"[^a-z0-9]", "", (b or "").lower())
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _escolher_linkedin(soup: BeautifulSoup, text: str, domain: Optional[str] = None,
+                       company_name: Optional[str] = None) -> tuple:
+    """
+    `(url, ambiguo)` do LinkedIn que o site publica como SEU.
+
+    Antes valia o primeiro link do rodapé, e o rodapé é justamente onde mora o
+    crédito da agência ("Desenvolvido por X", com o LinkedIn de X) e o selo de
+    parceiro. Agora:
+      - âncora de crédito de agência é descartada;
+      - os demais candidatos são pontuados pela origem (rodapé > cabeçalho >
+        corpo > texto solto) e pela semelhança do slug com o domínio e o nome
+        da empresa — um link do rodapé que não se parece em nada com a
+        empresa perde para um do cabeçalho que se parece;
+      - `ambiguo` sai True quando o site publica mais de uma organização e a
+        escolhida não se parece com a empresa. Quem chama trata isso como
+        "o site não declarou" e exige confirmação da página do LinkedIn, em
+        vez de afirmar um link que pode ser do parceiro.
+    """
+    candidatos = {}
+    ordem = 0
+
+    def add(url: str, peso: float):
+        nonlocal ordem
+        canon = _usable_linkedin(url)
+        if not canon:
+            return
+        atual = candidatos.get(canon)
+        if atual is None or peso > atual["peso"]:
+            candidatos[canon] = {"peso": peso, "ordem": atual["ordem"] if atual else ordem}
+        ordem += 1
+
+    # O crédito da agência fica de fora em todas as passadas — inclusive no
+    # regex sobre o texto, senão o link descartado voltava por lá.
+    creditos = {_usable_linkedin(a["href"]) for a in soup.find_all("a", href=True)
+                if is_credit_anchor(a)}
+    creditos.discard(None)
+
+    for container_name, peso in (("footer", 1.0), ("header", 0.8)):
         container = soup.find(container_name)
         if container:
             for a in container.find_all("a", href=True):
-                usable = _usable_linkedin(a["href"])
-                if usable:
-                    return usable
-    # 2. Qualquer âncora no documento
+                if not is_credit_anchor(a):
+                    add(a["href"], peso)
     for a in soup.find_all("a", href=True):
-        usable = _usable_linkedin(a["href"])
-        if usable:
-            return usable
-    # 3. Fallback regex no texto
-    for match in LINKEDIN_PAGE_RE.finditer(text):
-        if is_public_linkedin_slug(match.group("slug")):
-            return match.group(0).rstrip("/")
-    return None
+        if not is_credit_anchor(a):
+            add(a["href"], 0.5)
+    if not candidatos:
+        for match in LINKEDIN_PAGE_RE.finditer(text or ""):
+            if _usable_linkedin(match.group(0)) not in creditos:
+                add(match.group(0), 0.3)
+    if not candidatos:
+        return None, False
+
+    raiz = (domain or "").split(".")[0]
+
+    def afinidade(url: str) -> float:
+        slug = url.rsplit("/", 1)[-1]
+        return max(_similaridade(slug, raiz), _similaridade(slug, company_name or ""))
+
+    pontuados = sorted(
+        candidatos.items(),
+        key=lambda item: (-(item[1]["peso"] * (0.5 + 0.5 * afinidade(item[0]))),
+                          item[1]["ordem"]),
+    )
+    melhor = pontuados[0][0]
+    ambiguo = len(pontuados) > 1 and bool(raiz or company_name) and afinidade(melhor) < 0.5
+    return melhor, ambiguo
+
+
+def _extract_linkedin(soup: BeautifulSoup, text: str, domain: Optional[str] = None,
+                      company_name: Optional[str] = None) -> Optional[str]:
+    """LinkedIn que o site publica como seu (ver `_escolher_linkedin`)."""
+    return _escolher_linkedin(soup, text, domain, company_name)[0]
 
 
 def _looks_like_slogan(name: str) -> bool:
@@ -332,10 +405,16 @@ def scrape_website(url: str) -> dict:
             "block_reason": motivo,
             "raw_input_url": url,
         }
-    soup, html = fetched
+    soup, html = fetched[:2]
+    final_url = fetched[2] if len(fetched) > 2 else url
 
     # Detecta região para parsing de telefone
     domain = normalize_domain(url)
+    # Endereço oficial: onde a home terminou depois dos redirecionamentos
+    # (www, https, marca nova do grupo), só a origem e sem rastreio.
+    # Destino que não é site de empresa (estacionamento, rede social) devolve
+    # None e o endereço digitado continua valendo.
+    website = canonical_site_url(final_url, domain) or url.rstrip("/")
     region = tld_to_region(domain, default="BR")
 
     page_text = soup.get_text(separator=" ", strip=True)
@@ -382,10 +461,11 @@ def scrape_website(url: str) -> dict:
     # e ele existe mesmo quando o ícone de rodapé é montado via JS, que o
     # requests não executa. Só cai para a busca no HTML se ele faltar.
     same_as = linkedin_from_sameas(org)
-    linkedin_url = (
-        (_usable_linkedin(same_as) if same_as else None)
-        or _extract_linkedin(soup, page_text)
-    )
+    linkedin_url = _usable_linkedin(same_as) if same_as else None
+    linkedin_ambiguous = False
+    if not linkedin_url:
+        linkedin_url, linkedin_ambiguous = _escolher_linkedin(
+            soup, page_text, domain, company_name)
 
     sector = org.get("industry") or _meta(soup, "article:section")
 
@@ -428,7 +508,7 @@ def scrape_website(url: str) -> dict:
                     # ficha volta vazia sem dizer por quê.
                     bloqueio = bloqueio or motivo_pagina
                     continue
-                about_soup, about_html = result
+                about_soup, about_html = result[:2]
                 about_text = about_soup.get_text(separator=" ", strip=True)
                 all_emails.update(e.lower() for e in EMAIL_REGEX.findall(about_text))
                 if not cnpj:
@@ -438,7 +518,8 @@ def scrape_website(url: str) -> dict:
                 if not all_phones:
                     all_phones = extract_and_normalize_phones(about_text, default_region=region)
                 if not linkedin_url:
-                    linkedin_url = _extract_linkedin(about_soup, about_text)
+                    linkedin_url, linkedin_ambiguous = _escolher_linkedin(
+                        about_soup, about_text, domain, company_name)
                 if not location:
                     location = _geo_do_site(about_soup)
         corporate_email = corporate_email or _pick_corporate_email(all_emails, domain)
@@ -464,8 +545,12 @@ def scrape_website(url: str) -> dict:
         "block_reason": bloqueio,
         "raw_input_url": url,
         "company_name": company_name,
-        "website": url,
+        "website": website,
+        "final_url": final_url,
         "linkedin_url": linkedin_url,
+        # O site publica mais de uma organização e a escolhida não se parece
+        # com a empresa: o enricher não a trata como declarada pelo site.
+        "linkedin_ambiguous": linkedin_ambiguous,
         "sector": sector,
         "employee_count": employee_count_raw,
         "location": location,

@@ -25,7 +25,7 @@ import logging
 import re
 import socket
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -42,8 +42,12 @@ logger = logging.getLogger(__name__)
 # interna. Caso real: pucpr.br publica
 # /school/pontificia-universidade-catolica-do-parana na home, e a ficha vinha
 # com /company/hotmilk-pucpr — o hub de inovação, não a universidade.
+#
+# O prefixo aceita `www.`, o de país (`br.`, `pt.`) e o móvel (`m.`): é o
+# mesmo perfil em qualquer um deles, e quem grava a URL a remonta na forma
+# canônica (`linkedin_page_url`).
 LINKEDIN_PAGE_RE = re.compile(
-    r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/(?P<kind>company|school)/(?P<slug>[^\s\"'<>?#/]+)",
+    r"https?://(?:[a-z]{1,3}\.)?linkedin\.com/(?P<kind>company|school)/(?P<slug>[^\s\"'<>?#/]+)",
     re.IGNORECASE,
 )
 
@@ -65,6 +69,39 @@ def linkedin_ref(url: str) -> Optional[tuple]:
 def linkedin_page_url(kind: str, slug: str) -> str:
     """URL canônica da página de organização (`company` ou `school`)."""
     return f"https://www.linkedin.com/{kind}/{slug}"
+
+
+# Rodapé de site feito por agência traz o crédito dela — "Desenvolvido por
+# Agência X" com o ícone do LinkedIn DA AGÊNCIA. Pelo lugar onde está (o
+# rodapé, a origem de link mais confiável), esse link ganhava do da própria
+# empresa e ia para a ficha.
+_CREDITO_RE = re.compile(
+    r"desenvolvid[oa] por|developed by|criad[oa] por|created by|made by|"
+    r"feito por|powered by|site por|site by|design por|designed by|"
+    r"produzid[oa] por|ag[eê]ncia",
+    re.IGNORECASE,
+)
+
+
+def is_credit_anchor(anchor) -> bool:
+    """
+    A âncora é o crédito de quem fez o site, e não um link da empresa?
+
+    Olha o texto da âncora e do bloco imediatamente em volta, com teto de
+    tamanho: um rodapé inteiro sempre contém "agência" em algum lugar, e aí
+    todo link dele seria descartado.
+    """
+    for node in (anchor, getattr(anchor, "parent", None)):
+        if node is None or not hasattr(node, "get_text"):
+            continue
+        texto = node.get_text(" ", strip=True)
+        if texto and len(texto) <= 160 and _CREDITO_RE.search(texto):
+            return True
+        for attr in ("title", "aria-label"):
+            valor = node.get(attr) if hasattr(node, "get") else None
+            if isinstance(valor, str) and _CREDITO_RE.search(valor):
+                return True
+    return False
 
 # Conjunto completo de headers de um Chrome real (Windows), não só o
 # User-Agent. WAFs mais simples (mod_security, Cloudflare em modo básico,
@@ -122,14 +159,138 @@ def is_public_linkedin_slug(slug: str) -> bool:
 
 
 def normalize_domain(value: str) -> str:
-    """Remove protocolo, path, query string e prefixo www."""
+    """
+    Remove protocolo, path, query string, porta, credencial, ponto final e
+    prefixo www.
+
+    Porta e ponto final parecem detalhe, mas chegam de verdade da planilha e
+    da extensão ("empresa.com.br:443", "empresa.com.br." copiado de um dig):
+    sem limpá-los, a consulta de MX ia para um nome que não existe e a ficha
+    dizia "sem e-mail" para uma empresa com Google Workspace.
+    """
     value = (value or "").strip().lower()
     if "://" in value:
         value = value.split("://", 1)[1]
-    value = value.split("/")[0].split("?")[0]
+    value = value.split("/")[0].split("?")[0].split("#")[0]
+    value = value.rsplit("@", 1)[-1]
+    value = value.split(":")[0].rstrip(".")
     if value.startswith("www."):
         value = value[4:]
     return value
+
+
+# Sufixos públicos de dois níveis. Sem eles, "mx.skymail.net.br" virava o
+# domínio "net.br" — o sufixo, não o provedor —, e "vendas.empresa.com.br" não
+# chegava a "empresa.com.br". A lista do .br cobre as categorias que aparecem
+# em base de prospecção; não é a Public Suffix List inteira de propósito (ela
+# pesa e muda), só o que muda o resultado aqui.
+TWO_LEVEL_SUFFIXES = frozenset({
+    "com.br", "net.br", "org.br", "adv.br", "eng.br", "ind.br", "srv.br",
+    "psc.br", "med.br", "esp.br", "tur.br", "agr.br", "art.br", "inf.br",
+    "gov.br", "edu.br", "mil.br", "jus.br", "leg.br", "mp.br", "coop.br",
+    "emp.br", "app.br", "dev.br", "log.br", "blog.br", "ong.br", "eco.br",
+    "imb.br", "rec.br", "tv.br", "vet.br", "odo.br", "adm.br", "arq.br",
+    "cnt.br", "eti.br", "far.br", "fot.br", "jor.br", "pro.br", "psi.br",
+    "not.br", "tmp.br", "seg.br", "bio.br", "etc.br", "radio.br",
+    "co.uk", "org.uk", "me.uk", "ac.uk", "gov.uk",
+    "com.mx", "com.ar", "com.co", "com.pe", "com.uy", "com.py", "com.bo",
+    "com.ec", "com.ve", "com.au", "net.au", "edu.au", "co.nz", "co.za",
+    "co.jp", "co.in", "com.pt", "com.es", "com.tr", "com.cn", "com.hk",
+    "com.sg",
+})
+
+
+def registrable_domain(host: str) -> str:
+    """
+    Domínio registrável (o "organizacional") de um host:
+    'vendas.empresa.com.br' → 'empresa.com.br', 'mx.a.locaweb.com.br' →
+    'locaweb.com.br'.
+
+    É a régua para duas perguntas da coleta: se um redirecionamento ficou
+    dentro da empresa (site oficial) e de quem é o MX quando o usuário digitou
+    um subdomínio.
+    """
+    host = normalize_domain(host)
+    parts = [p for p in host.split(".") if p]
+    if len(parts) <= 2:
+        return host
+    keep = 3 if ".".join(parts[-2:]) in TWO_LEVEL_SUFFIXES else 2
+    return ".".join(parts[-keep:])
+
+
+def host_matches(host: Optional[str], suffix: str) -> bool:
+    """
+    `host` é `suffix` ou um subdomínio dele — nunca um nome que só o contém.
+
+    `"uol.com.br" in host` casava com "bauol.com.br"; `"google.com" in host`,
+    com "google.com.evil.net". Para dizer quem opera um servidor, o que vale é
+    o sufixo inteiro, rótulo por rótulo.
+    """
+    host = (host or "").strip().rstrip(".").lower()
+    suffix = (suffix or "").strip().strip(".").lower()
+    if not host or not suffix:
+        return False
+    return host == suffix or host.endswith("." + suffix)
+
+
+# Hosts para onde um domínio redireciona sem que aquilo seja o site da
+# empresa: estacionamento de domínio, construtor de página genérico, rede
+# social. Domínio que só leva ao Instagram não tem site — e gravar
+# "instagram.com" como site oficial seria pior do que deixar o do domínio.
+_NOT_A_COMPANY_SITE = (
+    "linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com",
+    "youtube.com", "tiktok.com", "wa.me", "whatsapp.com", "linktr.ee",
+    "sedoparking.com", "sedo.com", "hugedomains.com", "dan.com", "afternic.com",
+    "godaddy.com", "parkingcrew.net", "bodis.com", "registro.br", "hostgator.com.br",
+    "locaweb.com.br", "wix.com", "google.com",
+)
+
+# Parâmetros que só servem a quem mediu o clique. Não fazem parte do endereço
+# da empresa e não devem viajar para a ficha nem para o CRM.
+_TRACKING_PARAMS = re.compile(
+    r"^(utm_[a-z]+|gclid|fbclid|msclkid|mc_[a-z]+|_ga|_gl|ref|trk|igshid|yclid|dclid)$",
+    re.IGNORECASE,
+)
+
+
+def strip_tracking(url: str) -> str:
+    """URL sem parâmetros de rastreio (utm_*, gclid, fbclid...) e sem âncora."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
+    query = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+             if not _TRACKING_PARAMS.match(k)]
+    return parsed._replace(query=urlencode(query), fragment="").geturl()
+
+
+def canonical_site_url(final_url: Optional[str], domain: str) -> Optional[str]:
+    """
+    Endereço oficial do site a partir de onde a home REALMENTE terminou.
+
+    `https://<domínio>` é o que o usuário digitou, não o que a empresa
+    publica: o site pode morar em `www.`, só existir em http, ou o domínio
+    pode redirecionar para a marca nova do grupo. O destino final do
+    redirecionamento é a declaração da própria empresa sobre onde fica o site.
+
+    Devolve só a origem (esquema + host): o caminho da home costuma ser idioma
+    ou campanha ("/pt-br/", "/?utm_source=..."), não endereço. Devolve None
+    quando o destino não é um site de empresa (estacionamento, rede social) —
+    quem chama mantém o endereço do domínio.
+    """
+    if not final_url:
+        return None
+    try:
+        parsed = urlparse(final_url)
+    except ValueError:
+        return None
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if parsed.scheme not in ("http", "https") or not host:
+        return None
+    if registrable_domain(host) != registrable_domain(domain):
+        if any(host_matches(host, bloqueado) for bloqueado in _NOT_A_COMPANY_SITE):
+            return None
+    return f"{parsed.scheme}://{host}"
 
 
 def domain_mentioned(text: str, domain: str) -> bool:
