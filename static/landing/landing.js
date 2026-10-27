@@ -113,7 +113,7 @@ async function initFooterStatus() {
     const r = await fetch('/health');
     const j = await r.json();
     if (j.status === 'ok') {
-      el.textContent = '● all systems operational';
+      el.textContent = '● tudo funcionando';
       el.classList.add('ok');
       return;
     }

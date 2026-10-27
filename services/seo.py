@@ -164,57 +164,49 @@ def _all_pages() -> dict[str, Page]:
 #: (schema.org/FAQPage), para os dois nunca saírem de sincronia.
 FAQ: list[tuple[str, str]] = [
     (
-        "Como funciona a busca de decisores?",
-        "Buscamos perfis públicos no LinkedIn, Google, Bing e DuckDuckGo filtrando "
-        "por cargo na empresa. O e-mail corporativo é montado pelo padrão que o "
-        "próprio domínio já demonstrou (por exemplo nome.sobrenome@), e cada "
-        "endereço vem com nota de confiança. Quando a rede permite a sondagem SMTP, "
-        "ela confirma a caixa e a nota sobe.",
+        "Como vocês encontram os decisores?",
+        "Buscamos perfis públicos por cargo no LinkedIn e nos buscadores. O e-mail "
+        "segue o padrão do domínio (como nome.sobrenome@) e vem com nota de "
+        "confiança.",
     ),
     (
         "De onde vêm os dados?",
-        "Só de fontes públicas: DNS ao vivo (MX, SPF, DMARC, DKIM), logs de "
-        "certificado, RDAP do registro do domínio, o site da própria empresa, "
-        "perfis públicos do LinkedIn e as bases abertas de CNPJ da Receita Federal. "
-        "Cada dado guarda a origem e a data em que foi coletado.",
+        "De fontes públicas: DNS, o site da empresa, perfis públicos do LinkedIn e "
+        "as bases abertas de CNPJ da Receita Federal. Cada dado guarda a origem e "
+        "a data da coleta.",
     ),
     (
         "Meus dados estão seguros?",
-        "Sim. Autenticação sem senha via Supabase, tráfego em TLS e isolamento por "
-        "usuário: você só enxerga os leads da sua conta. Não vendemos dados a "
-        "terceiros. Quem for titular de um contato pode pedir a remoção em "
-        "/remover-meus-dados, sem cadastro — o bloqueio é permanente e vale também "
-        "para gravações futuras.",
+        "Sim. Login sem senha, conexão criptografada e cada conta só vê os próprios "
+        "leads. Não vendemos dados. Quem quiser sair da base pede em "
+        "/remover-meus-dados, sem cadastro, e o bloqueio é permanente.",
     ),
     (
-        "Posso integrar com meu CRM?",
-        "Sim, por webhook assinado com HMAC-SHA256: cada lead (com decisores e "
-        "atividades) é enviado ao endpoint que você configurar, o que cobre Zapier, "
-        "Make, Power Automate ou um sistema próprio. Conectores nativos de HubSpot e "
-        "Pipedrive estão no roadmap, ainda não disponíveis.",
+        "Funciona com o meu CRM?",
+        "Sim, por webhook: cada lead vai para o endereço que você escolher, o que "
+        "cobre Zapier, Make, Power Automate ou um sistema próprio. HubSpot e "
+        "Pipedrive nativos ainda não estão disponíveis.",
     ),
     (
-        "Como funciona a extensão para o LinkedIn?",
-        "Você instala a extensão no Chrome ou Edge e conecta com um código gerado em "
-        "Configurações. Nas páginas de perfil e de empresa ela mostra contato e dados "
-        "de CNPJ, e salva o lead no seu pipeline. Revelar contato é livre: não há "
-        "crédito nem limite de revelações.",
+        "Como funciona a extensão do LinkedIn?",
+        "Instale no Chrome ou Edge e conecte com um código do app. Nas páginas de "
+        "perfil e de empresa ela mostra contato e CNPJ e salva o lead no pipeline, "
+        "sem limite de revelações.",
     ),
     (
-        "E se a empresa não tiver website?",
-        "A busca por domínio ainda valida DNS, o e-mail corporativo (via DNS) e os "
-        "decisores via LinkedIn e buscadores. Sempre há alguma trilha.",
+        "E se a empresa não tiver site?",
+        "Ainda lemos o DNS e o e-mail do domínio e buscamos os decisores no "
+        "LinkedIn e nos buscadores.",
     ),
     (
         "Há limite de análises?",
-        "Não. Qualquer conta que entrar tem o produto inteiro: análise avulsa, lote, "
-        "planilha, extensão e conversas, sem cota nem contador de uso. Reabrir um "
-        "lead analisado nos últimos 7 dias vem do cache, sem refazer a coleta.",
+        "Não. Toda conta tem o produto inteiro, sem cota: análise, lote, planilha, "
+        "extensão e conversas.",
     ),
     (
-        "Preciso pagar alguma coisa?",
-        "Não. Não há plano pago, plano gratuito nem cartão de crédito envolvido — "
-        "basta entrar com Google, Microsoft, GitHub ou Apple.",
+        "Preciso pagar?",
+        "Não. Não há plano pago nem cartão. Entre com Google, Microsoft, GitHub ou "
+        "Apple.",
     ),
 ]
 
