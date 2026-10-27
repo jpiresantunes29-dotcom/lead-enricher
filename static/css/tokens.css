@@ -1,0 +1,168 @@
+/* ════════════════════════════════════════════════════════════════
+   LeadEnricher — tokens de cor (modo claro e escuro)
+   Compartilhado por landing, app e páginas institucionais.
+   Claro por padrão; segue o sistema (prefers-color-scheme) e pode ser
+   forçado com <html data-theme="light|dark"> (static/js/theme.js).
+   Um único acento (teal), sem gradientes nem brilho.
+   ════════════════════════════════════════════════════════════════ */
+:root{
+  color-scheme:light;
+  --bg:#FFFFFF;
+  --bg-2:#FFFFFF;
+  --surface:#F6F8F8;
+  --surface-2:#EDF1F1;
+  --border:#DDE3E4;
+  --border-2:#C6CFD1;
+  --text:#0E1B1D;
+  --text-2:#46585B;
+  --text-3:#66787B;
+  --accent:#0B6065;
+  --accent-h:#094D51;
+  --accent-ink:#FFFFFF;
+  --accent-text:#0B6065;
+  --accent-bg:#EAF3F3;
+  --accent-border:#BCD6D7;
+  --ok:#1B7556;   --ok-bg:#E8F5EF;   --ok-border:#BFE3D2;
+  --warn:#8A5A0B; --warn-bg:#FFF6E3; --warn-border:#F3DFAE;
+  --err:#B42E4B;  --err-bg:#FDEEF1;  --err-border:#F5C9D2;
+  --info:var(--accent); --info-bg:var(--accent-bg); --info-border:var(--accent-border);
+  --li:#0A66C2;
+  --shadow-sm:0 1px 2px rgba(14,27,29,.06);
+  --shadow-md:0 2px 6px rgba(14,27,29,.07);
+  --shadow-lg:0 12px 32px rgba(14,27,29,.14);
+  --overlay:rgba(14,27,29,.45);
+  /* Barra lateral */
+  --sb:#F6F8F8;
+  --sb-2:#EAEFEF;
+  --sb-line:#DDE3E4;
+  --sb-txt:#0E1B1D;
+  --sb-txt-2:#46585B;
+  --sb-txt-3:#66787B;
+  /* Painel técnico (DNS/MX) */
+  --panel:#F3F6F6;
+  --panel-hdr:#EBF0F0;
+  --panel-line:#DDE3E4;
+  --panel-line-2:#E6EBEB;
+  --panel-txt:#0E1B1D;
+  --panel-txt-2:#3A4C4F;
+  --panel-txt-3:#66787B;
+  --panel-accent:#0B6065;
+  /* Tiers */
+  --t1:#0B6065; --t1-ink:#FFFFFF;
+  --t2:#1F63BE; --t2-bg:#E6F2FF; --t2-border:#BBD9FF;
+  --t3:#6246C8; --t3-bg:#F1EDFF; --t3-border:#D9CEFF;
+  --t4:#566668; --t4-bg:#F1F4F4; --t4-border:#D9E0E0;
+  --rev:#8A5A0B; --rev-bg:#FFF6E3; --rev-border:#F3DFAE;
+}
+
+/* Tokens do escuro: declarados duas vezes (sistema e escolha manual). */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0A0C0D;
+    --bg-2:#0F1213;
+    --surface:#121617;
+    --surface-2:#192022;
+    --border:#1F2A2C;
+    --border-2:#2C3C3F;
+    --text:#E8F0EF;
+    --text-2:#A3B4B3;
+    --text-3:#738685;
+    --accent:#4FD6C2;
+    --accent-h:#6BE3D1;
+    --accent-ink:#04201C;
+    --accent-text:#6BE3D1;
+    --accent-bg:rgba(79,214,194,.09);
+    --accent-border:#0B6065;
+    --ok:#5FE0A8;   --ok-bg:rgba(95,224,168,.10);   --ok-border:rgba(95,224,168,.28);
+    --warn:#E8B450; --warn-bg:rgba(232,180,80,.10); --warn-border:rgba(232,180,80,.28);
+    --err:#FF8FA3;  --err-bg:rgba(255,143,163,.10); --err-border:rgba(255,143,163,.30);
+    --li:#4C9AE0;
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+    --shadow-md:0 2px 8px rgba(0,0,0,.45);
+    --shadow-lg:0 12px 32px rgba(0,0,0,.6);
+    --overlay:rgba(0,0,0,.6);
+    --sb:#070809;
+    --sb-2:#0F1416;
+    --sb-line:#182124;
+    --sb-txt:#E8F0EF;
+    --sb-txt-2:#A3B4B3;
+    --sb-txt-3:#738685;
+    --panel:#0B0F11;
+    --panel-hdr:#090C0E;
+    --panel-line:#1B2528;
+    --panel-line-2:#151D20;
+    --panel-txt:#E3EFEC;
+    --panel-txt-2:#B2C4C0;
+    --panel-txt-3:#7E9893;
+    --panel-accent:#4FD6C2;
+    --t1:#4FD6C2; --t1-ink:#04201C;
+    --t2:#6CC6F5; --t2-bg:rgba(108,198,245,.10); --t2-border:rgba(108,198,245,.30);
+    --t3:#B8A6FF; --t3-bg:rgba(184,166,255,.10); --t3-border:rgba(184,166,255,.30);
+    --t4:#8FA6A1; --t4-bg:rgba(143,166,161,.10); --t4-border:rgba(143,166,161,.28);
+    --rev:#E8B450; --rev-bg:rgba(232,180,80,.10); --rev-border:rgba(232,180,80,.35);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0A0C0D;
+  --bg-2:#0F1213;
+  --surface:#121617;
+  --surface-2:#192022;
+  --border:#1F2A2C;
+  --border-2:#2C3C3F;
+  --text:#E8F0EF;
+  --text-2:#A3B4B3;
+  --text-3:#738685;
+  --accent:#4FD6C2;
+  --accent-h:#6BE3D1;
+  --accent-ink:#04201C;
+  --accent-text:#6BE3D1;
+  --accent-bg:rgba(79,214,194,.09);
+  --accent-border:#0B6065;
+  --ok:#5FE0A8;   --ok-bg:rgba(95,224,168,.10);   --ok-border:rgba(95,224,168,.28);
+  --warn:#E8B450; --warn-bg:rgba(232,180,80,.10); --warn-border:rgba(232,180,80,.28);
+  --err:#FF8FA3;  --err-bg:rgba(255,143,163,.10); --err-border:rgba(255,143,163,.30);
+  --li:#4C9AE0;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.4);
+  --shadow-md:0 2px 8px rgba(0,0,0,.45);
+  --shadow-lg:0 12px 32px rgba(0,0,0,.6);
+  --overlay:rgba(0,0,0,.6);
+  --sb:#070809;
+  --sb-2:#0F1416;
+  --sb-line:#182124;
+  --sb-txt:#E8F0EF;
+  --sb-txt-2:#A3B4B3;
+  --sb-txt-3:#738685;
+  --panel:#0B0F11;
+  --panel-hdr:#090C0E;
+  --panel-line:#1B2528;
+  --panel-line-2:#151D20;
+  --panel-txt:#E3EFEC;
+  --panel-txt-2:#B2C4C0;
+  --panel-txt-3:#7E9893;
+  --panel-accent:#4FD6C2;
+  --t1:#4FD6C2; --t1-ink:#04201C;
+  --t2:#6CC6F5; --t2-bg:rgba(108,198,245,.10); --t2-border:rgba(108,198,245,.30);
+  --t3:#B8A6FF; --t3-bg:rgba(184,166,255,.10); --t3-border:rgba(184,166,255,.30);
+  --t4:#8FA6A1; --t4-bg:rgba(143,166,161,.10); --t4-border:rgba(143,166,161,.28);
+  --rev:#E8B450; --rev-bg:rgba(232,180,80,.10); --rev-border:rgba(232,180,80,.35);
+}
+
+/* Alternador de tema (botão com ícone, sem texto) */
+.theme-toggle{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:34px;height:34px;border-radius:6px;
+  border:1px solid var(--border);color:var(--text-2);background:transparent;
+  cursor:pointer;transition:background .15s,color .15s,border-color .15s;
+}
+.theme-toggle:hover{background:var(--surface);color:var(--text);border-color:var(--border-2)}
+.theme-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.theme-toggle svg{width:16px;height:16px}
+.theme-toggle .i-sun{display:none}
+:root[data-theme="dark"] .theme-toggle .i-sun{display:block}
+:root[data-theme="dark"] .theme-toggle .i-moon{display:none}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]) .theme-toggle .i-sun{display:block}
+  :root:not([data-theme="light"]) .theme-toggle .i-moon{display:none}
+}
