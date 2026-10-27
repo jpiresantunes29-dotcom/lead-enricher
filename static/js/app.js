@@ -560,32 +560,44 @@ async function loadFollowups(){
       </div></div>`;
       return;
     }
+    // A tarefa só traz o lead_id: o nome da empresa vem da lista de leads,
+    // e se ela falhar a linha mostra "Lead #id" — a fila não depende disso.
+    const nomes={};
+    try{
+      const rl=await authFetch('/api/leads?per_page=100');
+      if(rl.ok)(await rl.json()).forEach(l=>{nomes[l.id]=l.company_name||l.domain;});
+    }catch(e){if(e.message==='not_authenticated')throw e;}
+
     const now=Date.now();
     const endOfDay=new Date();endOfDay.setHours(23,59,59,999);
-    let late=0,today=0;
-    const rows=list.map(a=>{
+    const endOfTomorrow=new Date(endOfDay);endOfTomorrow.setDate(endOfTomorrow.getDate()+1);
+    // Grupos como na lista de tarefas do CRM de referência; a API já manda por data.
+    const grupos={late:[],today:[],tomorrow:[],later:[]};
+    list.forEach(a=>{
+      const t=a.due_at?new Date(a.due_at).getTime():Infinity;
+      const g=t<now?'late':t<=endOfDay.getTime()?'today':t<=endOfTomorrow.getTime()?'tomorrow':'later';
+      grupos[g].push(a);
+    });
+    const late=grupos.late.length,today=grupos.today.length;
+    const row=(a,isLate)=>{
       const due=a.due_at?new Date(a.due_at):null;
-      const isLate=due&&due.getTime()<now;
-      const isToday=due&&!isLate&&due.getTime()<=endOfDay.getTime();
-      if(isLate)late++;else if(isToday)today++;
-      const when=due?due.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'sem data';
+      const when=due?due.toLocaleString('pt-BR',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'sem data';
       const kind=STEP_LABELS[a.step]||(a.type==='meeting'?'Reunião':'Retornar contato');
+      const empresa=nomes[a.lead_id]||`Lead #${a.lead_id}`;
       const ics=a.type==='meeting'
         ? `<button class="fu-btn" onclick="downloadIcs(${a.id})" title="Baixar convite de calendário (.ics)">Convite .ics</button>`
         : '';
-      return `<div class="fu-row${isLate?' late':''}">
-        <div class="fu-info">
-          <span class="fu-kind">${kind}</span>
-          <span class="fu-notes">${esc(a.notes||'')}</span>
-          <span class="fu-when${isLate?' late':''}">${isLate?'atrasado · ':(isToday?'hoje · ':'')}${when}</span>
-        </div>
-        <div class="fu-actions">
-          <button class="fu-btn" onclick="loadLeadIntoView(${a.lead_id})" title="Abrir a ficha da empresa">Abrir lead</button>
-          ${ics}
-          <button class="fu-btn done" onclick="completeActivity(${a.id})" title="Marcar como resolvido e tirar da fila">Concluir</button>
-        </div>
-      </div>`;
-    }).join('');
+      return `<tr class="fu-tr${isLate?' late':''}">
+        <td class="fu-td-check"><button class="fu-check" onclick="completeActivity(${a.id})" title="Concluir: marcar como resolvido e tirar da fila" aria-label="Concluir ${esc(kind)}"></button></td>
+        <td class="fu-td-task"><span class="fu-kind">${esc(kind)}</span>${a.notes?`<span class="fu-notes">${esc(a.notes)}</span>`:''}</td>
+        <td><button class="fu-lead" onclick="loadLeadIntoView(${a.lead_id})" title="Abrir a ficha da empresa">${esc(empresa)}</button></td>
+        <td class="fu-when${isLate?' late':''}">${KB_IC.data}${when}</td>
+        <td class="fu-td-act">${ics}</td>
+      </tr>`;
+    };
+    const secao=(titulo,lista,isLate)=>lista.length
+      ? `<tr class="fu-group"><td colspan="5">${titulo} <span>${lista.length}</span></td></tr>${lista.map(a=>row(a,isLate)).join('')}`
+      : '';
     const tags=[
       late?`<span class="fu-tag late">${late} atrasado${late>1?'s':''}</span>`:'',
       today?`<span class="fu-tag today">${today} para hoje</span>`:'',
@@ -593,8 +605,11 @@ async function loadFollowups(){
     ].filter(Boolean).join('');
     if(summary)summary.textContent=late?`${late} tarefa(s) em atraso`:'Fila em dia';
     body.innerHTML=`<div class="panel">
-      <div class="fu-head">${tags}<span>Concluir tira a tarefa da fila; abrir o lead leva à ficha completa.</span></div>
-      ${rows}
+      <div class="fu-head">${tags}<span>O círculo conclui a tarefa e tira da fila; o nome da empresa abre a ficha.</span></div>
+      <div class="tbl-scroll"><table class="lead-tbl fu-tbl">
+        <thead><tr><th></th><th>Tarefa</th><th>Empresa</th><th>Prazo</th><th></th></tr></thead>
+        <tbody>${secao('Atrasadas',grupos.late,true)}${secao('Hoje',grupos.today,false)}${secao('Amanhã',grupos.tomorrow,false)}${secao('Próximos dias',grupos.later,false)}</tbody>
+      </table></div>
     </div>`;
   }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
 }
@@ -863,7 +878,7 @@ async function loadPipeline(){
         const linhas=[
           l.domain&&[KB_IC.site,esc(l.domain)],
           l.sector&&[KB_IC.setor,esc(l.sector)],
-          l.employee_count!=null&&l.employee_count!==''&&[KB_IC.porte,`${esc(String(l.employee_count))} funcionários`],
+          _empTxt(l)&&[KB_IC.porte,`${esc(_empTxt(l))} funcionários`],
           l.created_at&&[KB_IC.data,`Analisado em ${new Date(l.created_at).toLocaleDateString('pt-BR')}`],
         ].filter(Boolean).map(([ic,txt])=>`<div class="kb-line">${ic}<span>${txt}</span></div>`).join('');
         const busca=esc(`${l.company_name||''} ${l.domain||''} ${l.sector||''}`.toLowerCase());
@@ -3143,6 +3158,15 @@ function filterHistory(q){renderHistory(q);}
 /* Ordenação da tabela de histórico */
 let _histSort={key:'created_at',dir:-1};
 
+/* Porte para exibir: `employee_count` chega como objeto ({exact, band, raw})
+   ou, em leads antigos, como texto/número solto. Vazio quando não há nada. */
+function _empTxt(l){
+  const e=l&&l.employee_count;
+  if(e==null||e==='')return '';
+  if(typeof e!=='object')return String(e);
+  return e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'');
+}
+
 function _histEmpMin(l){
   const e=l.employee_count;
   if(!e||typeof e!=='object')return -1;
@@ -3199,13 +3223,12 @@ function renderHistory(q){
   };
   const rows=leads.map(l=>{
     const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
-    const e=l.employee_count;
-    const emp=e?(typeof e==='object'?(e.exact?e.exact.toLocaleString('pt-BR'):(e.band||e.raw||'—')):e):'—';
+    const emp=_empTxt(l)||'—';
     return `<tr id="row-${l.id}">
       <td class="td-co"><button class="td-name" onclick="openLeadSummary(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
       <td class="td-tier">${tierBadgeHtml(l,{leadId:l.id})||'<span class="muted">—</span>'}</td>
       <td class="td-mono">${esc(l.domain||'—')}</td>
-      <td><span class="stage-chip">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
+      <td><span class="stage-chip" data-stage="${esc(l.stage||'novo')}">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
       <td class="td-mono">${esc(String(emp))}</td>
       <td class="td-mono td-date">${date}</td>
       <td class="td-actions">
