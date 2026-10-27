@@ -1549,48 +1549,78 @@ body{
 .next-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);flex-shrink:0;margin-top:6px}
 
 /* ══════════════ VIEW: PIPELINE ══════════════ */
+/* Funil no estilo do CRM de referência: colunas sem moldura em cinza bem
+   claro, cartões brancos com uma linha por dado e um anel colorido por estágio. */
 .kanban-wrap{overflow-x:auto;padding-bottom:10px}
-.kanban{display:flex;gap:12px;min-width:max-content;align-items:flex-start}
+.kanban{display:flex;gap:8px;min-width:max-content;align-items:flex-start}
 .kb-col{
-  width:232px;flex-shrink:0;
-  background:var(--bg-2);border:1px solid var(--border);
-  border-radius:12px;padding:12px;
-  box-shadow:var(--shadow-sm);transition:border-color .15s,background .15s;
+  width:248px;flex-shrink:0;
+  background:var(--sb);border:1px solid transparent;
+  border-radius:var(--radius);padding:8px;
+  transition:border-color .15s,background .15s;
 }
-.kb-col-hdr{margin-bottom:10px}
+.kb-col-hdr{padding:2px 4px 8px}
 .kb-col-name{
-  display:flex;align-items:center;justify-content:space-between;gap:8px;
-  font-size:12.5px;font-weight:700;color:var(--text);
+  display:flex;align-items:center;gap:7px;
+  font-size:13px;font-weight:600;color:var(--text);
 }
+.kb-dot{
+  width:11px;height:11px;border-radius:50%;flex-shrink:0;
+  border:1.5px solid var(--kb-cor,var(--text-3));
+}
+.kb-col[data-stage="novo"]{--kb-cor:#A1A1AA}
+.kb-col[data-stage="novo"] .kb-dot{border-style:dashed}
+.kb-col[data-stage="contatado"]{--kb-cor:#3B82F6}
+.kb-col[data-stage="reuniao_agendada"]{--kb-cor:#F59E0B}
+.kb-col[data-stage="oportunidade"]{--kb-cor:#8B5CF6}
+.kb-col[data-stage="ganho"]{--kb-cor:#16A34A}
+.kb-col[data-stage="ganho"] .kb-dot{background:var(--kb-cor)}
+.kb-col[data-stage="perdido"]{--kb-cor:#DC2626}
 .kb-count{
-  font-size:11px;font-weight:700;color:var(--text-2);
-  background:var(--surface-2);border-radius:99px;padding:1px 8px;
+  font-size:11.5px;font-weight:500;color:var(--text-3);
 }
-.kb-col-desc{font-size:11px;color:var(--text-3);margin-top:3px;line-height:1.4}
+.kb-col-desc{font-size:11px;color:var(--text-3);margin-top:2px;line-height:1.4}
+.kb-cards{display:flex;flex-direction:column;gap:6px}
 .kb-card{
-  background:var(--surface);border:1px solid var(--border);
-  border-radius:9px;padding:11px;margin-bottom:8px;
+  background:var(--bg-2);border:1px solid var(--border);
+  border-radius:8px;padding:10px 11px;
+  box-shadow:var(--shadow-sm);
   transition:border-color .15s,box-shadow .15s;cursor:grab;
 }
-.kb-card:hover{border-color:var(--accent-border);box-shadow:var(--shadow-sm)}
+.kb-card[hidden]{display:none}
+.kb-card:hover{border-color:var(--border-2);box-shadow:var(--shadow-md)}
 .kb-card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:6px}
-.kb-name{font-size:13px;font-weight:700;color:var(--text);text-align:left;padding:0;min-width:0;word-break:break-word}
-.kb-name:hover{color:var(--accent);text-decoration:underline}
-.kb-domain{font-size:11px;color:var(--text-3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.kb-card-actions{display:flex;justify-content:space-between;gap:6px;margin-top:10px}
+.kb-name{font-size:13px;font-weight:600;color:var(--text);text-align:left;padding:0;min-width:0;word-break:break-word;line-height:1.35}
+.kb-name:hover{text-decoration:underline}
+.kb-lines{display:flex;flex-direction:column;gap:3px;margin-top:7px}
+.kb-line{
+  display:flex;align-items:center;gap:7px;min-width:0;
+  font-size:12px;color:var(--text-2);
+}
+.kb-line svg{width:13px;height:13px;flex-shrink:0;color:var(--text-3)}
+.kb-line span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.kb-card-actions{display:flex;justify-content:space-between;gap:6px;margin-top:8px}
 .kb-move{
-  font-size:11px;font-weight:600;color:var(--text-2);
-  border:1px solid var(--border-2);border-radius:6px;background:var(--bg-2);
-  padding:4px 9px;transition:all .15s;
+  font-size:11px;font-weight:500;color:var(--text-3);
+  border:1px solid transparent;border-radius:6px;
+  padding:3px 7px;transition:all .15s;
 }
-.kb-move:hover{color:var(--accent);border-color:var(--accent);background:var(--accent-bg)}
+.kb-card:hover .kb-move,.kb-move:focus-visible{color:var(--text-2);border-color:var(--border)}
+.kb-move:hover{color:var(--text);background:var(--surface)}
 .kb-move.ghost{visibility:hidden}
+@media(hover:none){.kb-move{color:var(--text-2);border-color:var(--border)}}
 .kb-empty{
-  font-size:12px;color:var(--text-3);text-align:center;padding:18px 8px;
-  border:1px dashed var(--border-2);border-radius:9px;
+  font-size:12px;color:var(--text-3);text-align:center;padding:16px 8px;
+  border:1px dashed var(--border-2);border-radius:8px;
 }
+.kb-add{
+  display:block;width:100%;text-align:left;margin-top:6px;
+  padding:6px 8px;border-radius:6px;
+  font-size:12.5px;color:var(--text-3);transition:background .12s,color .12s;
+}
+.kb-add:hover{background:var(--surface-2);color:var(--text)}
 .kb-card.dragging{opacity:.45}
-.kb-col.drag-over{border-color:var(--accent);background:var(--accent-bg)}
+.kb-col.drag-over{border-color:var(--border-2);background:var(--surface)}
 
 /* ══════════════ VIEW: FOLLOW-UPS ══════════════ */
 .fu-head{
@@ -2262,6 +2292,8 @@ body{
   .app-main{padding:18px 16px 56px}
   .tb-input{width:100%;flex:1}
   .tb-slot{width:100%}
+  /* No toque ninguém arrasta cartão: a dica sai e a busca fica com a linha toda. */
+  .tb-slot[data-slot="pipeline"] .tb-hint{display:none}
   .tb-actions{width:100%}
   .tb-new{width:100%;justify-content:center}
 }
@@ -2291,7 +2323,7 @@ body{
   .fu-row{padding:12px 14px}
   .fu-actions{flex-wrap:wrap;justify-content:flex-end}
   .lead-tbl th,.lead-tbl td{padding:10px}
-  .kb-col{width:200px}
+  .kb-col{width:220px}
   .fn-lbl{width:110px;font-size:11.5px}
   .modal{padding:28px 22px}
 }

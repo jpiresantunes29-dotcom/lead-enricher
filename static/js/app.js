@@ -859,22 +859,59 @@ async function loadPipeline(){
         const right=i<STAGE_ORDER.length-1
           ? `<button class="kb-move" title="Mover para ${STAGE_LABELS[STAGE_ORDER[i+1]]}" onclick="moveLead(${l.id},'${STAGE_ORDER[i+1]}')">Avançar ▶</button>`
           : '<span class="kb-move ghost">Avançar ▶</span>';
-        return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" ondragstart="dragStart(event)" title="Arraste para outra coluna para mudar o estágio">
+        // Uma linha por dado que existir, cada uma com seu ícone — como no CRM de referência.
+        const linhas=[
+          l.domain&&[KB_IC.site,esc(l.domain)],
+          l.sector&&[KB_IC.setor,esc(l.sector)],
+          l.employee_count!=null&&l.employee_count!==''&&[KB_IC.porte,`${esc(String(l.employee_count))} funcionários`],
+          l.created_at&&[KB_IC.data,`Analisado em ${new Date(l.created_at).toLocaleDateString('pt-BR')}`],
+        ].filter(Boolean).map(([ic,txt])=>`<div class="kb-line">${ic}<span>${txt}</span></div>`).join('');
+        const busca=esc(`${l.company_name||''} ${l.domain||''} ${l.sector||''}`.toLowerCase());
+        return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" data-busca="${busca}" ondragstart="dragStart(event)" title="Arraste para outra coluna para mudar o estágio">
           <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${nome}">${nome}</button>${tierBadgeHtml(l)}</div>
-          <div class="kb-domain">${esc(l.domain||'')}</div>
+          <div class="kb-lines">${linhas}</div>
           <div class="kb-card-actions">${left}${right}</div>
         </div>`;
       }).join('')||'<div class="kb-empty">Nenhum lead aqui</div>';
+      // Lead novo nasce de uma análise: o "+" da primeira coluna leva para a busca.
+      const novo=stage==='novo'
+        ? `<button class="kb-add" onclick="nav('');focusSearch()" title="Analisar um domínio; a empresa entra nesta coluna">+ Analisar empresa</button>`
+        : '';
       return `<div class="kb-col" data-stage="${stage}" ondrop="dragDropCol(event)" ondragover="dragOverCol(event)" ondragleave="dragLeaveCol(event)">
-        <div class="kb-col-hdr">
-          <div class="kb-col-name">${STAGE_LABELS[stage]} <span class="kb-count">${byStage[stage].length}</span></div>
+        <div class="kb-col-hdr" title="${esc(STAGE_DESC[stage]||'')}">
+          <div class="kb-col-name"><span class="kb-dot" aria-hidden="true"></span>${STAGE_LABELS[stage]} <span class="kb-count">${byStage[stage].length}</span></div>
           <div class="kb-col-desc">${STAGE_DESC[stage]||''}</div>
-        </div>${cards}</div>`;
+        </div><div class="kb-cards">${cards}</div>${novo}</div>`;
     }).join('')}</div></div>`;
     document.querySelectorAll('.kb-card').forEach(c=>{
       c.addEventListener('dragend',()=>{c.classList.remove('dragging');document.querySelectorAll('.kb-col.drag-over').forEach(k=>k.classList.remove('drag-over'));});
     });
+    filterPipeline(_plBusca);
   }catch(e){if(e.message!=='not_authenticated')body.innerHTML='<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';}
+}
+
+const KB_IC={
+  site:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
+  setor:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>',
+  porte:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14a6.5 6.5 0 0 1 3.5 6"/></svg>',
+  data:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+};
+
+/* Busca do pipeline: só esconde cartões na tela, sem nova chamada à API.
+   Fica guardada para sobreviver ao recarregamento depois de mover um lead. */
+let _plBusca='';
+function filterPipeline(q){
+  _plBusca=(q||'').trim().toLowerCase();
+  document.querySelectorAll('.kb-col').forEach(col=>{
+    let visiveis=0;
+    col.querySelectorAll('.kb-card').forEach(c=>{
+      const ok=!_plBusca||c.dataset.busca.includes(_plBusca);
+      c.hidden=!ok;if(ok)visiveis++;
+    });
+    const n=col.querySelector('.kb-count');
+    const total=col.querySelectorAll('.kb-card').length;
+    if(n)n.textContent=_plBusca?`${visiveis}/${total}`:total;
+  });
 }
 
 let draggedCard=null;

@@ -9,7 +9,7 @@
   <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=31" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=32" />
 </head>
 <body class="app-body">
 
@@ -171,6 +171,8 @@
 
       <div class="tb-slot" data-slot="pipeline">
         <span class="tb-hint">Arraste o card ou use ◀ ▶ para mudar de estágio</span>
+        <input id="pipeline-filter" class="tb-input" placeholder="Buscar empresa, domínio ou setor…"
+               oninput="filterPipeline(this.value)" autocomplete="off" aria-label="Buscar no pipeline" />
       </div>
 
       <div class="tb-slot" data-slot="followups">
@@ -501,7 +503,7 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=33"></script>
+<script src="/static/js/app.js?v=34"></script>
 {# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
    com edição célula a célula e teclado próprio. #}
 <script src="/static/js/sheet.js?v=24"></script>
