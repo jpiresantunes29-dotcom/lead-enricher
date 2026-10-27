@@ -40,14 +40,16 @@ from ._utils import HEADERS, is_public_host, normalize_domain, safe_get
 # de provedores, mesmo WHOIS/PTR com cache por IP.
 from .dns_lookup import (
     _EMPTY_IP_INFO, _ip_info, _ptr, _txt_unquote, clean_asn_org,
-    country_label, identify_provider,
+    country_label, identify_provider, parse_mx_answers, summarize_mail_provider,
 )
 
 logger = logging.getLogger(__name__)
 
 # Incremente quando a coleta mudar: relatórios gravados por versões anteriores
 # deixam de ser servidos do cache e são recoletados na próxima abertura.
-FULL_REPORT_VERSION = 1
+#   2 — MX nulo (RFC 7505) sai da tabela; provedor pelo MX primário, com
+#       gateway e caixa postal separados (mesma régua do enriquecimento)
+FULL_REPORT_VERSION = 2
 
 # Teto de tempo do relatório inteiro. A função serverless da Vercel morre em
 # 60 s sem devolver nada — melhor entregar o que já foi coletado, com aviso do
@@ -691,11 +693,10 @@ def get_full_report(domain_input: str) -> dict:
     report["records"]["a"] = sorted(set(a_records))
     report["records"]["aaaa"] = sorted(set(aaaa_records))
 
-    mx_raw = sorted(
-        [{"priority": r.preference, "host": str(r.exchange).rstrip(".").lower()}
-         for r in rr(("root", "MX"))[0]],
-        key=lambda x: (x["priority"], x["host"]),
-    )
+    # Mesmo parser do enriquecimento: tira o MX nulo (".") da tabela — ele
+    # virava uma linha de host vazio — e deduplica na ordem de preferência.
+    mx_parsed = parse_mx_answers(rr(("root", "MX"))[0])
+    mx_raw = mx_parsed["records"]
     ns_raw = sorted({str(r).rstrip(".").lower() for r in rr(("root", "NS"))[0]})
 
     cname_www, _ = rr(("www", "CNAME"))
@@ -938,7 +939,6 @@ def get_full_report(domain_input: str) -> dict:
 
     # MX e NS na forma de tabela, cada um com a rede por trás.
     mx_records = []
-    provider_name, provider_conf = None, "none"
     for rec in mx_raw:
         entry = host_by_name.get(rec["host"]) or _host_entry(rec["host"], None, "mx")
         mx_records.append({
@@ -948,11 +948,12 @@ def get_full_report(domain_input: str) -> dict:
             "country": entry["country"], "country_name": entry["country_name"],
             "ttl": ttls.get("MX"),
         })
-        if not provider_name:
-            name, conf = identify_provider(rec["host"], entry["asn_org"])
-            if name:
-                provider_name, provider_conf = name, conf
     report["records"]["mx"] = mx_records
+    # Mesma régua do enriquecimento (MX primário, PTR, gateway + SPF): o
+    # painel aberto não pode contradizer o provedor que a ficha mostra.
+    mail = summarize_mail_provider(mx_records, spf_raw)
+    provider_name = mail["mx_provider"]
+    provider_conf = mail["mx_provider_confidence"]
     report["records"]["ns"] = [
         {
             "host": host,
@@ -985,6 +986,9 @@ def get_full_report(domain_input: str) -> dict:
         "mx_count": len(mx_records),
         "mx_provider": provider_name,
         "mx_provider_confidence": provider_conf,
+        "mx_null": mx_parsed["null_mx"],
+        "mx_gateway": mail["mx_gateway"],
+        "mailbox_provider": mail["mailbox_provider"],
         "hosting_provider": hosting_provider,
         "hosting_asn": (hosting_info or {}).get("asn"),
         "hosting_country": (hosting_info or {}).get("country_name"),

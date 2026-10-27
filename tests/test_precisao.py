@@ -453,7 +453,10 @@ def test_provedor_de_email_nao_vira_sufixo_do_dominio():
     apresentado ao vendedor como se fosse o provedor de e-mail.
     """
     assert registrable_name("mx-ha.skymail.net.br") == "Skymail"
-    assert identify_provider("mx-ha.skymail.net.br", None) == ("Skymail", "low")
+    # Provedor fora da tabela continua caindo no nome do domínio, não no sufixo.
+    assert identify_provider("mx-ha.provedorx.net.br", None) == ("Provedorx", "low")
+    # O Skymail em si agora está na tabela: deixou de ser palpite.
+    assert identify_provider("mx-ha.skymail.net.br", None) == ("Skymail", "high")
 
 
 def test_provedor_conhecido_continua_vindo_do_hostname():
@@ -625,7 +628,7 @@ def _stub_coleta(monkeypatch, *, site, rdap=None, cnpj_data=None, page=None):
     monkeypatch.setattr(enricher, "lookup_cnpj", lambda c, timeout=6: cnpj_data)
     monkeypatch.setattr(
         enricher, "find_company_linkedin",
-        lambda d, n: {"url": None, "confidence": "none", "source": None, "page": page},
+        lambda d, n, **k: {"url": None, "confidence": "none", "source": None, "page": page},
     )
     return enricher
 
@@ -831,7 +834,7 @@ def test_cnae_generico_perde_para_o_setor_do_linkedin(monkeypatch):
     )
     monkeypatch.setattr(
         enricher_mod, "find_company_linkedin",
-        lambda d, n: {"url": "https://www.linkedin.com/company/acme",
+        lambda d, n, **k: {"url": "https://www.linkedin.com/company/acme",
                       "confidence": "verified", "source": "site", "page": pagina},
     )
     assert enricher_mod.enrich_company("acme.com.br")["sector"] == "Tecnologia da informação"
@@ -851,7 +854,7 @@ def _setor_resolvido(monkeypatch, *, cnae, linkedin):
     )
     monkeypatch.setattr(
         mod, "find_company_linkedin",
-        lambda d, n: {"url": "https://www.linkedin.com/company/x",
+        lambda d, n, **k: {"url": "https://www.linkedin.com/company/x",
                       "confidence": "verified", "source": "site", "page": pagina},
     )
     return mod.enrich_company("acme.com.br")["sector"]

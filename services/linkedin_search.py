@@ -24,7 +24,7 @@ from urllib.parse import unquote
 from ._utils import (
     HEADERS, normalize_domain, LINKEDIN_PAGE_RE, linkedin_ref, linkedin_page_url,
     jsonld_organization, linkedin_from_sameas, is_public_linkedin_slug,
-    fix_response_encoding, domain_mentioned,
+    fix_response_encoding, domain_mentioned, is_credit_anchor,
 )
 from ._ddg import search_multi
 
@@ -97,7 +97,17 @@ def _extract_candidates_from_html(html: str, soup: BeautifulSoup) -> List[dict]:
     if same_as_url:
         add(same_as_url, "jsonld_sameas", 1.2)
 
-    # Footer / header (mais confiável)
+    # Footer / header (mais confiável). O crédito da agência que fez o site
+    # ("Desenvolvido por X") mora justamente no rodapé, com o LinkedIn de X —
+    # sai antes de pontuar, e não entra nem pelo regex lá embaixo.
+    creditos = set()
+    for a in soup.find_all("a", href=True):
+        if "linkedin.com/" in a["href"] and is_credit_anchor(a):
+            ref = linkedin_ref(a["href"])
+            if ref:
+                creditos.add(ref)
+    seen.update(creditos)
+
     for container_name, weight in [("footer", 1.0), ("header", 0.8)]:
         container = soup.find(container_name)
         if container:
@@ -145,7 +155,10 @@ def _pick_best_candidate(candidates: List[dict], domain: str,
     domain_root = domain.split(".")[0]
     scored = []
     for c in candidates:
-        sim = _similarity(c["slug"], domain_root)
+        # Domínio OU nome: "grupo-xyz" não se parece com o domínio "xyzloja",
+        # mas se parece com o nome "Grupo XYZ" que o site declara.
+        sim = max(_similarity(c["slug"], domain_root),
+                  _similarity(c["slug"], company_name or ""))
         score = c["weight"] * (0.5 + sim * 0.5)
         if c.get("kind") == tipo_esperado:
             score *= 1.6
@@ -190,6 +203,18 @@ def _extract_from_site(domain: str, company_name: Optional[str] = None) -> Optio
 
 def _search_engines(domain: str, company_name: Optional[str]) -> Optional[str]:
     """Busca via DDG/Bing (compartilhado), prioriza match com nome da empresa."""
+    ranked = _search_engine_candidates(domain, company_name)
+    return ranked[0] if ranked else None
+
+
+# Quantos resultados de buscador são conferidos. O primeiro colocado é muitas
+# vezes um homônimo ("Acme Ltda" de outro estado); conferir só ele fazia a
+# ficha ficar sem LinkedIn quando o certo vinha em segundo.
+_MAX_SEARCH_CANDIDATES = 3
+
+
+def _search_engine_candidates(domain: str, company_name: Optional[str]) -> List[str]:
+    """Resultados de buscador em ordem de semelhança, sem repetição."""
     # `linkedin.com` sem o caminho fixo para que /school/ também apareça: com
     # `site:linkedin.com/company` o buscador nunca devolveria a página de uma
     # universidade.
@@ -205,7 +230,8 @@ def _search_engines(domain: str, company_name: Optional[str]) -> Optional[str]:
         results = search_multi(query)
         for r in results:
             ref = linkedin_ref(r.get("url", ""))
-            if not ref:
+            # Slug numérico/de painel exige login: não há página para conferir.
+            if not ref or not is_public_linkedin_slug(ref[1]):
                 continue
             kind, slug = ref
             # Score: similaridade do slug com domínio + título com company_name
@@ -216,10 +242,8 @@ def _search_engines(domain: str, company_name: Optional[str]) -> Optional[str]:
         if candidates:
             break
 
-    if not candidates:
-        return None
     candidates.sort(key=lambda x: x[0], reverse=True)
-    return candidates[0][1]
+    return list(dict.fromkeys(url for _score, url in candidates))
 
 
 def fetch_company_page(linkedin_url: str) -> Optional[str]:
@@ -301,7 +325,8 @@ def parse_company_page(html: Optional[str]) -> dict:
 
 def _confidence(html: Optional[str], domain: str, declared_website: Optional[str],
                 declarado_pelo_site: bool = False, page_name: Optional[str] = None,
-                company_name: Optional[str] = None) -> str:
+                company_name: Optional[str] = None,
+                outros_dominios: tuple = ()) -> str:
     """
     Quanto a página confirma que este LinkedIn é o da empresa do domínio.
 
@@ -329,12 +354,18 @@ def _confidence(html: Optional[str], domain: str, declared_website: Optional[str
     if not domain_lower:
         return "unverified"
 
-    if declared_website and normalize_domain(declared_website) == domain_lower:
+    # `outros_dominios` é para onde o PRÓPRIO site redireciona (marca nova,
+    # domínio .com do grupo): a empresa declarou que aquele endereço é dela,
+    # então o LinkedIn que declara esse endereço é o dela também. Sem isto,
+    # "empresa.com.br → empresa.com" tirava o "verified" do perfil certo.
+    aceitos = {domain_lower} | {normalize_domain(d) for d in outros_dominios if d}
+    if declared_website and normalize_domain(declared_website) in aceitos:
         return "verified"
 
     text = html.lower()
-    if re.search(r'"website"\s*:\s*"https?://(?:www\.)?' + re.escape(domain_lower) + r'(?![a-z0-9\-])', text):
-        return "verified"
+    for aceito in aceitos:
+        if re.search(r'"website"\s*:\s*"https?://(?:www\.)?' + re.escape(aceito) + r'(?![a-z0-9\-])', text):
+            return "verified"
 
     # O site declarado existe e aponta para outro endereço. Isso NÃO decide
     # sozinho: medido nas três páginas reais, o endereço declarado é um
@@ -357,7 +388,8 @@ def _confidence(html: Optional[str], domain: str, declared_website: Optional[str
 def inspect_company_page(linkedin_url: str, domain: str,
                          page_html: Optional[str] = None,
                          declarado_pelo_site: bool = False,
-                         company_name: Optional[str] = None) -> dict:
+                         company_name: Optional[str] = None,
+                         outros_dominios: tuple = ()) -> dict:
     """
     Tudo que a página pública da empresa ensina, com UM download e UM parse:
       {confidence, sector, location, size, html}
@@ -380,7 +412,8 @@ def inspect_company_page(linkedin_url: str, domain: str,
     try:
         confidence = (
             _confidence(html, domain, info["website"], declarado_pelo_site,
-                        page_name=info["name"], company_name=company_name)
+                        page_name=info["name"], company_name=company_name,
+                        outros_dominios=tuple(outros_dominios or ()))
             if linkedin_url else "unverified"
         )
     except Exception as e:
@@ -597,7 +630,8 @@ def _names_match(page_name: Optional[str], company_name: Optional[str], domain: 
     return False
 
 
-def _guess_from_slugs(domain: str, company_name: Optional[str]) -> Optional[dict]:
+def _guess_from_slugs(domain: str, company_name: Optional[str],
+                      outros_dominios: tuple = ()) -> Optional[dict]:
     """
     Testa os palpites em paralelo e devolve {url, page} do primeiro
     confirmado.
@@ -620,7 +654,8 @@ def _guess_from_slugs(domain: str, company_name: Optional[str]) -> Optional[dict
 
     def _try(kind: str, slug: str) -> Optional[dict]:
         url = _normalize(slug, kind)
-        page = inspect_company_page(url, domain, company_name=company_name)
+        page = inspect_company_page(url, domain, company_name=company_name,
+                                    outros_dominios=outros_dominios)
         if page["confidence"] == "verified":
             return {"url": url, "page": page}
         if _names_match(page.get("name"), company_name, domain):
@@ -644,14 +679,19 @@ def _guess_from_slugs(domain: str, company_name: Optional[str]) -> Optional[dict
     return None
 
 
-def find_company_linkedin(domain: str, company_name: Optional[str] = None) -> dict:
+def find_company_linkedin(domain: str, company_name: Optional[str] = None,
+                          outros_dominios: tuple = ()) -> dict:
     """
     Busca o LinkedIn da empresa com múltiplas estratégias e devolve dict
     com {url, confidence, source, page}.
 
     `page` é o resultado de inspect_company_page() — quem chama reaproveita o
     HTML e os campos já extraídos em vez de baixar a página de novo.
+
+    `outros_dominios` são endereços que o próprio site assume como seus (o
+    destino do redirecionamento da home): valem como o domínio na validação.
     """
+    outros_dominios = tuple(outros_dominios or ())
     domain = normalize_domain(domain)
 
     # Estratégia 1: extração do site (a empresa declarando o próprio perfil)
@@ -668,7 +708,7 @@ def find_company_linkedin(domain: str, company_name: Optional[str] = None) -> di
     # todos barrando robô hoje (captcha/anti-bot).
     if not found:
         try:
-            guessed = _guess_from_slugs(domain, company_name)
+            guessed = _guess_from_slugs(domain, company_name, outros_dominios)
         except Exception as e:
             logger.warning("Adivinhação de slug do LinkedIn falhou domain=%s: %s", domain, e)
             guessed = None
@@ -676,18 +716,47 @@ def find_company_linkedin(domain: str, company_name: Optional[str] = None) -> di
             found, page, source = guessed["url"], guessed["page"], "slug_guess"
 
     # Estratégia 3: busca em engines — último recurso, hoje dormente.
+    # Resultado de buscador é só pista: cada um é conferido na página, e o
+    # primeiro que se confirma ganha. Homônimo que não se confirma não vira
+    # link na ficha só por ter vindo em primeiro.
     if not found:
+        source = "search_engine"
         try:
-            found = _search_engines(domain, company_name)
+            ranked = _search_engine_candidates(domain, company_name)
         except Exception as e:
             logger.warning("Busca de LinkedIn em engines falhou domain=%s: %s", domain, e)
-            found = None
-        source = "search_engine"
+            ranked = []
+        conferir = ranked[:_MAX_SEARCH_CANDIDATES]
+        paginas = []
+        if conferir:
+            # Em paralelo: cada página leva ~12 s, e em fila três delas
+            # comeriam o orçamento inteiro da busca.
+            with ThreadPoolExecutor(max_workers=len(conferir)) as pool:
+                futures = [pool.submit(inspect_company_page, url, domain,
+                                       company_name=company_name,
+                                       outros_dominios=outros_dominios)
+                           for url in conferir]
+                for url, future in zip(conferir, futures):
+                    try:
+                        paginas.append((url, future.result(timeout=PAGE_TIMEOUT[1] + 4)))
+                    except Exception:
+                        continue
+        # "verified" (o LinkedIn declara o domínio) ganha de "probable" (só o
+        # nome bate) mesmo vindo depois no ranking do buscador.
+        for wanted in ("verified", "probable"):
+            match = next(((u, p) for u, p in paginas if p["confidence"] == wanted), None)
+            if match:
+                found, page = match
+                break
+        if not found and ranked:
+            found = ranked[0]
+            page = next((p for u, p in paginas if u == found), None)
 
     if not found:
         return {"url": None, "confidence": "none", "source": None, "page": None}
 
     if page is None:
         page = inspect_company_page(found, domain, declarado_pelo_site=(source == "site"),
-                                    company_name=company_name)
+                                    company_name=company_name,
+                                    outros_dominios=outros_dominios)
     return {"url": found, "confidence": page["confidence"], "source": source, "page": page}

@@ -9,9 +9,13 @@ Coleta para um domínio:
   - SOA
 
 Identifica:
-  - Provedor de email (Microsoft 365, Google Workspace, Zoho, Proofpoint...)
+  - Provedor de email (Microsoft 365, Google Workspace, Zoho, Proofpoint...),
+    separando o gateway de segurança da caixa postal que fica atrás dele
+  - Situação do MX: publicado, MX nulo (RFC 7505), implícito (só A), herdado
+    do domínio raiz, ou DNS sem resposta
   - Provedor de hosting (via ASN do A record)
-  - Confiança alta (match exato), média (ASN), baixa (fallback domínio)
+  - Confiança alta (match exato no MX primário), média (backup/ASN), baixa
+    (fallback domínio)
 """
 import logging
 import os
@@ -30,7 +34,9 @@ except Exception:
     IPWHOIS_OK = False
 
 from . import dns_resolver
-from ._utils import normalize_domain
+from ._utils import (
+    TWO_LEVEL_SUFFIXES, host_matches, normalize_domain, registrable_domain,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +51,17 @@ MX_DETAIL_MAX = int(os.getenv("MX_DETAIL_MAX", "4"))
 
 # ============================================================
 # Padrões de provedores (expandido — estilo DNS Dumpster)
-# Match por hostname MX
+# Match por SUFIXO do hostname MX (ver `host_matches`): o padrão precisa ser o
+# domínio inteiro do provedor, rótulo por rótulo — "uol.com.br" não pode casar
+# com "bauol.com.br".
 # ============================================================
 PROVIDER_PATTERNS = [
-    # Microsoft
+    # Microsoft. `mx.microsoft` é o MX com DNSSEC que o Microsoft 365 passou a
+    # entregar para domínios novos (<tenant>.mx.microsoft).
     ("mail.protection.outlook.com", "Microsoft 365"),
     ("protection.outlook.com", "Microsoft 365"),
+    ("mx.microsoft", "Microsoft 365"),
     ("outlook.com", "Microsoft 365"),
-    ("eo.outlook.com", "Microsoft 365"),
     ("hotmail.com", "Microsoft (Hotmail)"),
     ("live.com", "Microsoft (Live)"),
     # Google
@@ -60,10 +69,16 @@ PROVIDER_PATTERNS = [
     ("googlemail.com", "Google Workspace"),
     ("google.com", "Google Workspace"),
     ("googlehosted.com", "Google Workspace"),
+    # PTR dos servidores de e-mail do Google. Só aparece pelo reverso, quando
+    # o MX usa nome próprio do cliente apontando para o Google.
+    ("1e100.net", "Google Workspace"),
     # Zoho
     ("zoho.com", "Zoho Mail"),
     ("zohomail.com", "Zoho Mail"),
     ("zohomail.eu", "Zoho Mail"),
+    ("zoho.eu", "Zoho Mail"),
+    ("zoho.in", "Zoho Mail"),
+    ("zoho.com.au", "Zoho Mail"),
     # Yahoo
     ("yahoodns.net", "Yahoo Business Mail"),
     ("yahoo.com", "Yahoo Mail"),
@@ -73,6 +88,7 @@ PROVIDER_PATTERNS = [
     ("ppe-hosted.com", "Proofpoint Essentials"),
     ("mimecast.com", "Mimecast"),
     ("mimecast.co.za", "Mimecast"),
+    ("mimecast-offshore.com", "Mimecast"),
     ("barracudanetworks.com", "Barracuda"),
     ("barracuda.com", "Barracuda"),
     ("iphmx.com", "Cisco IronPort"),
@@ -83,11 +99,17 @@ PROVIDER_PATTERNS = [
     ("hydrasophos.com", "Sophos Hydra"),
     ("sophos.com", "Sophos"),
     ("trendmicro.com", "Trend Micro"),
+    ("trendmicro.eu", "Trend Micro"),
+    ("mailcontrol.com", "Forcepoint"),
+    ("hornetsecurity.com", "Hornetsecurity"),
+    ("spamtitan.com", "SpamTitan"),
     ("antispamcloud.com", "AntiSpamCloud"),
     ("mxlogic.net", "McAfee MXLogic"),
     ("mailfilter.io", "MailFilter"),
     ("spamh.com", "SpamH"),
-    ("mailspamprotection.com", "Locaweb (Spam Protection)"),
+    # mx10/mx20/mx30.mailspamprotection.com é o MX padrão da SiteGround, não
+    # da Locaweb — o rótulo antigo punha a empresa errada na ficha.
+    ("mailspamprotection.com", "SiteGround"),
     ("gatefy.com", "Gatefy"),
     # Cloudflare
     ("mx.cloudflare.net", "Cloudflare Email Routing"),
@@ -99,8 +121,14 @@ PROVIDER_PATTERNS = [
     ("hostgator.com.br", "HostGator BR"),
     ("hostgator.com", "HostGator"),
     ("uolhost.com.br", "UOL Host"),
+    ("uhserver.com", "UOL Host"),
     ("uol.com.br", "UOL Host"),
     ("unifique.com.br", "Unifique"),
+    ("skymail.net.br", "Skymail"),
+    ("skymail.com.br", "Skymail"),
+    ("hostinger.com", "Hostinger"),
+    ("hostinger.com.br", "Hostinger"),
+    ("umbler.com", "Umbler"),
     ("brasileiro.com.br", "Provedor BR"),
     ("registro.br", "Registro.br"),
     # Hosts internacionais
@@ -145,6 +173,52 @@ PROVIDER_PATTERNS = [
     ("registrar-servers.com", "Namecheap"),
 ]
 
+# Serviços que ficam NA FRENTE da caixa postal: filtram (ou só encaminham) e
+# entregam para outro provedor. O MX mostra o gateway; quem guarda o e-mail
+# da empresa é outra coisa, e quem vende para ela precisa saber as duas.
+GATEWAY_PROVIDERS = frozenset({
+    "Proofpoint", "Proofpoint Essentials", "Mimecast", "Barracuda",
+    "Cisco IronPort", "Cisco", "Symantec MessageLabs", "Symantec.cloud",
+    "Sophos Hydra", "Sophos", "Trend Micro", "AntiSpamCloud",
+    "McAfee MXLogic", "MailFilter", "SpamH", "Gatefy", "Forcepoint",
+    "Hornetsecurity", "SpamTitan", "Cloudflare Email Routing",
+})
+
+# Provedores que o PTR não pode afirmar: são nuvem ou hospedagem genérica, e o
+# reverso de uma máquina deles diz onde o servidor roda, não quem é o serviço
+# de e-mail. MX próprio numa EC2 tem PTR "...compute-1.amazonaws.com" — e
+# isso não faz da empresa cliente de e-mail da Amazon.
+_PTR_NOT_EVIDENCE = frozenset({
+    "Amazon AWS", "Hetzner", "OVH", "IONOS", "1&1 IONOS", "GoDaddy",
+    "Cloudflare Email Routing",
+})
+
+# Includes do SPF que entregam a CAIXA POSTAL por trás de um gateway. Só
+# provedores de caixa postal: SendGrid, Mailchimp, Amazon SES e afins também
+# aparecem no SPF, mas disparam marketing — não guardam o e-mail de ninguém.
+MAILBOX_SPF_PATTERNS = [
+    ("protection.outlook.com", "Microsoft 365"),
+    ("outlook.com", "Microsoft 365"),
+    ("google.com", "Google Workspace"),
+    ("googlemail.com", "Google Workspace"),
+    ("zoho.com", "Zoho Mail"),
+    ("zoho.eu", "Zoho Mail"),
+    ("zohomail.com", "Zoho Mail"),
+    ("locaweb.com.br", "Locaweb"),
+    ("kinghost.net", "KingHost"),
+    ("uhserver.com", "UOL Host"),
+    ("uol.com.br", "UOL Host"),
+    ("skymail.net.br", "Skymail"),
+    ("titan.email", "Titan Mail"),
+    ("hostinger.com", "Hostinger"),
+    ("hostgator.com.br", "HostGator BR"),
+    ("secureserver.net", "GoDaddy"),
+    ("emailsrvr.com", "Rackspace Email"),
+    ("messagingengine.com", "Fastmail"),
+    ("protonmail.ch", "ProtonMail"),
+    ("yandex.net", "Yandex"),
+]
+
 # ASN substring → provedor (fallback quando hostname não bate)
 ASN_PATTERNS = [
     ("GOOGLE", "Google Workspace"),
@@ -170,22 +244,281 @@ ASN_PATTERNS = [
 ]
 
 
-def _resolve(domain: str, rtype: str, lifetime: int = 5) -> List:
+def _resolve_status(domain: str, rtype: str, lifetime: float = 5) -> tuple:
+    """
+    `(rdatas, status)`, com status "ok" | "empty" | "nxdomain" | "unreachable".
+
+    A lista vazia sozinha não basta para o MX: "o domínio não publica MX",
+    "o domínio não existe" e "ninguém respondeu" pedem leituras diferentes na
+    ficha — só as duas primeiras autorizam dizer que não há e-mail ali.
+    """
     try:
-        return list(dns_resolver.resolve(domain, rtype, lifetime=lifetime))
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN):
+        return list(dns_resolver.resolve(domain, rtype, lifetime=lifetime)), "ok"
+    except dns.resolver.NXDOMAIN:
+        return [], "nxdomain"
+    except dns.resolver.NoAnswer:
         # Resposta legítima: o domínio existe e não publica esse registro.
-        return []
+        return [], "empty"
     except (dns.resolver.NoNameservers, dns.exception.Timeout) as e:
         # Aqui ninguém respondeu — nem o sistema, nem o fallback. É um buraco
         # no relatório, não um domínio sem registro, e precisa aparecer no log
         # para não virar "ficha vazia" sem explicação.
         logger.warning("DNS sem resposta domain=%s type=%s: %s",
                        domain, rtype, type(e).__name__)
-        return []
+        return [], "unreachable"
     except Exception as e:
         logger.warning("DNS erro inesperado domain=%s type=%s: %s", domain, rtype, e)
-        return []
+        return [], "unreachable"
+
+
+def _resolve(domain: str, rtype: str, lifetime: int = 5) -> List:
+    return _resolve_status(domain, rtype, lifetime)[0]
+
+
+# ============================================================
+# MX: registros publicados, MX nulo, MX implícito, subdomínio
+# ============================================================
+
+def parse_mx_answers(rdatas) -> dict:
+    """
+    `{"records": [{priority, host}], "null_mx": bool}` a partir das respostas.
+
+    - Ordena por prioridade (menor = preferido) e, no empate, por nome: o
+      "servidor primário" da ficha tem de ser o mesmo a cada coleta, não o
+      que o DNS devolveu primeiro desta vez.
+    - Host repetido com duas prioridades fica com a menor — é a que vale para
+      quem entrega.
+    - MX nulo (RFC 7505, `0 .`) é a declaração explícita de que o domínio NÃO
+      recebe e-mail. Só vale quando é o único registro; misturado com MX reais
+      é erro de configuração, e os reais continuam recebendo.
+    """
+    hosts = {}
+    null_mx = False
+    for r in rdatas or []:
+        host = str(r.exchange).rstrip(".").lower()
+        if not host:
+            null_mx = True
+            continue
+        pref = int(r.preference)
+        if host not in hosts or pref < hosts[host]:
+            hosts[host] = pref
+    records = sorted(
+        ({"priority": p, "host": h} for h, p in hosts.items()),
+        key=lambda r: (r["priority"], r["host"]),
+    )
+    return {"records": records, "null_mx": null_mx and not records}
+
+
+def _mx_of(name: str) -> dict:
+    """MX de um nome só, sem fallback: {status, records, alias_of}."""
+    try:
+        answer = dns_resolver.resolve(name, "MX", lifetime=6)
+    except dns.resolver.NXDOMAIN:
+        return {"status": "nxdomain", "records": [], "alias_of": None}
+    except dns.resolver.NoAnswer:
+        return {"status": "none", "records": [], "alias_of": None}
+    except (dns.resolver.NoNameservers, dns.exception.Timeout) as e:
+        logger.warning("DNS sem resposta domain=%s type=MX: %s", name, type(e).__name__)
+        return {"status": "unreachable", "records": [], "alias_of": None}
+    except Exception as e:
+        logger.warning("DNS erro inesperado domain=%s type=MX: %s", name, e)
+        return {"status": "unreachable", "records": [], "alias_of": None}
+
+    # Domínio que é CNAME de outro herda o MX do destino — o resolver já
+    # seguiu o apelido, e o painel deve dizer de onde o MX veio de fato.
+    canonical = str(getattr(answer, "canonical_name", "") or "").rstrip(".").lower()
+    alias_of = canonical if canonical and canonical != name else None
+
+    parsed = parse_mx_answers(answer)
+    if parsed["records"]:
+        return {"status": "ok", "records": parsed["records"], "alias_of": alias_of}
+    if parsed["null_mx"]:
+        return {"status": "null_mx", "records": [], "alias_of": alias_of}
+    return {"status": "none", "records": [], "alias_of": alias_of}
+
+
+def lookup_mx(domain: str) -> dict:
+    """
+    MX publicado para o domínio, com o motivo quando não há:
+
+      status        ok | null_mx | implicit | none | nxdomain | unreachable
+      records       [{priority, host}] em ordem de preferência
+      source_domain de qual nome o MX veio (o próprio ou o domínio raiz)
+      alias_of      destino do CNAME, quando o domínio é um apelido
+      implicit_host host que receberia por MX implícito (RFC 5321 §5.1)
+
+    Subdomínio sem MX ("vendas.empresa.com.br") cai para o domínio raiz: o
+    e-mail da empresa mora lá, e "sem MX" seria falso para quem vai escrever.
+
+    Sem MX nenhum, o protocolo manda entregar no A do próprio domínio (MX
+    implícito). Isso é registrado como tal e NUNCA vira linha de MX nem
+    provedor: o A aponta para o servidor do SITE, e afirmar que a hospedagem
+    do site é o provedor de e-mail seria inventar dado.
+
+    "unreachable" não cai em fallback nenhum: DNS que não respondeu não prova
+    ausência, e a ficha não pode dizer "não recebe e-mail" por causa disso.
+    """
+    domain = normalize_domain(domain)
+    own = _mx_of(domain)
+    out = {"status": own["status"], "records": own["records"],
+           "source_domain": domain, "alias_of": own["alias_of"],
+           "implicit_host": None}
+    if own["status"] in ("ok", "null_mx", "unreachable"):
+        return out
+
+    org = registrable_domain(domain)
+    if org and org != domain:
+        parent = _mx_of(org)
+        if parent["status"] in ("ok", "null_mx"):
+            out.update(status=parent["status"], records=parent["records"],
+                       source_domain=org, alias_of=parent["alias_of"])
+            return out
+
+    if own["status"] == "nxdomain":
+        return out
+
+    a_records, _ = _resolve_status(domain, "A")
+    if a_records:
+        out.update(status="implicit", implicit_host=domain)
+    return out
+
+
+def _cname_target(host: str) -> Optional[str]:
+    """Destino do CNAME de um host (MX com nome próprio apelidando o provedor)."""
+    answers = _resolve(host, "CNAME", lifetime=3)
+    if not answers:
+        return None
+    target = getattr(answers[0], "target", answers[0])
+    return str(target).rstrip(".").lower() or None
+
+
+def spf_includes(spf: Optional[str]) -> List[str]:
+    """Domínios dos `include:` e do `redirect=` de um SPF, em ordem."""
+    out = []
+    for token in (spf or "").split():
+        body = token.lstrip("+-~?").lower()
+        if body.startswith("include:"):
+            out.append(body.split(":", 1)[1].strip("."))
+        elif body.startswith("redirect="):
+            out.append(body.split("=", 1)[1].strip("."))
+    return [d for d in out if d]
+
+
+def mailbox_from_spf(spf: Optional[str]) -> tuple:
+    """
+    `(provedor, candidatos)` da caixa postal segundo o SPF.
+
+    O provedor só sai quando o SPF aponta para UM provedor de caixa postal.
+    Dois (Google e Microsoft juntos, comum no meio de uma migração) é
+    ambíguo — os dois vão em `candidatos` e a ficha não escolhe por sorteio.
+    """
+    found = []
+    for include in spf_includes(spf):
+        for pattern, name in MAILBOX_SPF_PATTERNS:
+            if host_matches(include, pattern):
+                if name not in found:
+                    found.append(name)
+                break
+    return (found[0] if len(found) == 1 else None), found
+
+
+def _known_provider(host: Optional[str]) -> Optional[str]:
+    """Provedor pelo padrão de hostname, ou None — sem ASN nem palpite."""
+    if not host:
+        return None
+    name, conf = identify_provider(host, None)
+    return name if conf == "high" else None
+
+
+def summarize_mail_provider(mx_records: List[dict], spf: Optional[str] = None,
+                            resolve_cname=None) -> dict:
+    """
+    Quem opera o e-mail da empresa, a partir das linhas de MX (com `ptr` e
+    `asn_org` quando houver) e do SPF.
+
+    Ordem das provas, da mais forte para a mais fraca:
+      1. hostname de um MX PRIMÁRIO (menor prioridade) bate com o provedor
+      2. CNAME do MX primário bate (nome próprio apelidando o provedor)
+      3. PTR do IP do MX primário bate (nome próprio com IP do provedor)
+      4. um MX de BACKUP bate — "medium": backup no Google atrás de um
+         servidor próprio não faz da empresa cliente do Google Workspace
+      5. ASN do MX — "medium"; 6. nome do domínio do MX — "low"
+
+    Antes, bastava QUALQUER MX bater para afirmar o provedor com confiança
+    alta, mesmo o de prioridade 50 que só recebe quando o primário cai.
+
+    Quando o primário é um gateway (Proofpoint, Mimecast...), o SPF diz qual
+    caixa postal está atrás dele. `mx_provider` sai no formato que o
+    classificador de tier já usa — "Microsoft 365 (via Proofpoint)" — e os
+    dois papéis também vão separados em `mx_gateway` e `mailbox_provider`.
+    """
+    out = {
+        "mx_provider": None, "mx_provider_confidence": "none",
+        "mx_provider_evidence": None, "mx_primary": None,
+        "mx_gateway": None, "mailbox_provider": None, "mailbox_evidence": None,
+        "mailbox_candidates": [],
+    }
+    if not mx_records:
+        return out
+    ordered = sorted(mx_records, key=lambda r: (r["priority"], r["host"]))
+    top = ordered[0]["priority"]
+    primary = [r for r in ordered if r["priority"] == top]
+    backup = [r for r in ordered if r["priority"] != top]
+    out["mx_primary"] = primary[0]["host"]
+
+    name, conf, evidence = None, "none", None
+    for rec in primary:
+        name = _known_provider(rec["host"])
+        if name:
+            conf, evidence = "high", "mx_host"
+            break
+    if not name and resolve_cname:
+        for rec in primary:
+            try:
+                target = resolve_cname(rec["host"])
+            except Exception:
+                target = None
+            name = _known_provider(target)
+            if name:
+                conf, evidence = "high", "mx_cname"
+                break
+    if not name:
+        for rec in primary:
+            candidate = _known_provider(rec.get("ptr"))
+            if candidate and candidate not in _PTR_NOT_EVIDENCE:
+                name, conf, evidence = candidate, "high", "mx_ptr"
+                break
+    if not name:
+        for rec in backup:
+            name = _known_provider(rec["host"])
+            if name:
+                conf, evidence = "medium", "mx_backup"
+                break
+    if not name:
+        for rec in ordered:
+            candidate, candidate_conf = identify_provider(rec["host"], rec.get("asn_org"))
+            if candidate and candidate_conf == "medium":
+                name, conf, evidence = candidate, "medium", "asn"
+                break
+    if not name:
+        name, conf = identify_provider(primary[0]["host"], primary[0].get("asn_org"))
+        evidence = "hostname" if name else None
+
+    if not name:
+        return out
+
+    out.update(mx_provider=name, mx_provider_confidence=conf,
+               mx_provider_evidence=evidence)
+    if name in GATEWAY_PROVIDERS:
+        out["mx_gateway"] = name
+        mailbox, candidates = mailbox_from_spf(spf)
+        out["mailbox_candidates"] = candidates
+        if mailbox:
+            out.update(mailbox_provider=mailbox, mailbox_evidence="spf",
+                       mx_provider=f"{mailbox} (via {name})")
+    elif conf == "high":
+        out.update(mailbox_provider=name, mailbox_evidence=evidence)
+    return out
 
 
 @lru_cache(maxsize=512)
@@ -290,13 +623,9 @@ def _ptr(ip: str) -> Optional[str]:
 
 # Sufixos públicos de dois níveis. Sem eles, o fallback de "mx.skymail.net.br"
 # devolvia "Net.Br" — o sufixo, não o provedor — direto no campo do vendedor.
-_TWO_LEVEL_SUFFIXES = {
-    "com.br", "net.br", "org.br", "adv.br", "eng.br", "ind.br", "srv.br",
-    "psc.br", "med.br", "esp.br", "tur.br", "agr.br", "art.br", "inf.br",
-    "co.uk", "org.uk", "me.uk", "com.mx", "com.ar", "com.co", "com.pe",
-    "com.uy", "com.py", "com.au", "net.au", "co.nz", "co.za", "co.jp",
-    "co.in", "com.pt", "com.es", "com.tr",
-}
+# A lista mora em _utils porque o site oficial e o MX de subdomínio usam a
+# mesma régua.
+_TWO_LEVEL_SUFFIXES = TWO_LEVEL_SUFFIXES
 
 
 def registrable_name(hostname: str) -> Optional[str]:
@@ -319,9 +648,9 @@ def identify_provider(hostname: str, asn_org: Optional[str]) -> tuple:
     Identifica provedor por (hostname, asn_org).
     Retorna (nome, confiança: high|medium|low).
     """
-    host = (hostname or "").lower()
+    host = (hostname or "").lower().rstrip(".")
     for pattern, name in PROVIDER_PATTERNS:
-        if pattern in host:
+        if host_matches(host, pattern):
             return name, "high"
     if asn_org:
         upper = asn_org.upper()
@@ -394,6 +723,20 @@ def get_dns_report(domain_input: str) -> dict:
         "soa": None,
         "mx_provider": None,
         "mx_provider_confidence": "none",
+        # Por que o MX está (ou não) aí — ver `lookup_mx`. Sem isto, "sem MX"
+        # (o domínio não recebe e-mail) e "DNS não respondeu" (não sabemos)
+        # saíam iguais na ficha.
+        "mx_status": None,
+        "mx_source_domain": None,
+        "mx_alias_of": None,
+        "mx_implicit_host": None,
+        "mx_primary": None,
+        "mx_provider_evidence": None,
+        # Gateway de segurança na frente e caixa postal atrás, separados.
+        "mx_gateway": None,
+        "mailbox_provider": None,
+        "mailbox_evidence": None,
+        "mailbox_candidates": [],
         "hosting_provider": None,
         "hosting_confidence": "none",
         "hosting_asn": None,
@@ -405,7 +748,7 @@ def get_dns_report(domain_input: str) -> dict:
     # relatório inteiro custa o tempo da consulta mais lenta, não a soma.
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = {
-            "mx": pool.submit(_resolve, domain, "MX", 6),
+            "mx": pool.submit(lookup_mx, domain),
             "a": pool.submit(_resolve, domain, "A"),
             "a_www": pool.submit(_resolve, f"www.{domain}", "A"),
             "aaaa": pool.submit(_resolve, domain, "AAAA"),
@@ -423,20 +766,17 @@ def get_dns_report(domain_input: str) -> dict:
                 answers[key] = []
 
     # --- MX ---
-    mx_hosts = [
-        {"priority": r.preference, "host": str(r.exchange).rstrip(".").lower()}
-        for r in answers["mx"]
-    ]
-    mx_hosts.sort(key=lambda r: r["priority"])
-
-    # Provedor pelo hostname resolve a maioria dos casos (Google, Microsoft,
-    # Zoho, Locaweb...) sem tocar na rede. Só o que sobra vai para o WHOIS.
-    provider_name, provider_conf = None, "none"
-    for rec in mx_hosts:
-        name, conf = identify_provider(rec["host"], None)
-        if name and conf == "high":
-            provider_name, provider_conf = name, conf
-            break
+    # `lookup_mx` já devolve as linhas deduplicadas e na ordem de preferência,
+    # sem o MX nulo ("."), e diz por que não há MX quando não há.
+    mx_lookup = answers["mx"] if isinstance(answers["mx"], dict) else {
+        "status": "unreachable", "records": [], "source_domain": domain,
+        "alias_of": None, "implicit_host": None,
+    }
+    mx_hosts = list(mx_lookup["records"])
+    report["mx_status"] = mx_lookup["status"]
+    report["mx_source_domain"] = mx_lookup["source_domain"]
+    report["mx_alias_of"] = mx_lookup["alias_of"]
+    report["mx_implicit_host"] = mx_lookup["implicit_host"]
 
     # IPs dos MX e dos NS na mesma leva: são só consultas A, baratas, e o
     # painel mostra o IP das duas famílias de registro.
@@ -505,20 +845,6 @@ def get_dns_report(domain_input: str) -> dict:
         })
     report["mx"] = mx_records
 
-    if mx_records and not provider_name:
-        for rec in mx_records:
-            name, conf = identify_provider(rec["host"], rec["asn_org"])
-            if name and conf in ("high", "medium"):
-                provider_name, provider_conf = name, conf
-                break
-        if not provider_name:
-            provider_name, provider_conf = identify_provider(
-                mx_records[0]["host"], mx_records[0]["asn_org"]
-            )
-    if provider_name:
-        report["mx_provider"] = provider_name
-        report["mx_provider_confidence"] = provider_conf
-
     # Hosting provider via ASN do primeiro A
     if report["a"]:
         info = whois_info.get(report["a"][0]) or dict(_EMPTY_IP_INFO)
@@ -565,6 +891,13 @@ def get_dns_report(domain_input: str) -> dict:
             if txt.lower().startswith("v=dmarc1"):
                 report["dmarc"] = txt
                 break
+
+    # --- Provedor de e-mail ---
+    # Depois do TXT de propósito: com gateway na frente, é o SPF que diz qual
+    # caixa postal está atrás dele. O CNAME só é consultado para MX primário
+    # que nenhum padrão reconheceu — custa uma consulta, e só nesse caso.
+    report.update(summarize_mail_provider(mx_records, report["spf"],
+                                          resolve_cname=_cname_target))
 
     # --- SOA ---
     if answers["soa"]:
