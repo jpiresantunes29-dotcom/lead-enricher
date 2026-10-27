@@ -1018,15 +1018,35 @@ async function loadTimeline(){
     const tl=acts.map(a=>{
       const cls=a.type==='meeting'?' ok':(a.outcome==='no_answer'||a.outcome==='busy'?' warn':'');
       const pendente=!a.completed_at&&a.due_at;
-      const when=a.completed_at?new Date(a.completed_at).toLocaleDateString('pt-BR'):(a.due_at?'previsto para '+new Date(a.due_at).toLocaleDateString('pt-BR'):'');
+      // Nota não tem prazo nem conclusão: vale a data em que foi escrita.
+      const when=a.completed_at?new Date(a.completed_at).toLocaleDateString('pt-BR'):(a.due_at?'previsto para '+new Date(a.due_at).toLocaleDateString('pt-BR'):(a.created_at?new Date(a.created_at).toLocaleDateString('pt-BR'):''));
       const tipo=ACT_LABELS[a.type]||a.type;
       // Etapa da cadência vem primeiro: "2ª tentativa · Ligação" diz mais que "Ligação".
       const label=STEP_LABELS[a.step]?`${STEP_LABELS[a.step]} · ${tipo}`:tipo;
       const out=a.outcome?(OUT_LABELS[a.outcome]||a.outcome):'';
       return `<div class="tl-item${cls}${pendente?' open':''}"><span class="tl-dot"></span><span class="tl-content"><span><strong>${esc(label)}</strong>${out?' · '+esc(out):''}${when?' · '+esc(when):''}</span>${a.notes?`<small>${esc(a.notes)}</small>`:''}</span></div>`;
     }).join('');
-    box.innerHTML=`<div class="tl-title">Timeline</div><div class="timeline-rail">${tl}</div>`;
+    box.innerHTML=`<div class="tl-title">Atividade</div><div class="timeline-rail">${tl}</div>`;
   }catch(_){}
+}
+
+/* Nota livre na ficha: vira uma atividade "note" sem prazo — não entra em
+   nenhuma fila (todas exigem due_at) e aparece na lista de Atividade. */
+async function addLeadNote(){
+  const ta=document.getElementById('note-text');
+  const fb=document.getElementById('note-fb');
+  const btn=document.getElementById('note-add');
+  const txt=(ta&&ta.value||'').trim();
+  if(!currentLeadId||!ta)return;
+  if(!txt){fb.textContent='Escreva a nota antes de salvar.';ta.focus();return;}
+  btn.disabled=true;fb.textContent='Salvando…';
+  try{
+    const resp=await authFetch(`/api/leads/${currentLeadId}/activities`,{method:'POST',body:JSON.stringify({type:'note',notes:txt})});
+    if(!resp.ok){const j=await resp.json().catch(()=>({}));fb.textContent=j.detail||'Não foi possível salvar a nota.';return;}
+    ta.value='';fb.textContent='Nota salva.';
+    loadTimeline();
+  }catch(e){if(e.message!=='not_authenticated')fb.textContent='Erro de conexão.';}
+  finally{btn.disabled=false;}
 }
 
 /* ══════ RENDER RESULT ══════ */
@@ -1089,6 +1109,7 @@ function renderResult(data){
     pin:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
     phone:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>`,
     tag:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>`,
+    stage:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9" stroke-dasharray="3 3"/></svg>`,
   };
   const cb=(conf)=>{if(!conf||conf==='none')return'';const m={verified:['OK','verified'],probable:['~','probable'],unverified:['?','unverified'],high:['OK','verified'],medium:['~','probable'],low:['?','unverified']};const[l,c]=m[conf]||[conf,'probable'];return ` <span class="conf-badge ${c}">${l}</span>`;};
   let emp='';
@@ -1098,7 +1119,10 @@ function renderResult(data){
   const li=data.linkedin_url?data.linkedin_url.replace(/^https?:\/\/(www\.)?/,'').replace(/\/$/,''):'';
   const _mxCell=primaryMx(data);
   let d=0;
+  const stage=data.stage||'novo';
   const cards=[
+    // Estágio primeiro, como no detalhe do CRM de referência; muda pelo Pipeline.
+    `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.stage}Estágio</span><span class="data-val"><span class="stage-chip" data-stage="${esc(stage)}">${esc(STAGE_LABELS[stage]||stage)}</span></span></div>`,
     cell('Site',ws,{ic:IC.globe,isLink:true,disp:ws,delay:d+=50}),
     `<div class="data-cell" style="animation-delay:${d+=50}ms"><span class="data-lbl">${IC.li}LinkedIn</span>${data.linkedin_url?`<a class="data-val link" href="${data.linkedin_url}" target="_blank" rel="noopener">${esc(li)}</a>${cb(data.linkedin_confidence)}`:`<a class="data-val link" href="https://www.google.com/search?q=${encodeURIComponent('site:linkedin.com/company "'+(data.company_name||data.domain||'')+'"')}" target="_blank" rel="noopener">Buscar no Google →</a>`}</div>`,
     // A ficha mostra o servidor MX como ele é publicado no DNS. O nome
@@ -1170,6 +1194,11 @@ function renderResult(data){
     </details>
     <div id="call-feedback" class="call-feedback call-feedback-out"></div>
     <div class="ai-box" id="ai-box" style="display:none"></div>
+    <section class="note-box" aria-label="Notas">
+      <div class="note-head"><h4>Notas</h4><button type="button" class="note-add" id="note-add" onclick="addLeadNote()">+ Adicionar nota</button></div>
+      <textarea id="note-text" class="note-text" rows="3" placeholder="Escreva uma nota sobre esta empresa…" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter')addLeadNote()"></textarea>
+      <div class="note-fb" id="note-fb" aria-live="polite"></div>
+    </section>
     <div id="timeline-box" style="display:none"></div>
   </div>`;
   renderLeadActions(data);
