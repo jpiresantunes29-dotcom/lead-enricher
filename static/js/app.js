@@ -502,15 +502,6 @@ function clearResult(){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 
-/* Exemplo clicável: preenche e já analisa — o usuário vê o resultado antes de
-   ter que pensar num domínio. */
-function useExample(domain){
-  const input=document.getElementById('domain-input');
-  if(!input)return;
-  input.value=domain;
-  enrich();
-}
-
 /* ══════ ÚLTIMAS ANÁLISES (preenche a tela antes da primeira busca) ══════ */
 async function loadRecent(){
   const block=document.getElementById('recent-block');
@@ -526,7 +517,7 @@ async function loadRecent(){
       const when=l.created_at?new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}):'';
       const stage=l.stage||'novo';
       return `<button class="recent-card" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${esc(name)}">
-        <span class="recent-ava" aria-hidden="true">${esc((name.trim()[0]||'?').toUpperCase())}</span>
+        ${logoHtml(l.domain,name,'lg')}
         <span class="recent-txt">
           <span class="recent-name">${esc(name)}</span>
           <span class="recent-meta">${esc(l.domain||'')}</span>
@@ -635,10 +626,10 @@ async function loadFollowups(){
     }
     // A tarefa só traz o lead_id: o nome da empresa vem da lista de leads,
     // e se ela falhar a linha mostra "Lead #id" — a fila não depende disso.
-    const nomes={};
+    const nomes={},dominios={};
     try{
       const rl=await authFetch('/api/leads?per_page=100');
-      if(rl.ok)(await rl.json()).forEach(l=>{nomes[l.id]=l.company_name||l.domain;});
+      if(rl.ok)(await rl.json()).forEach(l=>{nomes[l.id]=l.company_name||l.domain;dominios[l.id]=l.domain;});
     }catch(e){if(e.message==='not_authenticated')throw e;}
 
     const now=Date.now();
@@ -663,7 +654,7 @@ async function loadFollowups(){
       return `<tr class="fu-tr${isLate?' late':''}">
         <td class="fu-td-check"><button class="fu-check" onclick="completeActivity(${a.id})" title="Concluir: marcar como resolvido e tirar da fila" aria-label="Concluir ${esc(kind)}"></button></td>
         <td class="fu-td-task"><span class="fu-kind">${esc(kind)}</span>${a.notes?`<span class="fu-notes">${esc(a.notes)}</span>`:''}</td>
-        <td><button class="fu-lead" onclick="loadLeadIntoView(${a.lead_id})" title="Abrir a ficha da empresa">${esc(empresa)}</button></td>
+        <td><button class="fu-lead" onclick="loadLeadIntoView(${a.lead_id})" title="Abrir a ficha da empresa">${logoHtml(dominios[a.lead_id],empresa,'sm')}${esc(empresa)}</button></td>
         <td class="fu-when${isLate?' late':''}">${KB_IC.data}${when}</td>
         <td class="fu-td-act">${ics}</td>
       </tr>`;
@@ -795,7 +786,7 @@ function renderProgressoLote(p){
       (item.status==='running'?['Analisando…','']:['Na fila','']);
     const link=item.lead_id?`<button class="btn-link" onclick="loadLeadIntoView(${item.lead_id})">Ver ficha →</button>`:'';
     return `<div class="lote-item">
-      <span class="lote-item-dom">${esc(item.domain||'')}</span>
+      <span class="lote-item-dom">${logoHtml(item.domain,item.domain,'sm')}${esc(item.domain||'')}</span>
       <span class="lote-item-st ${classe}">${rotulo}</span>
       ${link}
     </div>`;
@@ -952,7 +943,7 @@ async function loadPipeline(){
         ].filter(Boolean).map(([ic,txt])=>`<div class="kb-line">${ic}<span>${txt}</span></div>`).join('');
         const busca=esc(`${l.company_name||''} ${l.domain||''} ${l.sector||''}`.toLowerCase());
         return `<div class="kb-card" draggable="true" data-lead-id="${l.id}" data-busca="${busca}" ondragstart="dragStart(event)" title="Arraste para outra coluna para mudar o estágio">
-          <div class="kb-card-top"><button class="kb-name" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${nome}">${nome}</button>${tierBadgeHtml(l)}</div>
+          <div class="kb-card-top">${logoHtml(l.domain,l.company_name,'sm')}<button class="kb-name" onclick="loadLeadIntoView(${l.id})" title="Abrir a ficha de ${nome}">${nome}</button>${tierBadgeHtml(l)}</div>
           <div class="kb-lines">${linhas}</div>
           <div class="kb-card-actions">${left}${right}</div>
         </div>`;
@@ -1424,7 +1415,8 @@ async function chatAplicar(mi,pi){
 
 function _chatLeadsHtml(leads){
   if(!leads||!leads.length)return '';
-  return `<div class="chat-leads">${leads.map(l=>`<a class="chat-lead" href="#lead-${Number(l.id)}">${esc(l.nome)}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></a>`).join('')}</div>`;
+  const dom=id=>((_chat.leads||[]).find(x=>x.id===Number(id))||{}).dominio;
+  return `<div class="chat-leads">${leads.map(l=>`<a class="chat-lead" href="#lead-${Number(l.id)}">${logoHtml(dom(l.id),l.nome,'sm')}${esc(l.nome)}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></a>`).join('')}</div>`;
 }
 
 /* Markdown mínimo da resposta. O texto é escapado ANTES de qualquer marcação:
@@ -1501,7 +1493,7 @@ function chatMencaoBusca(){
   const q=m[1].toLowerCase();
   const achados=_chat.leads.filter(l=>l.nome.toLowerCase().includes(q)||l.dominio.includes(q)).slice(0,6);
   if(!achados.length){box.hidden=true;return;}
-  box.innerHTML=achados.map((l,k)=>`<button type="button" class="chat-mention-item${k===0?' on':''}" role="option" onmousedown="event.preventDefault()" onclick="chatMencaoEscolher(${l.id})"><b>${esc(l.nome)}</b><span>${esc(l.dominio)}</span></button>`).join('');
+  box.innerHTML=achados.map((l,k)=>`<button type="button" class="chat-mention-item${k===0?' on':''}" role="option" onmousedown="event.preventDefault()" onclick="chatMencaoEscolher(${l.id})">${logoHtml(l.dominio,l.nome,'sm')}<b>${esc(l.nome)}</b><span>${esc(l.dominio)}</span></button>`).join('');
   box.hidden=false;
 }
 
@@ -3581,7 +3573,7 @@ function renderHistory(q){
     const date=new Date(l.created_at).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
     const emp=_empTxt(l)||'—';
     return `<tr id="row-${l.id}">
-      <td class="td-co"><button class="td-name" onclick="openLeadSummary(${l.id})">${esc(l.company_name||l.domain||'—')}</button></td>
+      <td class="td-co"><span class="td-co-in">${logoHtml(l.domain,l.company_name,'sm')}<button class="td-name" onclick="openLeadSummary(${l.id})">${esc(l.company_name||l.domain||'—')}</button></span></td>
       <td class="td-tier">${tierBadgeHtml(l,{leadId:l.id})||'<span class="muted">—</span>'}</td>
       <td class="td-mono">${esc(l.domain||'—')}</td>
       <td><span class="stage-chip" data-stage="${esc(l.stage||'novo')}">${STAGE_LABELS[l.stage||'novo']||esc(l.stage||'')}</span></td>
@@ -5446,7 +5438,7 @@ function agItemHtml(it,late){
   }
   return `<article class="ag-item${late?' late':''}" id="ag-item-${aid}">
     <div class="ag-top">
-      <div class="ag-co"><a class="ag-name" href="#lead-${lid}">${esc(nome)}</a>${tierBadgeHtml(l)}</div>
+      <div class="ag-co">${logoHtml(l.domain,nome)}<a class="ag-name" href="#lead-${lid}">${esc(nome)}</a>${tierBadgeHtml(l)}</div>
       <span class="ag-when${late?' late':''}">${late?'Atrasada · ':''}${esc(_fmtQuando(a.due_at))}</span>
     </div>
     <div class="ag-step"><span class="ag-step-chip">${esc(stepLbl)}</span>${tentativa}</div>
@@ -5610,7 +5602,7 @@ function _aglPreviaHtml(j){
     <button type="button" class="btn-link" onclick="nav('lote')">Analisar em lote</button></div>`;
   const chips=Object.keys(pt).sort().map(k=>`<span class="ag-tier-n"><span class="tier-badge t${esc(k)}">T${esc(k)}</span><b>${Number(pt[k]||0)}</b></span>`).join('');
   const lista=sel.map(s=>`<li>
-      <a class="agl-li-name" href="#lead-${Number(s.lead_id)}">${esc(s.company_name||s.domain||'—')}</a>
+      <a class="agl-li-name" href="#lead-${Number(s.lead_id)}">${logoHtml(s.domain,s.company_name,'sm')}${esc(s.company_name||s.domain||'—')}</a>
       <span class="agl-li-meta">${tierBadgeHtml({tier:s.tier==null?null:s.tier})}</span>
     </li>`).join('');
   return `<div class="agl-prev">
@@ -5702,6 +5694,14 @@ function hideResults(){
   document.getElementById('view-search')?.classList.remove('has-result');
   const block=document.getElementById('recent-block');
   if(block&&document.getElementById('recent-grid')?.children.length)block.style.display='block';
+}
+/* Logo da empresa pelo favicon do domínio — a mesma fonte que a ficha já
+   usa. Se a imagem não carregar, fica a inicial: nunca um ícone quebrado. */
+function logoHtml(domain,nome,tam){
+  const ini=esc(((nome||domain||'?').trim()[0]||'?').toUpperCase());
+  const d=String(domain||'').replace(/^https?:\/\//,'').replace(/^www\./,'').split('/')[0];
+  const img=d?`<img src="https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64" alt="" loading="lazy" onerror="this.remove()">`:'';
+  return `<span class="co-logo${tam?' '+tam:''}" aria-hidden="true"><span>${ini}</span>${img}</span>`;
 }
 function esc(s){if(s==null)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 

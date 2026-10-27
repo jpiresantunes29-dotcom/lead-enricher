@@ -9,7 +9,7 @@
   <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=43" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=44" />
 </head>
 <body class="app-body">
 
@@ -227,10 +227,9 @@
       </div>
 
       <!-- Ação primária: disponível em qualquer tela, menos na própria busca -->
-      <button class="btn-primary tb-new" id="tb-new-btn" onclick="nav('');focusSearch()" title="Analisar um novo domínio (Ctrl+K)">
+      <button class="btn-primary tb-new" id="tb-new-btn" onclick="nav('');focusSearch()" title="Analisar um novo domínio">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         Nova análise
-        <kbd class="kbd">Ctrl K</kbd>
       </button>
     </div>
   </header>
@@ -246,10 +245,6 @@
     <div class="search-layout" id="search-layout">
       <div class="search-primary">
         <div class="sp-head">
-          <span class="sp-badge">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-            Ficha completa em segundos
-          </span>
           <h2 class="sp-title">Qual empresa você quer analisar?</h2>
           <p class="sp-sub">Digite o site da empresa. Trazemos porte, e-mail, CNPJ e quem decide.</p>
         </div>
@@ -261,7 +256,6 @@
           <input id="domain-input" class="hero-search-input" placeholder="Ex.: nubank.com.br"
                  type="text" inputmode="url" enterkeyhint="search"
                  autocomplete="off" spellcheck="false" aria-label="Site da empresa" />
-          <kbd class="hero-kbd" aria-hidden="true">Enter ↵</kbd>
           <button id="search-btn" class="hero-search-btn" type="button" onclick="enrich()">
             <span id="search-btn-text">Analisar</span>
             <span id="search-btn-spinner" class="spinner" style="display:none"></span>
@@ -269,13 +263,6 @@
         </div>
 
         <button class="btn-link sp-clear" onclick="clearResult()">← Analisar outra empresa</button>
-
-        <div class="sp-examples">
-          <span class="sp-ex-lbl">Experimente:</span>
-          <button class="hero-ex-btn" onclick="useExample('nubank.com.br')">nubank.com.br</button>
-          <button class="hero-ex-btn" onclick="useExample('rdstation.com')">rdstation.com</button>
-          <button class="hero-ex-btn" onclick="useExample('magazineluiza.com.br')">magazineluiza.com.br</button>
-        </div>
 
         <div class="hero-loading" id="loading-status" role="status" aria-live="polite">
           <span class="ldot"></span><span class="ldot"></span><span class="ldot"></span>
@@ -303,7 +290,6 @@
             <strong>Próximo passo</strong><small>Cada ligação vira tarefa ou reunião.</small>
           </li>
         </ul>
-        <p class="sa-foot">Empresas analisadas nos últimos 7 dias abrem na hora.</p>
       </section>
     </div>
 
@@ -551,7 +537,7 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=43"></script>
+<script src="/static/js/app.js?v=44"></script>
 {# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
    com edição célula a célula e teclado próprio. #}
 <script src="/static/js/sheet.js?v=25"></script>
