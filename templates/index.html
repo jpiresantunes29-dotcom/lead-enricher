@@ -126,7 +126,7 @@
   <div class="sb-bottom">
     <!-- Pré-auth -->
     <div id="header-preauth" class="sb-auth">
-      <p class="sb-auth-hint">Entre para salvar seus leads e usar o pipeline.</p>
+      <p class="sb-auth-hint">Entre para salvar seus leads.</p>
       <button class="app-btn-primary sb-enter-btn" onclick="openAuthModal()">Entrar</button>
     </div>
 
@@ -155,7 +155,7 @@
   <header class="app-topbar">
     <div class="tb-head">
       <h1 class="tb-title" id="tb-title">Nova análise</h1>
-      <p class="tb-sub" id="tb-sub">Digite o domínio da empresa e receba a ficha completa.</p>
+      <p class="tb-sub" id="tb-sub">Digite o site e receba a ficha em segundos.</p>
     </div>
 
     <div class="tb-actions">
@@ -170,7 +170,7 @@
       </div>
 
       <div class="tb-slot" data-slot="history">
-        <input id="history-filter" class="tb-input" placeholder="Filtrar por empresa ou domínio…"
+        <input id="history-filter" class="tb-input" placeholder="Buscar empresa…"
                oninput="filterHistory(this.value)" autocomplete="off" aria-label="Filtrar histórico" />
         <button class="btn-outline" onclick="openExportModal()" title="Baixar os leads do período em Excel ou CSV">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -179,8 +179,8 @@
       </div>
 
       <div class="tb-slot" data-slot="pipeline">
-        <span class="tb-hint">Arraste o card ou use ◀ ▶ para mudar de estágio</span>
-        <input id="pipeline-filter" class="tb-input" placeholder="Buscar empresa, domínio ou setor…"
+        <span class="tb-hint">Arraste para mudar de estágio</span>
+        <input id="pipeline-filter" class="tb-input" placeholder="Buscar no pipeline…"
                oninput="filterPipeline(this.value)" autocomplete="off" aria-label="Buscar no pipeline" />
       </div>
 
@@ -215,12 +215,8 @@
     <div class="search-layout" id="search-layout">
       <div class="search-primary panel">
         <div class="sp-head">
-          <span class="sp-step">Passo 1</span>
           <h2 class="sp-title">Qual empresa você quer analisar?</h2>
-          <p class="sp-sub">
-            Informe o domínio do site (não o e-mail). Em segundos devolvemos porte,
-            setor, localização, infraestrutura de e-mail e o caminho para os decisores.
-          </p>
+          <p class="sp-sub">Digite o site, não o e-mail.</p>
         </div>
 
         <div class="hero-search-box">
@@ -235,10 +231,10 @@
           </button>
         </div>
 
-        <button class="btn-link sp-clear" onclick="clearResult()">← Limpar e analisar outra empresa</button>
+        <button class="btn-link sp-clear" onclick="clearResult()">← Analisar outra empresa</button>
 
         <div class="sp-examples">
-          <span class="sp-ex-lbl">Testar com:</span>
+          <span class="sp-ex-lbl">Exemplos:</span>
           <button class="hero-ex-btn" onclick="useExample('nubank.com.br')">nubank.com.br</button>
           <button class="hero-ex-btn" onclick="useExample('rdstation.com')">rdstation.com</button>
           <button class="hero-ex-btn" onclick="useExample('magazineluiza.com.br')">magazineluiza.com.br</button>
@@ -246,31 +242,31 @@
 
         <div class="hero-loading" id="loading-status">
           <span class="ldot"></span><span class="ldot"></span><span class="ldot"></span>
-          <span id="loading-msg">Consultando...</span>
+          <span id="loading-msg">Analisando…</span>
         </div>
       </div>
 
       <aside class="search-aside panel">
-        <div class="sa-title">O que você recebe em cada análise</div>
+        <div class="sa-title">O que vem na ficha</div>
         <ul class="sa-list">
           <li>
             <span class="sa-ic" aria-hidden="true">1</span>
-            <span><strong>Ficha da empresa</strong><small>Nome oficial, site, LinkedIn, porte, setor e localização.</small></span>
+            <span><strong>Empresa</strong><small>Site, LinkedIn, porte, setor e local.</small></span>
           </li>
           <li>
             <span class="sa-ic" aria-hidden="true">2</span>
-            <span><strong>Infraestrutura de e-mail</strong><small>Servidor MX e, no relatório completo, SPF, DMARC, DKIM, hosts e titular do domínio.</small></span>
+            <span><strong>E-mail e DNS</strong><small>Servidor de e-mail, SPF, DMARC e DKIM.</small></span>
           </li>
           <li>
             <span class="sa-ic" aria-hidden="true">3</span>
-            <span><strong>Decisores por cargo</strong><small>Você informa o cargo; devolvemos perfis com LinkedIn e e-mail corporativo provável.</small></span>
+            <span><strong>Contatos</strong><small>Decisores por cargo, com LinkedIn.</small></span>
           </li>
           <li>
             <span class="sa-ic" aria-hidden="true">4</span>
-            <span><strong>Registro da ligação</strong><small>O resultado da chamada vira follow-up com data ou reunião com convite .ics.</small></span>
+            <span><strong>Próximo passo</strong><small>Cada ligação vira tarefa ou reunião.</small></span>
           </li>
         </ul>
-        <p class="sa-foot">Reabrir uma empresa analisada nos últimos 7 dias sai do cache, na hora.</p>
+        <p class="sa-foot">Empresas analisadas nos últimos 7 dias abrem na hora.</p>
       </aside>
     </div>
 
@@ -283,7 +279,7 @@
     <section class="recent-block" id="recent-block" style="display:none">
       <div class="block-head">
         <h3>Continuar de onde parou</h3>
-        <button class="btn-link" onclick="nav('history')">Ver histórico completo →</button>
+        <button class="btn-link" onclick="nav('history')">Ver tudo →</button>
       </div>
       <div class="recent-grid" id="recent-grid"></div>
     </section>
@@ -294,13 +290,8 @@
     <div class="lote-layout">
       <div class="panel panel-pad">
         <div class="sp-head">
-          <span class="sp-step">Passo 1</span>
-          <h2 class="sp-title">Cole a lista ou solte um CSV</h2>
-          <p class="sp-sub">
-            Um domínio por linha, ou o CSV exportado do seu CRM — encontramos a coluna
-            do site sozinhos. As empresas que você já pesquisou nos últimos 7 dias saem
-            do cache, sem refazer a coleta.
-          </p>
+          <h2 class="sp-title">Cole os domínios</h2>
+          <p class="sp-sub">Um por linha, ou envie o CSV do seu CRM.</p>
         </div>
 
         <textarea id="lote-input" class="lote-textarea" spellcheck="false"
@@ -308,7 +299,7 @@
 
         <div class="lote-actions">
           <label class="set-btn ghost lote-file">
-            Escolher arquivo CSV
+            Enviar CSV
             <input type="file" id="lote-file" accept=".csv,.txt,text/csv,text/plain" hidden />
           </label>
           <span class="lote-count" id="lote-count"></span>
@@ -341,7 +332,7 @@
        O enriquecimento de cada linha roda depois, pela fila. -->
   <section class="view" id="view-import">
     <div class="view-note">
-      Suba um .xlsx ou .csv com suas empresas — as colunas são reconhecidas automaticamente.
+      Envie .xlsx ou .csv. As colunas são reconhecidas sozinhas.
       <span class="view-note-actions">
         <button class="ghost-btn" onclick="downloadImportTemplate('xlsx')">Modelo Excel</button>
         <button class="ghost-btn" onclick="downloadImportTemplate('csv')">Modelo CSV</button>
@@ -355,8 +346,7 @@
        sistema descobre. Edição célula a célula. -->
   <section class="view view--full" id="view-sheet">
     <div class="view-note">
-      Suas colunas do jeito que estão, mais as que o sistema descobre. Clique para
-      selecionar, digite para editar, Enter para salvar.
+      Clique para selecionar, digite para editar, Enter para salvar.
     </div>
     <div id="sheet-body"></div>
   </section>
@@ -436,7 +426,7 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <h3 class="modal-title" style="text-align:left">Exportar leads</h3>
-    <p class="modal-text" style="text-align:left;margin-bottom:18px">Uma linha por lead, com decisores e dados da empresa. Escolha o período e o formato.</p>
+    <p class="modal-text" style="text-align:left;margin-bottom:18px">Uma linha por lead, com os contatos.</p>
 
     <div class="export-sec-label">Período</div>
     <div class="export-opts">
@@ -445,7 +435,7 @@
       <button class="export-opt" data-preset="30days" onclick="setExportPreset('30days')">Últimos 30 dias</button>
       <button class="export-opt" data-preset="month" onclick="setExportPreset('month')">Mês atual</button>
       <button class="export-opt" data-preset="all" onclick="setExportPreset('all')">Todo o histórico</button>
-      <button class="export-opt" data-preset="custom" onclick="setExportPreset('custom')">Intervalo customizado</button>
+      <button class="export-opt" data-preset="custom" onclick="setExportPreset('custom')">Escolher datas</button>
     </div>
 
     <div id="export-custom-range" class="export-custom-range" style="display:none">
@@ -496,8 +486,8 @@
     <div class="auth-logo">
       <span class="auth-logo-name">LeadEnricher</span>
     </div>
-    <h3 class="auth-heading">Acesse sua conta</h3>
-    <p class="auth-sub">Entre com um provedor. Sem senha, sem cartão — todas as funções ficam liberadas.</p>
+    <h3 class="auth-heading">Entrar</h3>
+    <p class="auth-sub">Sem senha e sem cartão.</p>
     <p class="auth-msg" id="auth-msg" style="display:none"></p>
     <div class="auth-oauth-grid">
       <button class="auth-oauth-btn" data-prov="google" onclick="signInWithGoogle()">
@@ -524,9 +514,9 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=39"></script>
+<script src="/static/js/app.js?v=40"></script>
 {# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
    com edição célula a célula e teclado próprio. #}
-<script src="/static/js/sheet.js?v=24"></script>
+<script src="/static/js/sheet.js?v=25"></script>
 </body>
 </html>

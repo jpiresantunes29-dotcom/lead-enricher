@@ -13,8 +13,8 @@ const SH_PER_PAGE_OPTIONS = [100, 200, 500];
 const SH_WORKER_OPTIONS = [2, 4, 6, 8, 12];
 const SH_STATUS = {
   imported: { label: 'Importado', cls: 'pend' },
-  enriched: { label: 'Enriquecido', cls: 'ok' },
-  partial: { label: 'Parcial', cls: 'warn' },
+  enriched: { label: 'Analisado', cls: 'ok' },
+  partial: { label: 'Incompleto', cls: 'warn' },
   failed: { label: 'Falhou', cls: 'err' },
 };
 
@@ -37,7 +37,7 @@ function shIsSystem(idx) { return idx >= _sh.columns.length; }
 async function loadSheet(opts = {}) {
   Object.assign(_sh, opts);
   const body = document.getElementById('sheet-body');
-  if (!_sh.loaded) body.innerHTML = '<div class="panel"><div class="muted-box">Carregando planilha…</div></div>';
+  if (!_sh.loaded) body.innerHTML = '<div class="panel"><div class="muted-box">Carregando…</div></div>';
   const params = new URLSearchParams({ page: _sh.page, per_page: _sh.perPage });
   if (_sh.batch) params.set('batch_id', _sh.batch.id);
   if (_sh.q) params.set('q', _sh.q);
@@ -45,7 +45,7 @@ async function loadSheet(opts = {}) {
   if (_sh.only) params.set('only', _sh.only);
   try {
     const resp = await authFetch('/api/sheet?' + params.toString());
-    if (!resp.ok) { body.innerHTML = '<div class="panel"><div class="muted-box">Erro ao carregar a planilha.</div></div>'; return; }
+    if (!resp.ok) { body.innerHTML = '<div class="panel"><div class="muted-box">Não foi possível carregar. Tente de novo.</div></div>'; return; }
     const data = await resp.json();
     _sh.loaded = true;
     _sh.batch = data.batch; _sh.batches = data.batches;
@@ -55,7 +55,7 @@ async function loadSheet(opts = {}) {
     _sh.selectedRows.clear();
     renderSheet();
   } catch (e) {
-    if (e.message !== 'not_authenticated') body.innerHTML = '<div class="panel"><div class="muted-box">Erro de conexão.</div></div>';
+    if (e.message !== 'not_authenticated') body.innerHTML = '<div class="panel"><div class="muted-box">Sem conexão. Tente de novo.</div></div>';
   }
 }
 
@@ -106,7 +106,7 @@ function renderSheet() {
     </div>
     <div class="sh-foot">
       <div class="sh-foot-l">
-        ${_sh.selectedRows.size ? `<button class="ghost-btn danger" id="sh-del">Excluir ${_sh.selectedRows.size} linha(s)</button>` : ''}
+        ${_sh.selectedRows.size ? `<button class="ghost-btn danger" id="sh-del">Excluir ${_sh.selectedRows.size}</button>` : ''}
         <button class="ghost-btn" id="sh-add">+ Nova linha</button>
         <span class="sh-count">${_sh.total.toLocaleString('pt-BR')} linha(s)${_sh.q ? ' no filtro' : ''} · ${cols.length} colunas</span>
       </div>
@@ -141,9 +141,8 @@ function shEmptyState() {
     <div class="sh-empty-ico">
       <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="9" x2="9" y2="21"/></svg>
     </div>
-    <h3>Sua planilha vive aqui</h3>
-    <p class="imp-done-sub">Importe o arquivo que você usa hoje no Excel. Todas as colunas vêm junto,
-    do jeito que estão, e o sistema acrescenta as colunas que ele descobre sozinho.</p>
+    <h3>Nenhuma planilha ainda</h3>
+    <p class="imp-done-sub">Traga o arquivo que você usa no Excel.</p>
     <div class="imp-done-actions">
       <button class="app-btn-primary" onclick="nav('import')">Importar planilha</button>
       <button class="ghost-btn" onclick="downloadImportTemplate('xlsx')">Baixar modelo</button>
@@ -155,14 +154,14 @@ function shToolbar() {
   const batchOpts = _sh.batches.map(b =>
     `<option value="${b.id}" ${_sh.batch && b.id === _sh.batch.id ? 'selected' : ''}>
       ${esc(b.filename || 'planilha')} · ${b.row_count} linhas</option>`).join('');
-  const filters = [['', 'Todas'], ['pending', 'Não enriquecidas'], ['enriched', 'Enriquecidas'], ['failed', 'Falhas']];
+  const filters = [['', 'Todas'], ['pending', 'A analisar'], ['enriched', 'Analisadas'], ['failed', 'Sem dados']];
   return `
     <div class="sh-bar">
       <div class="sh-bar-l">
         <select class="sh-select" id="sh-batch">${batchOpts}</select>
         <div class="sh-search">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <input id="sh-q" placeholder="Buscar em todas as colunas…" value="${esc(_sh.q)}" autocomplete="off" />
+          <input id="sh-q" placeholder="Buscar…" value="${esc(_sh.q)}" autocomplete="off" />
         </div>
         <div class="sh-chips">
           ${filters.map(([v, l]) => `<button class="sh-chip${(_sh.only || '') === v ? ' on' : ''}" data-only="${v}">${l}</button>`).join('')}
@@ -171,11 +170,11 @@ function shToolbar() {
       <div class="sh-bar-r">
         <button class="ghost-btn" id="sh-import">Importar</button>
         <button class="ghost-btn" id="sh-export">Exportar</button>
-        <select class="sh-select" id="sh-workers" title="Quantas empresas o navegador processa ao mesmo tempo">
+        <select class="sh-select" id="sh-workers" title="Quantas empresas analisar ao mesmo tempo">
           ${SH_WORKER_OPTIONS.map(n => `<option value="${n}" ${n === _sh.workers ? 'selected' : ''}>${n} em paralelo</option>`).join('')}
         </select>
         <button class="app-btn-primary" id="sh-enrich" ${_sh.enrichable ? '' : 'disabled'}>
-          Enriquecer ${_sh.enrichable.toLocaleString('pt-BR')}
+          Analisar ${_sh.enrichable.toLocaleString('pt-BR')}
         </button>
       </div>
     </div>
@@ -245,7 +244,7 @@ function renderSheetFooter() {
   if (!foot) return;
   if (_sh.selectedRows.size && !del) { renderSheet(); return; }
   if (!_sh.selectedRows.size && del) { del.remove(); return; }
-  if (del) del.textContent = `Excluir ${_sh.selectedRows.size} linha(s)`;
+  if (del) del.textContent = `Excluir ${_sh.selectedRows.size}`;
 }
 
 /* ══════ SELEÇÃO E EDIÇÃO ══════ */
@@ -275,7 +274,7 @@ function shEdit(r, c, initial) {
   if (!col || !row) return;
   // Situação é calculada — o servidor recusa, avisamos antes
   if (col.field && ['status'].includes(col.field)) {
-    shToast(`"${col.label}" é calculada pelo enriquecimento e não pode ser editada.`);
+    shToast(`"${col.label}" é preenchida pela análise.`);
     return;
   }
   shSelect(r, c);
@@ -319,7 +318,7 @@ async function shCommitEdit(move) {
     if (!resp.ok) {
       row.values[col.label] = previous;
       td.innerHTML = shCellHtml(previous);
-      shToast(json.detail || 'Não consegui salvar esta célula.');
+      shToast(json.detail || 'Não foi possível salvar.');
     } else if (json.row) {
       // O servidor normaliza (domínio vira host, funcionários vira faixa)
       row.values = json.row.values;
@@ -329,7 +328,7 @@ async function shCommitEdit(move) {
   } catch (e) {
     row.values[col.label] = previous;
     td.innerHTML = shCellHtml(previous);
-    if (e.message !== 'not_authenticated') shToast('Erro de conexão ao salvar.');
+    if (e.message !== 'not_authenticated') shToast('Sem conexão. Não foi salvo.');
   } finally {
     td.classList.remove('saving');
   }
@@ -381,22 +380,22 @@ async function addSheetRow() {
       method: 'POST',
       body: JSON.stringify({ batch_id: _sh.batch ? _sh.batch.id : null, values: {} }),
     });
-    if (!resp.ok) { shToast('Não consegui criar a linha.'); return; }
+    if (!resp.ok) { shToast('Não foi possível criar a linha.'); return; }
     await loadSheet({ page: Math.ceil((_sh.total + 1) / _sh.perPage) });
     shSelect(_sh.rows.length - 1, 0);
-  } catch (e) { if (e.message !== 'not_authenticated') shToast('Erro de conexão.'); }
+  } catch (e) { if (e.message !== 'not_authenticated') shToast('Sem conexão. Tente de novo.'); }
 }
 
 async function deleteSheetRows() {
   const ids = [..._sh.selectedRows];
   if (!ids.length) return;
-  if (!confirm(`Excluir ${ids.length} linha(s) da planilha? Isso não pode ser desfeito.`)) return;
+  if (!confirm(`Excluir ${ids.length} ${ids.length === 1 ? 'linha' : 'linhas'}? Não dá para desfazer.`)) return;
   try {
     const resp = await authFetch('/api/sheet/rows/delete', { method: 'POST', body: JSON.stringify({ ids }) });
-    if (!resp.ok) { shToast('Não consegui excluir.'); return; }
+    if (!resp.ok) { shToast('Não foi possível excluir.'); return; }
     _sh.selectedRows.clear();
     loadSheet();
-  } catch (e) { if (e.message !== 'not_authenticated') shToast('Erro de conexão.'); }
+  } catch (e) { if (e.message !== 'not_authenticated') shToast('Sem conexão. Tente de novo.'); }
 }
 
 async function exportSheet() {
@@ -421,10 +420,9 @@ function shSleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function runSheetQueue() {
   if (_sh.queue.running) return;
   const ids = [..._sh.pendingIds];
-  if (!ids.length) { shToast('Nenhuma linha pendente no filtro atual.'); return; }
+  if (!ids.length) { shToast('Nada a analisar neste filtro.'); return; }
 
-  if (!confirm(`Enriquecer ${ids.length} empresa(s) com ${_sh.workers} em paralelo?` +
-    `\nCada uma leva de 10 a 30 segundos.`)) return;
+  if (!confirm(`Analisar ${ids.length} ${ids.length === 1 ? 'empresa' : 'empresas'}? Cada uma leva de 10 a 30 s.`)) return;
 
   _sh.queue = { running: true, cancel: false, done: 0, total: ids.length, ok: 0, fail: 0 };
   const bar = document.getElementById('sh-progress');
@@ -440,7 +438,7 @@ async function runSheetQueue() {
     const fill = document.getElementById('sh-prog-fill');
     const txt = document.getElementById('sh-prog-txt');
     if (fill) fill.style.width = Math.round(q.done / q.total * 100) + '%';
-    if (txt) txt.textContent = `${q.done} de ${q.total} · ${q.ok} enriquecida(s)${q.fail ? ` · ${q.fail} sem dados` : ''}`;
+    if (txt) txt.textContent = `${q.done} de ${q.total}${q.fail ? ` · ${q.fail} sem dados` : ''}`;
   };
 
   async function worker() {
@@ -449,7 +447,7 @@ async function runSheetQueue() {
       const idx = byId.get(id);
       if (idx !== undefined) {
         const state = document.querySelector(`[data-state="${id}"]`);
-        if (state) { state.className = 'sh-state running'; state.title = 'Coletando…'; }
+        if (state) { state.className = 'sh-state running'; state.title = 'Analisando…'; }
       }
       let settled = false;
       for (let attempt = 0; attempt < 3 && !settled && !stopped; attempt++) {
@@ -484,8 +482,8 @@ async function runSheetQueue() {
   if (bar) bar.style.display = 'none';
   const q = _sh.queue;
   const motivo = stopped === 'auth' ? ' Sua sessão expirou.'
-    : _sh.queue.cancel ? ' Fila interrompida por você.' : '';
-  shToast(`${q.ok} enriquecida(s), ${q.fail} sem dados.${motivo}`, stopped ? 8000 : 5000);
+    : _sh.queue.cancel ? ' Interrompido.' : '';
+  shToast(`${q.ok} ${q.ok === 1 ? 'analisada' : 'analisadas'}, ${q.fail} sem dados.${motivo}`, stopped ? 8000 : 5000);
   loadSheet();
 }
 
