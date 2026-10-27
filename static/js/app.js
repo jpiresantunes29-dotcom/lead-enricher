@@ -314,7 +314,7 @@ async function signOut(){
 function closeIfBackdrop(e,id){if(e.target===document.getElementById(id))document.getElementById(id).classList.remove('open');}
 
 /* ══════ ROUTER (views por hash) ══════ */
-const ROUTES=['','lote','import','sheet','dashboard','pipeline','agenda','followups','conversas','history','settings'];
+const ROUTES=['','lote','import','sheet','dashboard','pipeline','agenda','followups','conversas','chat','history','settings'];
 
 function nav(route){
   if(route&&!_profile){_pendingRoute=route;openAuthModal();return;}
@@ -359,6 +359,10 @@ const VIEW_META={
   conversas:{
     title:'Conversas de WhatsApp',
     sub:'O que cada lead respondeu e quem está respondendo por você. A conversa de teste, no topo da lista, não envia nada de verdade.',
+  },
+  chat:{
+    title:'Chat',
+    sub:'Pergunte sobre o seu pipeline. Use @ para citar um lead. A IA só lê: nada aqui altera seus dados.',
   },
   history:{
     title:'Histórico de leads',
@@ -413,6 +417,7 @@ function applyRoute(){
   else if(h==='agenda')loadAgenda();
   else if(h==='followups')loadFollowups();
   else if(h==='conversas')loadConversas();
+  else if(h==='chat')loadChat();
   else if(h==='history')loadHistory();
   else if(h==='settings')loadSettings();
 }
@@ -1219,6 +1224,207 @@ function renderResult(data){
     const top=wrap.getBoundingClientRect().top+window.scrollY-100;
     window.scrollTo({top,behavior:'smooth'});
   }
+}
+
+/* ══════ VIEW: CHAT DE IA ══════
+   Pergunta sobre o pipeline, no estilo do chat do CRM de referência. Só lê:
+   a rota /api/chat não grava nada. A conversa vive nesta aba (sem tabela no
+   banco) e volta inteira para a IA a cada pergunta, até 10 trocas. */
+const _chat={hist:[],leads:null,mencoes:{},enviando:false};
+
+const CHAT_SUGESTOES=[
+  'Quais leads estão parados em "Novo" há mais tempo?',
+  'Quais tarefas estão atrasadas e com quem?',
+  'Resuma meu pipeline por estágio e por tier.',
+];
+
+async function loadChat(){
+  const body=document.getElementById('chat-body');
+  if(!document.getElementById('chat-wrap')){
+    body.innerHTML=`<div id="chat-wrap" class="chat-wrap">
+      <div class="chat-log" id="chat-log" aria-live="polite"></div>
+      <div class="chat-compose">
+        <div class="chat-mention" id="chat-mention" role="listbox" hidden></div>
+        <textarea id="chat-input" class="chat-input" rows="2" maxlength="2000"
+          placeholder="Pergunte algo ou @cite um lead…" aria-label="Pergunta para a IA"
+          oninput="chatMencaoBusca()" onkeydown="chatTecla(event)"></textarea>
+        <button type="button" class="chat-send" id="chat-send" onclick="chatEnviar()" title="Enviar (Enter)" aria-label="Enviar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+        </button>
+      </div>
+      <div class="chat-foot" id="chat-foot">Enter envia · Shift+Enter quebra a linha · a IA pode errar: confira na ficha antes de agir.</div>
+    </div>`;
+    _chatRender();
+  }
+  // A lista para o @ é carregada uma vez por visita à tela.
+  try{
+    const resp=await authFetch('/api/leads?per_page=100');
+    if(resp.ok)_chat.leads=(await resp.json()).map(l=>({id:l.id,nome:l.company_name||l.domain||`Lead ${l.id}`,dominio:l.domain||''}));
+  }catch(_){}
+  if(!matchMedia('(pointer: coarse)').matches)document.getElementById('chat-input')?.focus();
+}
+
+function chatNova(){
+  _chat.hist=[];_chat.mencoes={};
+  const inp=document.getElementById('chat-input');
+  if(inp)inp.value='';
+  _chatRender();
+}
+
+function _chatRender(){
+  const log=document.getElementById('chat-log');
+  if(!log)return;
+  if(!_chat.hist.length){
+    log.innerHTML=`<div class="chat-empty">
+      <div class="chat-empty-title">Pergunte sobre o seu pipeline</div>
+      <div class="chat-empty-sub">A IA vê seus leads, estágios, tiers e tarefas. Telefones e e-mails não são enviados a ela.</div>
+      <div class="chat-sugs">${CHAT_SUGESTOES.map((s,i)=>`<button type="button" class="chat-sug" onclick="chatSugestao(${i})">${esc(s)}</button>`).join('')}</div>
+    </div>`;
+    return;
+  }
+  log.innerHTML=_chat.hist.map(m=>m.role==='user'
+    ? `<div class="chat-msg user"><div class="chat-bubble">${esc(m.content)}</div></div>`
+    : `<div class="chat-msg ai${m.fora?' erro':''}"><div class="chat-ai-lbl">${IC_SPARK} IA</div><div class="chat-md">${_chatMd(m.content)}</div>${_chatLeadsHtml(m.leads)}${m.aviso?`<div class="chat-aviso">${esc(m.aviso)}</div>`:''}</div>`
+  ).join('')+(_chat.enviando?'<div class="chat-msg ai"><div class="chat-ai-lbl">'+IC_SPARK+' IA</div><div class="chat-typing"><span class="ldot"></span><span class="ldot"></span><span class="ldot"></span></div></div>':'');
+  log.lastElementChild?.scrollIntoView({block:'end',behavior:'smooth'});
+}
+
+function _chatLeadsHtml(leads){
+  if(!leads||!leads.length)return '';
+  return `<div class="chat-leads">${leads.map(l=>`<a class="chat-lead" href="#lead-${Number(l.id)}">${esc(l.nome)}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7"/><path d="M8 7h9v9"/></svg></a>`).join('')}</div>`;
+}
+
+/* Markdown mínimo da resposta. O texto é escapado ANTES de qualquer marcação:
+   tudo o que vira tag aqui foi escrito por este código, nunca pela IA. */
+function _chatMd(texto){
+  const inline=s=>s
+    .replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>')
+    .replace(/\[\[lead:(\d+)\]\]/g,(_,id)=>`<a class="chat-ref" href="#lead-${Number(id)}" title="Abrir a ficha">↗</a>`);
+  const linhas=esc(texto||'').split('\n');
+  const out=[];let i=0;
+  while(i<linhas.length){
+    const l=linhas[i].trim();
+    if(l.startsWith('|')){
+      const tab=[];
+      while(i<linhas.length&&linhas[i].trim().startsWith('|')){tab.push(linhas[i].trim());i++;}
+      const cel=r=>r.replace(/^\||\|$/g,'').split('|').map(c=>c.trim());
+      const corpo=tab.filter(r=>!/^\|?\s*:?-{2,}/.test(r));
+      if(corpo.length){
+        const [cab,...rest]=corpo;
+        out.push(`<div class="tbl-scroll"><table class="chat-tbl"><thead><tr>${cel(cab).map(c=>`<th>${inline(c)}</th>`).join('')}</tr></thead><tbody>${rest.map(r=>`<tr>${cel(r).map(c=>`<td>${inline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+      }
+      continue;
+    }
+    if(/^[-*] /.test(l)){
+      const itens=[];
+      while(i<linhas.length&&/^[-*] /.test(linhas[i].trim())){itens.push(linhas[i].trim().slice(2));i++;}
+      out.push(`<ul>${itens.map(t=>`<li>${inline(t)}</li>`).join('')}</ul>`);
+      continue;
+    }
+    if(/^\d+\. /.test(l)){
+      const itens=[];
+      while(i<linhas.length&&/^\d+\. /.test(linhas[i].trim())){itens.push(linhas[i].trim().replace(/^\d+\. /,''));i++;}
+      out.push(`<ol>${itens.map(t=>`<li>${inline(t)}</li>`).join('')}</ol>`);
+      continue;
+    }
+    if(/^#{1,6} /.test(l)){out.push(`<p class="chat-h">${inline(l.replace(/^#+ /,''))}</p>`);i++;continue;}
+    if(l)out.push(`<p>${inline(l)}</p>`);
+    i++;
+  }
+  return out.join('');
+}
+
+function chatSugestao(i){
+  const inp=document.getElementById('chat-input');
+  inp.value=CHAT_SUGESTOES[i];
+  chatEnviar();
+}
+
+function chatTecla(e){
+  const box=document.getElementById('chat-mention');
+  if(box&&!box.hidden){
+    const itens=[...box.querySelectorAll('.chat-mention-item')];
+    const at=itens.findIndex(b=>b.classList.contains('on'));
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      const n=(at+(e.key==='ArrowDown'?1:-1)+itens.length)%itens.length;
+      itens.forEach((b,k)=>b.classList.toggle('on',k===n));
+      return;
+    }
+    if(e.key==='Enter'||e.key==='Tab'){e.preventDefault();(itens[at]||itens[0])?.click();return;}
+    if(e.key==='Escape'){box.hidden=true;return;}
+  }
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();chatEnviar();}
+}
+
+/* @ + o começo do nome abre a lista; escolher troca o trecho pelo nome
+   completo e guarda o id — é o id que vai para o servidor, não o texto. */
+function chatMencaoBusca(){
+  const inp=document.getElementById('chat-input');
+  const box=document.getElementById('chat-mention');
+  const antes=inp.value.slice(0,inp.selectionStart);
+  const m=antes.match(/@([^\s@]{0,40})$/);
+  if(!m||!_chat.leads){box.hidden=true;return;}
+  const q=m[1].toLowerCase();
+  const achados=_chat.leads.filter(l=>l.nome.toLowerCase().includes(q)||l.dominio.includes(q)).slice(0,6);
+  if(!achados.length){box.hidden=true;return;}
+  box.innerHTML=achados.map((l,k)=>`<button type="button" class="chat-mention-item${k===0?' on':''}" role="option" onmousedown="event.preventDefault()" onclick="chatMencaoEscolher(${l.id})"><b>${esc(l.nome)}</b><span>${esc(l.dominio)}</span></button>`).join('');
+  box.hidden=false;
+}
+
+function chatMencaoEscolher(id){
+  const l=(_chat.leads||[]).find(x=>x.id===id);
+  const inp=document.getElementById('chat-input');
+  if(!l||!inp)return;
+  const pos=inp.selectionStart;
+  const antes=inp.value.slice(0,pos).replace(/@([^\s@]{0,40})$/,`@${l.nome} `);
+  inp.value=antes+inp.value.slice(pos);
+  inp.setSelectionRange(antes.length,antes.length);
+  _chat.mencoes[l.nome]=l.id;
+  document.getElementById('chat-mention').hidden=true;
+  inp.focus();
+}
+
+async function chatEnviar(){
+  const inp=document.getElementById('chat-input');
+  const pergunta=(inp&&inp.value||'').trim();
+  if(!pergunta||_chat.enviando)return;
+  // Só vale a citação que ainda está no texto: apagar o "@Nome" desfaz.
+  const mencionados=Object.entries(_chat.mencoes).filter(([nome])=>pergunta.includes('@'+nome)).map(([,id])=>id);
+  // Pergunta que não teve resposta e o aviso de erro ficam só na tela.
+  const historico=_chat.hist.filter(m=>!m.fora).map(m=>({role:m.role,content:m.content})).slice(-20);
+  const minha={role:'user',content:pergunta};
+  _chat.hist.push(minha);
+  _chat.mencoes={};
+  inp.value='';
+  _chat.enviando=true;
+  document.getElementById('chat-send').disabled=true;
+  _chatRender();
+  let msg;
+  try{
+    const resp=await authFetch('/api/chat',{method:'POST',body:JSON.stringify({pergunta,historico,mencionados})});
+    const j=await resp.json().catch(()=>({}));
+    if(resp.ok){
+      const aviso=j.total_leads>j.leads_no_contexto
+        ?`A IA viu os ${j.leads_no_contexto} leads mais recentes de ${j.total_leads}. Cite com @ os que não estiverem entre eles.`:'';
+      msg={role:'assistant',content:j.resposta||'',leads:j.leads||[],aviso};
+    }else{
+      const motivo=resp.status===503?'A IA não está configurada neste servidor (falta a GROQ_API_KEY).'
+        :resp.status===429?'Muitas perguntas seguidas. Espere um minuto e tente de novo.'
+        :(typeof j.detail==='string'?j.detail:'Não foi possível responder agora.');
+      msg={role:'assistant',content:motivo,fora:true};
+    }
+  }catch(e){
+    if(e.message==='not_authenticated'){_chat.hist.pop();}
+    else msg={role:'assistant',content:'Erro de conexão. Tente de novo.',fora:true};
+  }
+  _chat.enviando=false;
+  document.getElementById('chat-send').disabled=false;
+  if(msg){
+    if(msg.fora)minha.fora=true;
+    _chat.hist.push(msg);
+  }
+  _chatRender();
 }
 
 /* ══════ CONVERSAS DE WHATSAPP ══════

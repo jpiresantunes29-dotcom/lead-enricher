@@ -9,7 +9,7 @@
   <link rel="preload" href="/static/fonts/inter-latin-400.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/static/fonts/plus-jakarta-sans-latin-700.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/static/fonts/fonts.css?v=1" />
-  <link rel="stylesheet" href="/static/css/styles.css?v=34" />
+  <link rel="stylesheet" href="/static/css/styles.css?v=35" />
 </head>
 <body class="app-body">
 
@@ -86,6 +86,15 @@
         <span class="nav-desc">WhatsApp com os leads</span>
       </span>
       <span id="nav-wa-count" class="nav-badge" style="display:none" title="Conversas esperando você responder"></span>
+    </button>
+
+    <p class="sb-group">IA</p>
+    <button class="app-nav-btn" data-route="chat" onclick="nav('chat')" title="Pergunte sobre o seu pipeline e cite leads com @">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="nav-txt">
+        <span class="nav-lbl">Chat</span>
+        <span class="nav-desc">Pergunte sobre o pipeline</span>
+      </span>
     </button>
 
     <p class="sb-group">Análise</p>
@@ -173,6 +182,10 @@
         <span class="tb-hint">Arraste o card ou use ◀ ▶ para mudar de estágio</span>
         <input id="pipeline-filter" class="tb-input" placeholder="Buscar empresa, domínio ou setor…"
                oninput="filterPipeline(this.value)" autocomplete="off" aria-label="Buscar no pipeline" />
+      </div>
+
+      <div class="tb-slot" data-slot="chat">
+        <button class="btn-outline" onclick="chatNova()" title="Apagar esta conversa e começar outra">Nova conversa</button>
       </div>
 
       <div class="tb-slot" data-slot="followups">
@@ -377,6 +390,13 @@
     <div id="conversas-body"></div>
   </section>
 
+  <!-- ── VIEW: CHAT DE IA ──
+       Pergunta sobre o pipeline, com @ para citar leads. Só lê: nada aqui
+       altera dados (services/crm_chat.py). O histórico fica nesta aba. -->
+  <section class="view" id="view-chat">
+    <div id="chat-body"></div>
+  </section>
+
   <!-- ── VIEW: HISTÓRICO ── -->
   <section class="view view--wide" id="view-history">
     <div class="tier-filter" id="history-tier-filter" role="group" aria-label="Filtrar por tier"></div>
@@ -503,7 +523,7 @@
    depender de um CDN de terceiros — quem serve este arquivo controla o token
    de sessão de todo mundo que abre o app. #}
 <script src="/static/vendor/supabase.js?v=2.112.0"></script>
-<script src="/static/js/app.js?v=36"></script>
+<script src="/static/js/app.js?v=37"></script>
 {# Grade da planilha: vive em arquivo próprio porque é o único trecho do app
    com edição célula a célula e teclado próprio. #}
 <script src="/static/js/sheet.js?v=24"></script>
