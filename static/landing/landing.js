@@ -1,25 +1,14 @@
 /* ════════════════════════════════════════════════════════════════
    Landing corporativa — orquestrador
    Espec: docs/DESIGN_LANDING_V3.md §7-§8
-   Vendor (UMD via <script defer>): window.Lenis, window.gsap,
-   window.ScrollTrigger — usados a partir da fase L2.
+   Sem efeitos decorativos (spotlight, botões magnéticos, smooth scroll,
+   trilho e seção fixada foram removidos no visual minimalista).
    ════════════════════════════════════════════════════════════════ */
 
 // ── Detecção de capacidade e preferência (§8) ──────────────────────
 export const env = {
   reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
-  coarsePointer: matchMedia('(pointer: coarse)').matches,
-  lowPower:
-    (navigator.hardwareConcurrency || 8) < 4 ||
-    (navigator.deviceMemory || 8) < 4,
 };
-
-// ── Smooth scroll (Lenis) ──────────────────────────────────────────
-function initLenis() {
-  if (env.reducedMotion || typeof window.Lenis !== 'function') return null;
-  const lenis = new window.Lenis({ autoRaf: true });
-  return lenis;
-}
 
 // ── Reveals por IntersectionObserver ───────────────────────────────
 function initReveals() {
@@ -40,34 +29,6 @@ function initReveals() {
     { threshold: 0.15, rootMargin: '0px 0px -40px 0px' }
   );
   els.forEach((el) => io.observe(el));
-}
-
-// ── Spotlight do cursor nos cards (§5.5) ───────────────────────────
-function initSpotlight() {
-  if (env.coarsePointer) return;
-  document.querySelectorAll('[data-spotlight]').forEach((card) => {
-    card.addEventListener('pointermove', (e) => {
-      const r = card.getBoundingClientRect();
-      card.style.setProperty('--mx', `${e.clientX - r.left}px`);
-      card.style.setProperty('--my', `${e.clientY - r.top}px`);
-    });
-  });
-}
-
-// ── Botões magnéticos (≤6px) ───────────────────────────────────────
-function initMagnetic() {
-  if (env.coarsePointer || env.reducedMotion) return;
-  document.querySelectorAll('[data-magnetic]').forEach((btn) => {
-    btn.addEventListener('pointermove', (e) => {
-      const r = btn.getBoundingClientRect();
-      const dx = ((e.clientX - r.left) / r.width - 0.5) * 12;
-      const dy = ((e.clientY - r.top) / r.height - 0.5) * 12;
-      btn.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
-    });
-    btn.addEventListener('pointerleave', () => {
-      btn.style.transform = '';
-    });
-  });
 }
 
 // ── Contadores com decode (§5.7) ───────────────────────────────────
@@ -113,34 +74,17 @@ async function initFooterStatus() {
     const r = await fetch('/health');
     const j = await r.json();
     if (j.status === 'ok') {
-      el.textContent = '● tudo funcionando';
+      el.textContent = 'Todos os sistemas operando';
       el.classList.add('ok');
       return;
     }
   } catch {
     /* offline / erro — cai no fallback abaixo */
   }
-  el.textContent = '● status indisponível';
+  el.textContent = 'Status indisponível';
 }
 
 // ── Boot ───────────────────────────────────────────────────────────
-initLenis();
 initReveals();
-initSpotlight();
-initMagnetic();
 initCounters();
 initFooterStatus();
-
-// Efeitos de scroll carregam após o first paint e fora do caminho crítico (§8).
-// A boot sequence, o cursor custom, o terminal e a rede de partículas foram
-// removidos no redesign corporativo — liam como "ferramenta de dev".
-const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 200));
-idle(async () => {
-  if (!env.reducedMotion && !env.lowPower) {
-    const { initSpine } = await import('./fx/spine.js');
-    initSpine(env);
-
-    const { initJourney } = await import('./fx/journey.js');
-    initJourney(env);
-  }
-});
